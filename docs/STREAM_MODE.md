@@ -1,6 +1,6 @@
-# Stream mode (v1.0.0)
-
 *[Versión en español](STREAM_MODE-es.md)*
+
+# Stream mode (v1.0.0)
 
 Stream mode delays the stream OBS has **already encoded**, instead of the rendered frames. It is
 the default from v1.0.0 wherever it can run (Windows); scene mode (buffer mode, `docs/SPEC.md`)

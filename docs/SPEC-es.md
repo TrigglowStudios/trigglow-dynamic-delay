@@ -3,8 +3,9 @@
 # Especificación técnica — Trigglow Dynamic Delay para OBS
 
 Estado: **v1.0.0 — estable en Windows; macOS y Linux en alpha**
-Última actualización: 2026-10-20 (v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8;
-reescrita desde cero el 2026-08-26 — ver §0). Se preparó un hotfix v0.5.1 que nunca se publicó; todo
+Última actualización: 2026-11-11 (v1.0.0: §1, §3.8, §8; el modo stream tiene su propio documento,
+`docs/STREAM_MODE-es.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; reescrita
+desde cero el 2026-08-26 — ver §0). Se preparó un hotfix v0.5.1 que nunca se publicó; todo
 lo que llevaba salió en la v0.6.0, así que este documento fecha esos cambios en la v0.6.0.
 Nombre interno del plugin: `obs-trigglow-dynamic-delay`
 Web: https://www.trigglow.com/dynamic-delay
@@ -31,6 +32,16 @@ vídeo y el audio de tu stream un número configurable de segundos — con un bo
 OBS, o un botón de Stream Deck mapeado a esa hotkey — **sin que el output de streaming se toque
 jamás**. Ni reconexión, ni corte, en ningún momento, por ningún motivo. Sin app externa, sin panel
 web, sin proceso aparte: todo vive dentro del proceso de OBS.
+
+**Desde la v1.0.0 el plugin tiene dos modos, y este documento describe el modo escena (modo
+buffer).** El modo stream (Windows, el modo por defecto donde puede funcionar) retrasa el directo
+que OBS ya ha codificado: apunta la salida RTMP de OBS a un relay en `127.0.0.1` dentro de OBS y
+envía los paquetes a la plataforma o plataformas pasado el delay, sin decodificar ni codificar dos
+veces, con todas las escenas retrasadas y la grabación en directo. Se especifica en
+`docs/STREAM_MODE-es.md`. El modo escena, el de abajo, se queda para macOS y Linux y para los
+directos que el modo stream no puede reenviar (Enhanced Broadcasting, SRT, RIST, WHIP); en el dock
+es "Modo escena (compatibilidad)". Las hotkeys y obs-websocket llegan a cualquiera de los dos modos
+a través de `DelayRouter` (§8).
 
 ## 2. Por qué se rechazó la reconexión
 
@@ -588,11 +599,16 @@ Esta sección cubre solo la parte del plugin. Cómo responde trigglow.com (sus l
 asistente, cuánto tiempo guarda los datos) vive fuera de este repositorio; el plugin solo reacciona a
 las respuestas y códigos de error documentados, y nunca muestra el texto de error del servidor.
 
-**Un único camino de red.** `win-http.*` es el único código que abre conexiones: WinHTTP en Windows;
-en macOS y Linux `Available()` es falso y toda llamada devuelve "no disponible" al instante (allí no
-hay inicio de sesión, Trigi ni reportes hasta que tengan cliente HTTP, previsto a continuación).
-Cada petición es HTTPS con TLS 1.2 o superior, nunca sigue una redirección (un 3xx es un error, así
-que un token Bearer no puede rebotar a otro host), no envía cookies ni el inicio de sesión
+**Un único camino de red.** `win-http.*` es el único código que abre conexiones HTTPS a Trigglow y
+a GitHub: WinHTTP en Windows; libcurl en macOS y Linux desde la v1.0.0 (`TRIGGLOW_HAVE_CURL`, CMake
+enlaza `CURL::libcurl`; se tiene en cuenta la libcurl 7.79 de macOS 12; antes de la 1.0.0
+`Available()` era falso allí y toda llamada devolvía "no disponible"). El camino de libcurl sigue las
+mismas reglas, y además solo HTTPS por el puerto 443; sin libcurl (los tests unitarios
+independientes) sigue en "no disponible". Se escribió y revisó en Windows y lo compila la CI; aún no
+se ha ejecutado en un Mac ni en un equipo Linux de verdad. (El relay del modo stream abre sus
+propias conexiones RTMP/RTMPS a los destinos del directo con FFmpeg, no por este camino:
+`docs/STREAM_MODE-es.md`.) Cada petición es HTTPS con TLS 1.2 o superior, nunca sigue una
+redirección (un 3xx es un error, así que un token Bearer no puede rebotar a otro host), no envía cookies ni el inicio de sesión
 automático de Windows, tiene timeouts por paso y un límite total (una ventana de recepción más larga
 para las respuestas y los resúmenes de Trigi), pone un tope al tamaño de la respuesta, rechaza
 valores de cabecera que pudieran inyectar líneas y no escribe nada en el log por sí mismo.
@@ -618,8 +634,12 @@ solas. Un build de prueba local solo puede apuntar a otro host con la opción de
    olvida el enlace y el secreto en local.
 3. El token es opaco (el plugin nunca lo interpreta) y solo sirve para las llamadas propias del
    plugin. En Windows se guarda con `CryptProtectData` para el usuario actual, sin interfaz, aparte de
-   los ajustes del plugin, escrito en un fichero temporal y movido a su sitio. Se guarda el nombre
-   visible; el email, no. Si no se puede descifrar, se borra y el plugin queda sin sesión.
+   los ajustes del plugin, escrito en un fichero temporal y movido a su sitio. En macOS y Linux
+   (v1.0.0, `PosixFileProtector`) no se cifra: el mismo fichero (`trigglow-auth.dat`) se crea solo
+   para el usuario (0600) antes de escribir nada en él y se mueve a su sitio, igual que OBS guarda la
+   clave de retransmisión en su `service.json`, con una línea marcadora que rechaza un fichero que no
+   sea del plugin. Se guarda el nombre visible; el email, no. Si no se puede volver a leer, se borra y
+   el plugin queda sin sesión.
 4. En cada carga: una comprobación de la cuenta, y una renovación antes de cualquier otra llamada con
    sesión cuando toca (el token nuevo se guarda antes de usarlo). `401 token_rotated` vuelve a leer el
    token guardado o renueva, y reintenta una vez; cualquier otro 401 termina la sesión (se borra el
@@ -646,8 +666,8 @@ solas. Un build de prueba local solo puede apuntar a otro host con la opción de
 Ni el dock ni el log muestran nunca el enlace, los códigos, el secreto ni el token.
 
 **Trigi (`support-client.*`, `support-service.*`, `trigi-page.*`, `trigi-states.*`).**
-- Solo se muestra en Windows, con sesión, cuando la comprobación de la cuenta dice que Trigi está
-  disponible y la versión del plugin es al menos la mínima que indica (comparación numérica
+- Solo se muestra con sesión (en macOS y Linux desde la v1.0.0), cuando la comprobación de la
+  cuenta dice que Trigi está disponible y la versión del plugin es al menos la mínima que indica (comparación numérica
   `X.Y.Z`). Si no, el diálogo se abre en el formulario de ticket; sin sesión ofrece "Inicia sesión
   para preguntar a Trigi".
 - El aviso del primer uso (versión 1) hay que aceptarlo antes de la primera pregunta. La versión
@@ -723,7 +743,8 @@ Ni el dock ni el log muestran nunca el enlace, los códigos, el secreto ni el to
 la v0.5.x, la espera del inicio de sesión, Trigi, los tickets y sus adjuntos, la lectura del log
 para un ticket o una vista previa, la comprobación de actualizaciones) va en su propio hilo con un
 token de cancelación, dentro de un grupo cuyo dueño es `AuthManager`, un diálogo de soporte o el
-dock. WinHTTP funciona en modo asíncrono, así que cancelar un trabajo corta su llamada al momento
+dock. WinHTTP funciona en modo asíncrono, y libcurl comprueba el token del trabajo mientras
+transfiere, así que cancelar un trabajo corta su llamada al momento
 (una respuesta de Trigi puede tardar hasta 90 s), y un timeout es un estado propio ("Trigi ha
 tardado demasiado") en vez de "sin conexión". Los resultados llegan al hilo de UI por una única cola
 que vacía el plugin; destruir un dueño cancela sus trabajos y descarta sus resultados, también los
@@ -1532,9 +1553,25 @@ como un problema resuelto, hasta que se vuelva a probar específicamente para ve
 ## 8. Arquitectura
 
 ```
-plugin-main.cpp              → obs_module_load/unload, cableado de todos los componentes, archivo de
-                                ajustes (buffer_output_cap / codec_workers / buffer_codec ocultos,
+plugin-main.cpp              → obs_module_load/unload, cableado de todos los componentes, archivos
+                                de ajustes (buffer-mode-settings.json con buffer_output_cap /
+                                codec_workers / buffer_codec ocultos; stream-mode-settings.json;
                                 copia .invalid)
+stream-delay-controller.*     → v1.0.0 modo stream, lado de OBS (docs/STREAM_MODE-es.md):
+                                elegibilidad, el servicio privado de loopback, delay activado/
+                                quitado/segundos, borrado, presets, reglas por escena, la insignia en
+                                el canal de salida 61, comprobaciones de ajustes
+stream-relay.*                → v1.0.0 el relay (FFmpeg avformat, Windows): listener RTMP en
+                                127.0.0.1, un emisor por destino, back-off, envío final al parar
+packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: empalmes, reescritura de
+                                marcas de tiempo, recorte, suelo del borrado; puro
+stream-mode-panel.*           → v1.0.0 la sección del modo stream del dock
+delay-router.*                → v1.0.0 hotkeys y obs-websocket hacia el modo stream o el modo escena
+websocket-vendor.*            → v1.0.0 vendor de obs-websocket trigglow-dynamic-delay
+                                (docs/STREAM_DECK-es.md)
+core-host.* / core-main.cpp   → el build solo de núcleo (v0.7.2, TRIGGLOW_CORE_ONLY): el modo escena
+                                controlado mediante los ajustes de una fuente privada, para Trigglow
+                                Studio
 buffer-mode-controller.*      → la máquina de estados descrita en §3.3 (Inactive/Filling/Active/Error)
 obs-frontend-bridge.*         → la única capa que toca obs-frontend-api.h + el cableado de filtros/escenas
 video-delay-filter.*          → §3.1 -- captura, conversión I420, lectura, reproducción y el pequeño
@@ -1577,13 +1614,14 @@ hardware-info.*               → consulta de la RAM total del sistema; los adap
                                 (fabricante, nombre y VRAM de DXGI) para el códec de almacenamiento
                                 (v0.7.0)
 win-http.* / api-client.*     → §3.8 -- el único camino HTTPS endurecido y el cliente de
-                                api.trigglow.com (Windows; "no disponible" en macOS/Linux hasta que
-                                tengan cliente HTTP)
+                                api.trigglow.com (WinHTTP en Windows, libcurl en macOS/Linux desde
+                                la v1.0.0)
 json.*                        → §3.8 -- lector/escritor JSON estricto y acotado
 auth-manager.* / auth-client.* → §3.8 -- inicio de sesión (vinculación v2), renovación, cierre de
                                 sesión, cambio desde la v0.5.x, reglas de 401/403; la puerta de
                                 cuenta (docs/ACCOUNT_GATE.md)
 token-store.*                 → §3.8 -- el inicio de sesión del plugin, cifrado con CryptProtectData
+                                en Windows; un fichero solo para el usuario (0600) en macOS/Linux
 support-client.* / support-service.* → §3.8 -- llamadas de Trigi y de tickets; hilos, una petición
                                 de Trigi a la vez, elecciones locales, líneas de log
 support-diagnostics.* / diagnostics-collector.* → §3.8 -- los datos técnicos v1 opcionales
@@ -1603,25 +1641,31 @@ settings-ui.*                 → el dock de Qt (escena en directo/de carga, seg
                                 bloqueados, aviso de degradación)
 ui-tokens.* / ui-theme.*      → colores derivados de la paleta de OBS (WCAG AA), hoja de estilos,
                                 fuentes empaquetadas e iconos SVG recoloreados
-hotkeys.*                     → registro de las 3 hotkeys nativas de OBS, conectadas a
-                                Enable()/Disable()/Toggle() de BufferModeController
+hotkeys.*                     → registro de las 10 hotkeys nativas de OBS (v1.0.0: volver al
+                                directo, +/-5 s, borrado, presets 1-3 junto a las tres originales), a
+                                través de DelayRouter
 logging.*                     → envoltorio de logging con prefijo de componente
 delay-controller.*            → §6 -- lógica heredada del modo reconexión, presente pero sin usar
-tests/                        → 23 suites, solo se compilan con -DTRIGGLOW_BUILD_TESTS=ON o por
+tests/                        → suites unitarias, solo se compilan con -DTRIGGLOW_BUILD_TESTS=ON o por
                                 separado (cmake -S tests): buffer_fit, encoder_check, ui_tokens,
                                 auto_names, overlay_layout, frame_arena, frame_ring,
                                 degradation_policy, pipeline_stress, storage_codec, storage_policy,
                                 pipeline_gop_stress, adversarial_gop, background_tasks, json,
                                 log_redact, chat_text, support_diagnostics, api_client,
                                 token_store, auth_client, support_client, trigi_states (las del
-                                cliente, con un sustituto de red guionizado); más hw_storage_codec
-                                en Windows cuando el FFmpeg del plugin está en .deps
+                                cliente, con un sustituto de red guionizado), packet_delay_core
+                                (v1.0.0); más hw_storage_codec y el relay_harness manual en Windows
+                                cuando el FFmpeg del plugin está en .deps
 ```
 
-Principio de diseño: **`BufferModeController` es el único dueño del estado**. Tanto el dock como las
-hotkeys llaman a los mismos métodos públicos (`Enable()`, `Disable()`, `Toggle()`) — no hay una ruta de
-código separada para "botón" vs. "hotkey", lo cual reduce a la mitad la superficie de bugs de
-desincronización de estado.
+Principio de diseño: **el controlador de cada modo es el único dueño de su estado** —
+`BufferModeController` en el modo escena, `StreamDelayController` en el modo stream. El dock y las
+hotkeys (y, desde la v1.0.0, obs-websocket) llaman a los mismos métodos públicos (`Enable()`,
+`Disable()`, `Toggle()`...) — no hay una ruta de código separada para "botón" vs. "hotkey", lo cual
+reduce a la mitad la superficie de bugs de desincronización de estado. `DelayRouter` solo elige a
+qué controlador va una hotkey o un comando de obs-websocket (al modo stream cuando
+`StreamDelayController::HandlesControls()`, al modo escena en los demás casos); no guarda estado
+propio.
 
 ## 9. Licencia y repositorio
 

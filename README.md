@@ -35,7 +35,8 @@ custom servers). Enhanced Broadcasting, SRT, RIST and WHIP fall back to scene mo
 `docs/STREAM_MODE.md`.
 
 **Scene mode (every platform; "Scene mode (compatibility)" in the dock).** The plugin keeps your
-rendered live scene in RAM, compressed (your GPU's hardware HEVC on Windows, MJPEG otherwise), and
+rendered live scene in RAM (compressed with your GPU's hardware HEVC on Windows or MJPEG, stored
+uncompressed on macOS), and
 plays it back 1 to 60 s later in a helper scene; the streaming output is never touched. It costs
 more RAM and CPU (table below) but works with any output, and it is what macOS, Linux and the
 streams stream mode can't relay use. Details: `docs/SPEC.md`.
