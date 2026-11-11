@@ -214,7 +214,9 @@ for arch in "${archs[@]}"; do
   grep -qx '#define FFMPEG_LICENSE "LGPL version 2.1 or later"' config.h \
     || fail_license "licence is $(grep FFMPEG_LICENSE config.h || echo unknown), not LGPL version 2.1 or later"
   for component in "${required[@]}"; do
-    if ! cat config.h config_components.h 2> /dev/null | grep -qx "#define ${component} 1"; then
+    # grep -q over both files (not cat | grep -q: under pipefail cat's
+    # SIGPIPE after an early match would read as "not enabled").
+    if ! grep -qx "#define ${component} 1" config.h config_components.h 2> /dev/null; then
       echo "${0##*/}: ${component} is not enabled (${arch})" >&2
       exit 1
     fi
