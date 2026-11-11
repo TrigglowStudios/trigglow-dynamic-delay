@@ -113,7 +113,35 @@ The free-account gate applies to Enable as in scene mode.
 
 - `packet-delay-core` is unit-tested (`tests/packet_delay_core_tests.cpp`): live passthrough,
   rewinding on enable with the delay held and monotonic timestamps, skipping forward on disable,
-  short history, splicing before the first keyframe, trimming, audio only.
-- The relay and the OBS integration build on Windows; a live stream to a real platform has **not**
-  been run yet. To do before release: Twitch (RTMP), Kick (RTMPS), YouTube (HEVC over enhanced
-  RTMP), a delay change and an OBS stop mid-delay, with the platform's player watched.
+  short history, splicing before the first keyframe, trimming, audio only, dump, and splices in a
+  B-frame stream (x264's default) keeping the display order.
+- End to end in a real OBS 33.0.1 on Windows 11 (portable copy, x264 CBR 2500 kbps, 1280x720 30
+  fps, 2 s keyframes), driven over obs-websocket 5, with a local FFmpeg RTMP listener as the
+  platform (2026-11-11). A 12-bit Gray-code clock drawn into the scene measured the delay viewers
+  get from the platform's arrival times; every output was checked with ffprobe/ffmpeg (monotonic
+  timestamps, no gaps beyond ~150 ms at a splice, decodes clean):
+  - Advanced and Simple output modes; OBS's own Stream Delay on top (the delays add up).
+  - Live passthrough costs nothing measurable: 1.4 s from OBS's canvas to the platform, the same as
+    without the relay. Delay on, raised, lowered, off, presets, dump (live within a keyframe, the
+    delay back after its seconds + 3 s), the scene rule, every vendor request and every hotkey
+    (TriggerHotkeyByName): the measured delay is the one asked for plus those 1.4 s.
+  - Stop with the delay on sends the last seconds and finishes; a new stream while draining cuts it;
+    closing OBS mid-stream or mid-drain exits in ~0.3 s.
+  - Multistream: the service plus an extra destination get the same stream; a destination that
+    can't connect retries without disturbing the others and doesn't hold up the end of a drain.
+  - 12 start/stop cycles, half with every core busy: OBS always reached the relay (listener ready
+    in 5-50 ms).
+  - The free-account gate refuses Enable, presets and Toggle when signed out (a test-only build
+    switch, `TRIGGLOW_TEST_SKIP_ACCOUNT_GATE`, refused in CI, skipped it for the rest).
+  - The badge is drawn while the delay is on. It is part of the delayed picture, so viewers see the
+    value that was on when the frame was rendered: for the first *delay* seconds after a change
+    the old value (or none, right after Enable).
+- Fixed by these runs: in Advanced output mode OBS set its own service on the output after
+  `STREAMING_STARTING`, so the stream bypassed the relay (the frontend's service is now swapped
+  for the relay's during the start call and put back right after); B-frame splices played
+  backwards; a stop before OBS reached the relay, or a dead destination, left it draining forever;
+  the 150 ms wait for the listener is now a check that it listens (or the stream goes out without
+  the relay).
+- Not run yet: a real platform (Twitch RTMP, Kick RTMPS, YouTube HEVC over enhanced RTMP) with
+  its player watched, the dock UI by hand, and OBS reconnecting to the relay mid-stream (the relay
+  listens once: if OBS's connection to it drops, the stream ends instead of resuming).
