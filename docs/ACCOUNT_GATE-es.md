@@ -16,7 +16,7 @@ nunca sabrían que existen.
   inicio de sesión" más abajo). El plugin solo guarda su propio token opaco, que no sirve para nada
   más que las pocas llamadas que hace el plugin.
 - No se bloquea ninguna configuración del plugin (escenas, segundos de delay, calidad mínima,
-  destinos, presets, reglas por escena). Solo se bloquea activar el delay (Activar,
+  presets, reglas por escena). Solo se bloquea activar el delay (Activar,
   Activar/desactivar, un preset o una regla por escena que lo active). Quitarlo, volver al directo y
   Borrar nunca se bloquean.
 - Los datos de cuenta que se recogen aquí no se usan para marketing ni se revenden a terceros sin un

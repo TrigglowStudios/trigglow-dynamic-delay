@@ -93,7 +93,7 @@ El `responseData` de cada respuesta lleva `ok: true` y el estado:
 | `delayOn` | el delay está activado (o preparado para el próximo directo) |
 | `delaySeconds` | los segundos fijados |
 | `appliedSeconds` | lo que reciben ahora los espectadores (0 en directo) |
-| `behindSeconds` | modo stream: la antigüedad de lo que envía el destino principal, con precisión de 0,1 s |
+| `behindSeconds` | modo stream: la antigüedad de lo que envía el relay, con precisión de 0,1 s |
 | `ramMegabytes` | modo stream: la RAM guardada, con precisión de 0,1 MB |
 | `dumped` | solo en la respuesta de `DumpDelay` |
 

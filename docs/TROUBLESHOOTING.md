@@ -94,24 +94,19 @@ raises" before going live if you plan big raises (it costs the bitrate times tho
 `Settings → Advanced → Stream Delay` adds its fixed delay on top of Dynamic Delay's, and holds
 OBS's output back before it reaches the relay. Turn it off and use this one.
 
-### A destination shows "Reconnecting" or "Failed"
-- Each destination connects and retries on its own (after 2, 4, 8 and 15 s, at the delay); the
-  others carry on. **Last problem:** in the dock and the log (`<host>: <error>; retrying in N s`)
-  say why.
-- Check the server (it must start with rtmp:// or rtmps://) and the key. Your main destination is
-  your OBS service: check `Settings → Stream`.
-- A destination the platform rejects (wrong key, the platform's limit on simultaneous streams)
-  keeps failing; remove it or fix the key.
+### The dock shows "Reconnecting" or "Failed"
+- The relay connects to your OBS service and retries on its own (after 2, 4, 8 and 15 s, at the
+  delay). **Last problem:** in the dock and the log (`<host>: <error>; retrying in N s`) say why.
+- Check the server and the stream key in `Settings → Stream`: stream mode sends to exactly that.
 
 ### The log says "the upload fell behind; jumped back to the … delay"
-Your upload couldn't keep up with a destination for more than 4 s. Instead of letting the delay
-grow, the sender jumped to the delay again at the next keyframe: viewers of that destination skip a
-few seconds. With several destinations, your upload has to carry each one's bitrate: drop a
-destination or lower the bitrate.
+Your upload couldn't keep up with the stream for more than 4 s. Instead of letting the delay grow,
+the sender jumped to the delay again at the next keyframe: viewers skip a few seconds. Lower the
+bitrate or check your connection.
 
 ### OBS's dropped-frames counter stays at 0
 Expected: OBS sends the stream to the relay on your computer, so its own congestion counter only
-sees that local link. Watch each destination's state and rate in the dock instead.
+sees that local link. Watch the connection's state and rate in the dock instead.
 
 ### I stopped streaming but the platform still shows me live
 With **When I stop streaming, send the seconds viewers haven't seen** on (the default), the plugin
@@ -138,9 +133,10 @@ want it in either.
 
 ### Reporting a stream mode problem
 The log lines start with `[obs-trigglow-dynamic-delay]` and the component `stream-mode` or
-`stream-relay`: `relay listening on 127.0.0.1:<port>, N destination(s), delay Ns, keeps Ns` when a
+`stream-relay`: `relay listening on 127.0.0.1:<port>, …, delay Ns, keeps Ns` when a
 stream starts, `<host>: delay now Ns (replays/skips N s)` on each change, the settings checks, and
-each destination's errors. Destinations are named by their host only; stream keys aren't written to the log.
+the connection's errors. The platform is named by its host only; your stream key isn't written to
+the log.
 
 ## Scene mode: the "Enable delay" button is greyed out
 - `Enable delay` stays disabled until you've signed in with your free Trigglow account and picked a

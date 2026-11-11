@@ -35,13 +35,13 @@ durante 60 s son 45 MB, lo guarde quien lo guarde.
    servidor y la clave con `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto,
    incluido "auto").
 2. Arranca `StreamRelay` (avformat de FFmpeg, Windows): un listener en `127.0.0.1:<puerto libre>` y
-   un emisor por destino: primero el servicio del streamer y después los destinos extra del dock.
+   un emisor hacia el servicio del streamer.
 3. Apunta **esa salida** al relay con un servicio `rtmp_custom` privado. El servicio guardado del
    streamer no se toca; OBS lo vuelve a poner en la salida en cada arranque.
 4. OBS publica en el relay; el relay separa el FLV (sin decodificar) en `PacketHistory`
    (`packet-delay-core.*`) y marca cada paquete con su hora de llegada.
-5. El `SinkScheduler` de cada emisor envía el paquete *p* cuando `now >= arrival(p) + delay`,
-   remultiplexado a FLV por RTMP/RTMPS (TLS de SChannel), y la conexión con el destino se abre
+5. El `SinkScheduler` del emisor envía el paquete *p* cuando `now >= arrival(p) + delay`,
+   remultiplexado a FLV por RTMP/RTMPS (TLS de SChannel), y la conexión con la plataforma se abre
    cuando toca enviar el primer paquete (un directo que empieza con delay empieza esos segundos
    más tarde en la plataforma).
 
@@ -50,7 +50,7 @@ durante 60 s son 45 MB, lo guarde quien lo guarde.
 El emisor **empalma**: salta al keyframe de vídeo más reciente que tenga al menos *delay* de
 antigüedad y reescribe los timestamps para que el siguiente frame vaya un intervalo de frame
 después del último enviado. Subir el delay salta hacia atrás: los espectadores vuelven a ver los
-últimos segundos, nunca nada más nuevo. Quitarlo salta hacia delante. El destino ve un único
+últimos segundos, nunca nada más nuevo. Quitarlo salta hacia delante. La plataforma ve un único
 stream continuo: sin reconexión ni cabecera nueva. El paso es el intervalo de fotogramas clave
 (se recomiendan 2 s); el dock avisa cuando está en automático o pasa de 4 s (ver Comprobación de
 ajustes).
@@ -62,13 +62,13 @@ guardado más antiguo tenga la antigüedad suficiente (`SpliceInfo::shortHistory
 
 ### Problemas de red
 
-- Un destino que no puede conectar o enviar reintenta con espera creciente (2, 4, 8, 15 s) y una
-  línea de tiempo nueva, con el delay. Los demás siguen.
-- Un destino que se queda más de 4 s por detrás de su delay (subida lenta) vuelve al delay en el
+- Si la conexión con la plataforma no puede conectar o enviar, el emisor reintenta con espera
+  creciente (2, 4, 8, 15 s) y una línea de tiempo nueva, con el delay.
+- Si el emisor se queda más de 4 s por detrás de su delay (subida lenta), vuelve al delay en el
   siguiente keyframe, en vez de dejar que el delay crezca (`resyncs` en el estado).
 - La gestión de congestión de OBS solo ve el loopback, así que el contador de frames perdidos de
-  OBS se queda en 0 en el modo stream; en su lugar, el dock muestra el estado y la velocidad de cada
-  destino.
+  OBS se queda en 0 en el modo stream; en su lugar, el dock muestra el estado y la velocidad de la
+  conexión.
 
 ### Al parar
 
@@ -81,7 +81,7 @@ corta.
 
 "Borrar lo que aún no se ha emitido" (dock, atajo, `DumpDelay` por obs-websocket) pone en el
 historial un suelo de empalme en el momento actual (`PacketHistory::SetSpliceFloor`) y el delay a
-0, con el lock que toman los emisores antes de `Due()`. Cada emisor vuelve a empalmar en el primer
+0, con el lock que toma el emisor antes de `Due()`. El emisor vuelve a empalmar en el primer
 keyframe que llega después del suelo (en menos de un intervalo de fotogramas clave), así que los
 segundos que aún esperaban en el delay no se envían nunca. El controlador vuelve a subir el delay
 pasados sus segundos más 3 s; el empalme no puede bajar del suelo, así que solo rebobina hasta lo
@@ -123,7 +123,7 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 ## Controles
 
 - Dock: activar/quitar, volver al directo, segundos (1-600, +/-5), borrar, tres presets, delay por
-  escena, destinos, segundos guardados (10-600), envío al parar, la insignia.
+  escena, segundos guardados (10-600), envío al parar, la insignia.
 - Atajos (`Ajustes → Atajos` de OBS): Activar/desactivar, Activar, Desactivar (mismos nombres que
   antes), Volver al directo, Delay +5 s, Delay -5 s, Borrar, Preset 1-3. Pasan por `DelayRouter`:
   al modo stream cuando este lleva los controles, al modo escena si no (ahí, +/-5 y los presets

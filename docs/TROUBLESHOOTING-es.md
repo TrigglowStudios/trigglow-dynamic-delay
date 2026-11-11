@@ -99,24 +99,21 @@ instante" antes de salir en directo (cuesta el bitrate por esos segundos de RAM)
 `Ajustes → Avanzado → Retardo de la transmisión` suma su retardo fijo encima del de Dynamic Delay, y retiene
 la salida de OBS antes de que llegue al relay. Desactívalo y usa este.
 
-### Un destino muestra "Reconectando" o "Error"
-- Cada destino se conecta y reintenta por su cuenta (a los 2, 4, 8 y 15 s, con el delay); los demás
-  siguen. **Último problema:** en el dock y el log (`<host>: <error>; retrying in N s`) dicen por
+### El dock muestra "Reconectando" o "Error"
+- El relay se conecta a tu servicio de OBS y reintenta por su cuenta (a los 2, 4, 8 y 15 s, con el
+  delay). **Último problema:** en el dock y el log (`<host>: <error>; retrying in N s`) dicen por
   qué.
-- Revisa el servidor (tiene que empezar por rtmp:// o rtmps://) y la clave. Tu destino principal es
-  tu servicio de OBS: revisa `Ajustes → Emisión`.
-- Un destino que la plataforma rechaza (clave incorrecta, el límite de directos simultáneos de la
-  plataforma) sigue fallando; quítalo o corrige la clave.
+- Revisa el servidor y la clave de retransmisión en `Ajustes → Emisión`: el modo stream envía
+  exactamente ahí.
 
 ### El log dice "the upload fell behind; jumped back to the … delay"
-Tu subida no pudo seguir el ritmo de un destino durante más de 4 s. En vez de dejar que el delay
-crezca, el envío volvió a saltar al delay en el siguiente keyframe: los espectadores de ese destino
-se saltan unos segundos. Con varios destinos, tu subida tiene que aguantar el bitrate de cada uno:
-quita un destino o baja el bitrate.
+Tu subida no pudo seguir el ritmo del directo durante más de 4 s. En vez de dejar que el delay
+crezca, el envío volvió a saltar al delay en el siguiente keyframe: los espectadores se saltan unos
+segundos. Baja el bitrate o revisa tu conexión.
 
 ### El contador de frames perdidos de OBS se queda en 0
 Es lo esperado: OBS envía el directo al relay de tu ordenador, así que su contador de congestión
-solo ve ese enlace local. Mira en su lugar el estado y la tasa de cada destino en el dock.
+solo ve ese enlace local. Mira en su lugar el estado y la tasa de la conexión en el dock.
 
 ### Paré el directo pero la plataforma me sigue mostrando en directo
 Con **Al parar el directo, enviar los segundos que los espectadores aún no han visto** activado (lo
@@ -146,10 +143,10 @@ a los espectadores** si no la quieres en ninguna de las dos.
 
 ### Reportar un problema del modo stream
 Las líneas del log empiezan por `[obs-trigglow-dynamic-delay]` y el componente `stream-mode` o
-`stream-relay`: `relay listening on 127.0.0.1:<port>, N destination(s), delay Ns, keeps Ns` al
+`stream-relay`: `relay listening on 127.0.0.1:<port>, …, delay Ns, keeps Ns` al
 empezar un directo, `<host>: delay now Ns (replays/skips N s)` en cada cambio, las comprobaciones de
-ajustes y los errores de cada destino. Los destinos solo aparecen con su host; las claves de
-retransmisión no se escriben en el log.
+ajustes y los errores de la conexión. La plataforma solo aparece con su host; tu clave de
+retransmisión no se escribe en el log.
 
 ## Modo escena: el botón "Activar delay" aparece en gris, sin poder pulsarlo
 - `Activar delay` permanece deshabilitado hasta que inicies sesión con tu cuenta gratuita de

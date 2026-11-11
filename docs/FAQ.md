@@ -43,12 +43,6 @@ ask for.
 `Settings → Advanced → Stream Delay` adds its fixed delay on top of this one. Turn it off and use
 Dynamic Delay's.
 
-**Can I stream to several platforms at once?**
-Yes. Add destinations in the dock (a name, an rtmp:// or rtmps:// server and its key): they get the
-same delayed stream, from the same single encode. Each one connects, retries (after 2, 4, 8, 15 s)
-and shows its state on its own, so one failing doesn't stop the others. Their keys are saved on this
-computer in the plugin's `stream-mode-settings.json`, the way OBS saves your own key.
-
 **What does "Dump what viewers haven't seen" do?**
 Something slipped on screen while delayed? Press it (dock, hotkey or obs-websocket): the seconds
 still waiting in the delay are never sent. The stream jumps to live within about one keyframe
@@ -69,8 +63,8 @@ cuts it too.
 
 **Why does OBS show 0 dropped frames in stream mode?**
 OBS now sends the stream to the relay on your own computer, so its own congestion counter only
-sees that local link. The dock shows each destination's state and rate instead, and a destination
-that falls more than 4 s behind (slow upload) jumps back to the delay at the next keyframe rather
+sees that local link. The dock shows the connection's state and rate instead, and if the
+stream falls more than 4 s behind (slow upload) jumps back to the delay at the next keyframe rather
 than letting the delay grow.
 
 **Is stream mode tested?**
@@ -354,8 +348,8 @@ On every OBS start, one check of your sign-in with api.trigglow.com (plus a rene
 and one check of this repository's latest release on api.github.com. Everything else happens only
 when you use it: signing in, signing out, asking Trigi and sending a report. All of it over HTTPS,
 the sign-in only ever sent to api.trigglow.com, and the plugin only opens its own fixed pages on
-www.trigglow.com and GitHub. In stream mode your stream goes from your computer straight to your
-platform and the destinations you added; no Trigglow server is in the path.
+www.trigglow.com and GitHub. In stream mode your stream goes from your computer straight to the
+service set in OBS; no Trigglow server is in the path.
 
 **Do I need Trigglow's Stream Deck plugin?**
 No. The plugin's ten OBS hotkeys (toggle, on, off, back to live, +5 s, -5 s, dump, three presets)

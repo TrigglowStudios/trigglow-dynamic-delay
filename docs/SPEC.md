@@ -554,7 +554,7 @@ links `CURL::libcurl`; macOS 12's libcurl 7.79 is handled; before 1.0.0 `Availab
 there and every call returned "unavailable"). The libcurl path follows the same rules, plus HTTPS
 on port 443 only; without libcurl (the standalone unit tests) it stays "unavailable". It was
 written and reviewed on Windows and built by CI; it hasn't been run on a real Mac or Linux machine
-yet. (Stream mode's relay opens its own RTMP/RTMPS connections to the stream destinations through
+yet. (Stream mode's relay opens its own RTMP/RTMPS connection to the streamer's service through
 FFmpeg, not through this path: `docs/STREAM_MODE.md`.) Every request is HTTPS with TLS
 1.2 or newer, never follows a redirect (a 3xx is an error, so a Bearer token can't be bounced to
 another host), sends no cookies and no Windows auto-logon, has per-step timeouts plus an overall
@@ -1427,7 +1427,7 @@ stream-delay-controller.*     → v1.0.0 stream mode, OBS side (docs/STREAM_MODE
                                 the private loopback service, delay on/off/seconds, dump, presets,
                                 scene rules, the badge on output channel 61, settings checks
 stream-relay.*                → v1.0.0 the relay (FFmpeg avformat, Windows): RTMP listener on
-                                127.0.0.1, one sender per destination, back-off, drain
+                                127.0.0.1, the sender to the streamer's service, back-off, drain
 packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: splices, timestamp rewrite,
                                 trimming, dump floor; pure
 stream-mode-panel.*           → v1.0.0 the dock's stream mode section

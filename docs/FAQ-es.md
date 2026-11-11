@@ -46,13 +46,6 @@ en automático o por encima de 4 s; cámbialo en `Ajustes → Salida` (modo de s
 `Ajustes → Avanzado → Retardo de la transmisión` suma su retardo fijo encima de este. Desactívalo y usa el
 de Dynamic Delay.
 
-**¿Puedo emitir a varias plataformas a la vez?**
-Sí. Añade destinos en el dock (un nombre, un servidor rtmp:// o rtmps:// y su clave): reciben el
-mismo directo retrasado, de la misma y única codificación. Cada uno se conecta, reintenta (a los 2,
-4, 8 y 15 s) y muestra su estado por su cuenta, así que si uno falla los demás siguen. Sus claves se
-guardan en este ordenador, en el `stream-mode-settings.json` del plugin, igual que OBS guarda tu
-propia clave.
-
 **¿Qué hace "Borrar lo que aún no se ha emitido"?**
 ¿Se ha visto algo que no debía con el delay activo? Púlsalo (en el dock, con un atajo o por
 obs-websocket): los segundos que aún esperan en el delay no se envían nunca. El directo salta al
@@ -75,8 +68,8 @@ Empezar un directo nuevo o cerrar OBS también lo corta.
 
 **¿Por qué OBS muestra 0 frames perdidos en modo stream?**
 Ahora OBS envía el directo al relay de tu propio ordenador, así que su contador de congestión solo
-ve ese enlace local. El dock muestra en su lugar el estado y la tasa de cada destino, y un destino
-que se queda más de 4 s atrás (subida lenta) vuelve a saltar al delay en el siguiente keyframe en
+ve ese enlace local. El dock muestra en su lugar el estado y la tasa de la conexión, y si el directo
+se queda más de 4 s atrás (subida lenta) vuelve a saltar al delay en el siguiente keyframe en
 vez de dejar que el delay crezca.
 
 **¿Está probado el modo stream?**
@@ -380,8 +373,8 @@ renovación cuando toca) y una comprobación de la última release de este repos
 api.github.com. Todo lo demás solo ocurre cuando lo usas: iniciar sesión, cerrar sesión, preguntar a
 Trigi y enviar un reporte. Todo por HTTPS, el inicio de sesión solo se envía a api.trigglow.com, y
 el plugin solo abre sus propias páginas fijas de www.trigglow.com y GitHub. En modo stream tu
-directo va de tu ordenador directamente a tu plataforma y a los destinos que hayas añadido; no hay
-ningún servidor de Trigglow por medio.
+directo va de tu ordenador directamente al servicio que tengas en OBS; no hay ningún servidor de
+Trigglow por medio.
 
 **¿Necesito el plugin de Stream Deck de Trigglow?**
 No. Los diez atajos de OBS del plugin (activar/desactivar, activar, desactivar, volver al directo,

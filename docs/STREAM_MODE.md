@@ -32,14 +32,14 @@ holds it.
    starts) `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
    RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
    `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
-2. It starts `StreamRelay` (FFmpeg avformat, Windows): a listener on `127.0.0.1:<free port>` and one
-   sender per destination: the streamer's service first, then the extra destinations from the dock.
+2. It starts `StreamRelay` (FFmpeg avformat, Windows): a listener on `127.0.0.1:<free port>` and a
+   sender to the streamer's service.
 3. It points **that output** at the relay with a private `rtmp_custom` service. The streamer's saved
    service is untouched; OBS sets it on the output again at every start.
 4. OBS publishes to the relay; the relay demuxes the FLV (no decoding) into `PacketHistory`
    (`packet-delay-core.*`), stamping each packet with its arrival time.
 5. Each sender's `SinkScheduler` sends packet *p* once `now >= arrival(p) + delay`, remuxed to FLV
-   over RTMP/RTMPS (SChannel TLS), with the destination's connection opened when the first packet
+   over RTMP/RTMPS (SChannel TLS), with the platform connection opened when the first packet
    is due (a stream that starts delayed starts that much later on the platform).
 
 ### Changing the delay live
@@ -47,7 +47,7 @@ holds it.
 The sender **splices**: it jumps to the newest video keyframe that is at least *delay* old and
 rewrites timestamps so the next frame follows the last one sent by one frame interval. Adding delay
 jumps back: viewers see the last seconds again, never anything newer. Removing it jumps forward.
-The destination sees one continuous stream: no reconnect, no new header. The step is the keyframe
+The platform sees one continuous stream: no reconnect, no new header. The step is the keyframe
 interval (2 s recommended); the dock warns when it is on auto or above 4 s (see Settings checks).
 
 The history always reaches back `max(delay, kept)` seconds plus two keyframe intervals, so raising
@@ -57,12 +57,12 @@ history holds makes the sender hold until the oldest kept keyframe is old enough
 
 ### Network problems
 
-- A destination that can't connect or send retries with back-off (2, 4, 8, 15 s) and a fresh
-  timeline, at the delay. The others carry on.
-- A destination that falls more than 4 s behind its delay (slow upload) jumps to the delay again at
+- If the connection to the platform can't connect or send, the sender retries with back-off (2, 4,
+  8, 15 s) and a fresh timeline, at the delay.
+- If the sender falls more than 4 s behind its delay (slow upload), it jumps to the delay again at
   the next keyframe, instead of letting the delay grow (`resyncs` in the status).
 - OBS's own congestion handling only sees the loopback, so OBS's dropped-frames counter stays at 0
-  in stream mode; the dock shows each destination's state and rate instead.
+  in stream mode; the dock shows the connection's state and rate instead.
 
 ### Stopping
 
@@ -73,8 +73,8 @@ sending now". A new stream, or closing OBS, cuts it.
 ### Dump
 
 "Dump what viewers haven't seen" (dock, hotkey, obs-websocket `DumpDelay`) sets a splice floor at
-now on the history (`PacketHistory::SetSpliceFloor`) and the delay to 0, under the lock the senders
-take before `Due()`. Every sender re-splices to the first keyframe that arrives after the floor
+now on the history (`PacketHistory::SetSpliceFloor`) and the delay to 0, under the lock the sender
+takes before `Due()`. The sender re-splices to the first keyframe that arrives after the floor
 (within one keyframe interval), so the seconds still waiting in the delay are never sent. The
 controller raises the delay again after its seconds plus 3 s; the splice can't go below the floor,
 so it only rewinds into what came after the dump. Checked with the harness: dump at 25 s with a
@@ -112,7 +112,7 @@ mode worse (`StreamDelayController::CheckObsSettings`):
 ## Controls
 
 - Dock: on/off, back to live, seconds (1-600, +/-5), dump, three presets, delay by scene,
-  destinations, kept seconds (10-600), drain, the badge.
+  kept seconds (10-600), drain, the badge.
 - Hotkeys (OBS Settings > Hotkeys): Toggle, Enable, Disable (names unchanged), Back to live,
   Delay +5 s, Delay -5 s, Dump, Preset 1-3. They go through `DelayRouter`: stream mode when it
   handles the controls, scene mode otherwise (there, +/-5 and presets change the seconds for the

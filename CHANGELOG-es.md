@@ -20,14 +20,12 @@ inicio de sesión se mantienen.
     últimos segundos y nunca nada más nuevo.
   - **Todas las escenas van con delay**, así que puedes cambiar de escena con el delay activo.
   - **Tu grabación, el Replay Buffer y la cámara virtual siguen en directo.**
-  - **Multistream:** añade más destinos (cualquier servidor rtmp:// o rtmps:// con su clave) y
-    reciben el mismo directo con delay, con una sola codificación.
   - **Al parar el directo,** el plugin envía los segundos que los espectadores aún no han visto
     (opcional).
   - Funciona con tus ajustes de emisión de OBS de siempre (Twitch, YouTube, Kick, TikTok y
     cualquier servidor RTMP o RTMPS); no hay que cambiar nada. Enhanced Broadcasting, SRT y WHIP
     usan el modo escena.
-  - El dock muestra el estado de cada destino, la RAM usada y el bitrate.
+  - El dock muestra el estado de la conexión, la RAM usada y el bitrate.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
 - **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
   "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).

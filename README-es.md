@@ -22,8 +22,6 @@ codificar nada, así que casi no gasta CPU, y su RAM es tu bitrate por los segun
   activarlo, los espectadores vuelven a ver los últimos segundos, nunca nada más nuevo.
 - Todas las escenas van con delay, así que puedes cambiar de escena con el delay activo.
 - La grabación, el Replay Buffer y la cámara virtual siguen en directo.
-- Multistream: los destinos extra rtmp:// o rtmps:// reciben el mismo stream con delay, con una
-  sola codificación.
 - "Borrar lo que aún no se ha emitido": los segundos que aún esperan no se envían nunca, el stream
   salta al directo y el delay vuelve solo.
 - Delay por escena (activado en tu escena de juego, quitado en la de charla), tres presets, la
@@ -53,9 +51,9 @@ Modo stream (Windows)
                      grabación, Replay Buffer, cámara virtual               historial de paquetes en RAM
                      (en directo, sin tocar)                                (sin decodificar ni codificar)
                                                                                             |
-                                                              un emisor por destino; cada uno envía
-                                                              el paquete p en llegada(p) + delay, por
-                                                              RTMP/RTMPS -> Twitch / YouTube / Kick / ...
+                                                              el emisor envía el paquete p en
+                                                              llegada(p) + delay, por RTMP/RTMPS
+                                                              -> tu servicio de OBS (Twitch, YouTube...)
 
 Modo escena (todas las plataformas)
 
@@ -68,10 +66,10 @@ Modo escena (todas las plataformas)
   Broadcasting), lee el servidor y la clave de tu servicio, arranca el relay y apunta **esa salida**
   al relay con un servicio privado. Tus ajustes de emisión guardados no cambian nunca.
 - **`StreamRelay`** (`src/stream-relay.*`, avformat de FFmpeg, solo Windows) escucha solo en
-  `127.0.0.1`, guarda los paquetes FLV según llegan, sin decodificarlos, y lleva un emisor por
-  destino, cada uno con su conexión, sus reintentos y su estado.
+  `127.0.0.1`, guarda los paquetes FLV según llegan, sin decodificarlos, y lleva el emisor
+  hacia tu servicio de OBS, con su conexión, sus reintentos y su estado.
 - **`PacketHistory` / `SinkScheduler`** (`src/packet-delay-core.*`, puros y con tests) deciden qué
-  envía cada emisor: un cambio de delay empalma en el keyframe adecuado más cercano y reescribe los
+  envía el emisor: un cambio de delay empalma en el keyframe adecuado más cercano y reescribe los
   timestamps, así que la plataforma ve un único stream continuo.
 - **`BufferModeController`** (`src/buffer-mode-controller.*`) lleva el modo escena: los filtros de
   delay, el ring buffer, la escena auxiliar, la cuenta atrás de llenado y la escalera de
@@ -181,10 +179,9 @@ Broadcasting desactivado. Se recomienda un intervalo de fotogramas clave de 2 s
   `api.trigglow.com`, se guarda cifrado para tu usuario de Windows (en macOS y Linux, en un archivo
   que solo puede leer tu usuario, modo 0600) y nunca se escribe en el log de OBS, igual que los
   códigos de inicio de sesión, los IDs y lo que escribes a Trigi.
-- **El modo stream** envía tu stream directamente de tu ordenador a tu plataforma y a los destinos
-  extra que añadas: el relay solo escucha en `127.0.0.1` y no hay ningún servidor de Trigglow por
-  medio. Las claves de retransmisión de los destinos extra se guardan en este ordenador, en el
-  `stream-mode-settings.json` del plugin, igual que OBS guarda tu propia clave en su `service.json`.
+- **El modo stream** envía tu stream directamente de tu ordenador al servicio que tengas en OBS: el
+  relay solo escucha en `127.0.0.1`, lee tu servidor y tu clave de OBS al empezar el directo sin
+  guardarlos en ningún otro sitio, y no hay ningún servidor de Trigglow por medio.
 - **Trigi** recibe lo que escribes y, solo si lo marcas, un pequeño conjunto de cifras y estados
   técnicos de OBS (nunca nombres, rutas, URLs ni claves), que ves antes de enviarlo. **El log de
   OBS nunca se envía a la IA**; solo se adjunta a un ticket si marcas su casilla, cosa que puedes
@@ -296,14 +293,13 @@ sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
 4. **Borrar lo que aún no se ha emitido** cuando se te cuela algo en pantalla: los segundos que aún
    esperan en el delay no se envían nunca, el stream salta al directo y el delay vuelve solo
    pasados sus segundos.
-5. Opcional: **Destinos** para multistream (nombre, servidor rtmp:// o rtmps://, clave), **Delay
-   por escena** (activa el delay con sus propios segundos, o lo quita, al cambiar a una escena),
+5. Opcional: **Delay por escena** (activa el delay con sus propios segundos, o lo quita, al cambiar a una escena),
    **Mostrar la insignia de delay a los espectadores** y su esquina, y **Al parar el directo,
    enviar los segundos que los espectadores aún no han visto** (activado por defecto; **Dejar de
    enviar ya** lo corta).
 
 El dock muestra el estado ("En directo, sin delay", "Delay activo: tus espectadores ven el directo
-30 s tarde"...), el estado de cada destino y lo que lleva enviado, la RAM guardada y el bitrate, y
+30 s tarde"...), el estado de la conexión, la RAM guardada y el bitrate, y
 los ajustes de OBS que conviene cambiar. El delay se mueve en pasos de tu intervalo de fotogramas
 clave: ponlo en 2 s en `Ajustes → Salida`. Si un directo no puede usar el modo stream (Enhanced
 Broadcasting, SRT, WHIP...), el dock dice por qué y el modo escena funciona como siempre.
@@ -408,7 +404,7 @@ src/
                                      delay y sus segundos, borrar, presets, reglas por escena, la
                                      insignia, las comprobaciones de ajustes
   stream-relay.{hpp,cpp}           → el relay (avformat de FFmpeg, Windows): escucha RTMP en
-                                     127.0.0.1, un emisor por destino, reintentos, envío al parar
+                                     127.0.0.1, el emisor hacia tu servicio de OBS, reintentos, envío al parar
   packet-delay-core.{hpp,cpp}      → puro: PacketHistory y SinkScheduler (empalmes, reescritura de
                                      timestamps, recorte, suelo del borrado), con tests
   stream-mode-panel.{hpp,cpp}      → la sección del modo stream en el dock

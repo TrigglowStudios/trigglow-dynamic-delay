@@ -89,7 +89,7 @@ Every answer's `responseData` has `ok: true` and the status:
 | `delayOn` | the delay is on (or armed for the next stream) |
 | `delaySeconds` | the seconds set |
 | `appliedSeconds` | what viewers get now (0 when live) |
-| `behindSeconds` | stream mode: how old what the main destination sends is, to 0.1 s |
+| `behindSeconds` | stream mode: how old what the relay sends is, to 0.1 s |
 | `ramMegabytes` | stream mode: the RAM kept, to 0.1 MB |
 | `dumped` | only in `DumpDelay`'s answer |
 

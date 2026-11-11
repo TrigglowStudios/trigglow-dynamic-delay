@@ -179,7 +179,7 @@ a live stream yet).
   The plugin points OBS's stream output at a relay on `127.0.0.1` and sends the already-encoded
   stream to the platform after the delay: no decode, no second encode, RAM = bitrate × seconds kept.
   0–600 s changed live with no reconnect, every scene delayed, recording / Replay Buffer / virtual
-  camera live, multistream from one encode, drain on stop. Details: `docs/STREAM_MODE.md`.
+  camera live, drain on stop. Details: `docs/STREAM_MODE.md`.
 - **Dump what viewers haven't seen**, **delay by scene** (on with its own seconds, or off, per
   scene), **three presets** with hotkeys, the **delay badge** in stream mode (up to 600 s) and
   **settings checks** (keyframe interval, OBS's own Stream Delay). Stream mode only, except presets.

@@ -200,8 +200,8 @@ la CI, pero aún no se han usado en un directo).
   2026-09-08. El plugin apunta la salida de emisión de OBS a un relay en `127.0.0.1` y envía a la
   plataforma el stream ya codificado, pasado el delay: sin decodificar, sin una segunda
   codificación, RAM = bitrate × segundos guardados. De 0 a 600 s cambiables en directo sin
-  reconectar, todas las escenas con delay, grabación / Replay Buffer / cámara virtual en directo,
-  multistream con una sola codificación y envío de lo pendiente al parar. Detalles:
+  reconectar, todas las escenas con delay, grabación / Replay Buffer / cámara virtual en directo
+  y envío de lo pendiente al parar. Detalles:
   `docs/STREAM_MODE-es.md`.
 - **Borrar lo que aún no se ha emitido**, **delay por escena** (activado con sus propios segundos,
   o quitado, por escena), **tres presets** con atajos, la **insignia de delay** en el modo stream

@@ -606,7 +606,7 @@ enlaza `CURL::libcurl`; se tiene en cuenta la libcurl 7.79 de macOS 12; antes de
 mismas reglas, y además solo HTTPS por el puerto 443; sin libcurl (los tests unitarios
 independientes) sigue en "no disponible". Se escribió y revisó en Windows y lo compila la CI; aún no
 se ha ejecutado en un Mac ni en un equipo Linux de verdad. (El relay del modo stream abre sus
-propias conexiones RTMP/RTMPS a los destinos del directo con FFmpeg, no por este camino:
+propia conexión RTMP/RTMPS al servicio del streamer con FFmpeg, no por este camino:
 `docs/STREAM_MODE-es.md`.) Cada petición es HTTPS con TLS 1.2 o superior, nunca sigue una
 redirección (un 3xx es un error, así que un token Bearer no puede rebotar a otro host), no envía cookies ni el inicio de sesión
 automático de Windows, tiene timeouts por paso y un límite total (una ventana de recepción más larga
@@ -1562,7 +1562,7 @@ stream-delay-controller.*     → v1.0.0 modo stream, lado de OBS (docs/STREAM_M
                                 quitado/segundos, borrado, presets, reglas por escena, la insignia en
                                 el canal de salida 61, comprobaciones de ajustes
 stream-relay.*                → v1.0.0 el relay (FFmpeg avformat, Windows): listener RTMP en
-                                127.0.0.1, un emisor por destino, back-off, envío final al parar
+                                127.0.0.1, el emisor hacia el servicio del streamer, back-off, envío final al parar
 packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: empalmes, reescritura de
                                 marcas de tiempo, recorte, suelo del borrado; puro
 stream-mode-panel.*           → v1.0.0 la sección del modo stream del dock

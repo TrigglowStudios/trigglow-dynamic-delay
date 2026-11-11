@@ -22,7 +22,6 @@ almost no CPU and its RAM is your bitrate times the seconds kept: about 45 MB pe
   on, viewers see the last seconds again, never anything newer.
 - Every scene is delayed, so switching scenes while delayed is safe.
 - Recording, the Replay Buffer and the virtual camera stay live.
-- Multistream: extra rtmp:// or rtmps:// destinations get the same delayed stream from one encode.
 - "Dump what viewers haven't seen": the seconds still waiting are never sent, the stream jumps to
   live and the delay comes back on its own.
 - Delay by scene (on in your game scene, off in Just Chatting), three presets, the delay badge for
@@ -51,9 +50,9 @@ Stream mode (Windows)
                  recording, Replay Buffer, virtual camera           packet history in RAM
                  (live, untouched)                                  (no decode, no encode)
                                                                               |
-                                                     one sender per destination, each sending
-                                                     packet p at arrival(p) + delay, over
-                                                     RTMP/RTMPS -> Twitch / YouTube / Kick / ...
+                                                     the sender sends packet p at
+                                                     arrival(p) + delay, over RTMP/RTMPS
+                                                     -> your OBS service (Twitch, YouTube...)
 
 Scene mode (all platforms)
 
@@ -66,10 +65,10 @@ Scene mode (all platforms)
   Broadcasting), it reads your service's server and key, starts the relay, and points **that
   output** at the relay with a private service. Your saved stream settings are never changed.
 - **`StreamRelay`** (`src/stream-relay.*`, FFmpeg's avformat, Windows only) listens on
-  `127.0.0.1` only, stores the FLV packets as they arrive without decoding them, and runs one
-  sender per destination, each with its own connection, retries and state.
+  `127.0.0.1` only, stores the FLV packets as they arrive without decoding them, and runs the
+  sender to your OBS service, with its own connection, retries and state.
 - **`PacketHistory` / `SinkScheduler`** (`src/packet-delay-core.*`, pure and unit-tested) decide
-  what each sender sends: a delay change splices at the nearest suitable keyframe and rewrites
+  what the sender sends: a delay change splices at the nearest suitable keyframe and rewrites
   timestamps, so the platform sees one continuous stream.
 - **`BufferModeController`** (`src/buffer-mode-controller.*`) runs scene mode: the delay filters,
   the ring buffer, the helper scene, the fill countdown and the degradation ladder.
@@ -174,10 +173,9 @@ interval of 2 s is recommended (Settings > Output): the delay moves in steps of 
   stored encrypted for your Windows user (on macOS and Linux, in a file only your user can read,
   mode 0600), and never written to the OBS log, like the sign-in codes, IDs and what you write to
   Trigi.
-- **Stream mode** sends your stream from your computer straight to your platform and the extra
-  destinations you add: the relay listens on `127.0.0.1` only, and no Trigglow server is in the
-  path. The extra destinations' stream keys are saved on this computer in the plugin's
-  `stream-mode-settings.json`, the same way OBS saves your own key in its `service.json`.
+- **Stream mode** sends your stream from your computer straight to the service set in OBS: the
+  relay listens on `127.0.0.1` only, reads your server and key from OBS when the stream starts
+  without saving them anywhere else, and no Trigglow server is in the path.
 - **Trigi** receives what you type and, only if you tick it, a small set of OBS technical numbers
   and states (never names, paths, URLs or keys), shown before you send it. **Your OBS log is never
   sent to the AI**; it's attached to a ticket only if you tick its box, which you can do once
@@ -287,13 +285,12 @@ it. Sign in once with your free Trigglow account from the dock.
 4. **Dump what viewers haven't seen** when something slipped on screen: the seconds still waiting
    in the delay are never sent, the stream jumps to live, and the delay comes back on its own
    after its seconds.
-5. Optional: **Destinations** for multistream (name, rtmp:// or rtmps:// server, key), **Delay by
-   scene** (turn the delay on with its own seconds, or off, when you switch to a scene), **Show the
+5. Optional: **Delay by scene** (turn the delay on with its own seconds, or off, when you switch to a scene), **Show the
    delay badge to viewers** and its corner, and **When I stop streaming, send the seconds viewers
    haven't seen** (on by default; **Stop sending now** cuts it).
 
-The dock shows the state ("Live, no delay", "Delay on: viewers see the stream 30 s late"...), each
-destination's state and data sent, the RAM kept and the bitrate, and the OBS settings worth changing.
+The dock shows the state ("Live, no delay", "Delay on: viewers see the stream 30 s late"...), the
+connection's state, the RAM kept and the bitrate, and the OBS settings worth changing.
 The delay moves in steps of your keyframe interval: set it to 2 s in `Settings → Output`. If a
 stream can't use stream mode (Enhanced Broadcasting, SRT, WHIP...), the dock says why and scene mode
 works as before.
@@ -394,7 +391,7 @@ src/
                                      stream output at the relay, delay on/off/seconds, dump,
                                      presets, scene rules, the badge, the settings checks
   stream-relay.{hpp,cpp}           → the relay (FFmpeg avformat, Windows): RTMP listener on
-                                     127.0.0.1, one sender per destination, retries, drain
+                                     127.0.0.1, the sender to your OBS service, retries, drain
   packet-delay-core.{hpp,cpp}      → pure: PacketHistory and SinkScheduler (splices, timestamp
                                      rewrite, trimming, dump floor), unit-tested
   stream-mode-panel.{hpp,cpp}      → the dock's stream mode section

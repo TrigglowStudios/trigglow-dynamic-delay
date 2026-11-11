@@ -14,8 +14,7 @@ resources directory would otherwise never find out they exist.
 - No password, email, or any personal data is ever typed into or stored by the plugin itself --
   see "How login works" below. The plugin only ever holds its own opaque token, which works for
   nothing but the few calls the plugin makes.
-- No plugin configuration (scenes, delay seconds, quality floor, destinations, presets, scene
-  rules) is gated. Only turning the delay on is (Enable, Toggle, a preset or a scene rule that turns
+- No plugin configuration (scenes, delay seconds, quality floor, presets, scene rules) is gated. Only turning the delay on is (Enable, Toggle, a preset or a scene rule that turns
   it on). Turning it off, back to live and Dump never are.
 - No account data collected here is used for marketing or resold to third parties without separate,
   explicit consent -- that's a Trigglow product/privacy-policy commitment, not something enforced
