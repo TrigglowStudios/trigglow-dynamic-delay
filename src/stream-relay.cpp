@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "logging.hpp"
 #include "packet-delay-core.hpp"
+#include "rtmp-publisher.hpp"
 #include "spill-file.hpp"
 
 #include <algorithm>
@@ -337,6 +338,12 @@ struct StreamRelay::Impl {
 		SinkStatus status;
 		uint64_t appliedGen = 0;
 		bool finished = false;
+		// rtmp:// and rtmps:// go through the relay's own RTMP layer
+		// (rtmp-publisher.hpp) unless it can't be used here, or the server
+		// dropped its setup twice in a row: FFmpeg's RTMP client from then
+		// on.
+		bool ffmpegRtmp = false;
+		int setupProblems = 0;
 		int64_t statBytes = 0;
 		int64_t statNs = 0;
 	};
@@ -587,8 +594,8 @@ struct StreamRelay::Impl {
 			Event(error);
 	}
 
-	bool Connect(Sink &sink, AVFormatContext *&oc, std::vector<int> &map, SinkInterruptCtx &ictx,
-		     std::string &error)
+	bool Connect(Sink &sink, AVFormatContext *&oc, std::unique_ptr<RtmpPublisher> &pub, std::vector<int> &map,
+		     SinkInterruptCtx &ictx, const std::string &host, std::string &error)
 	{
 		const std::string &server = sink.dest.server;
 		int ret = avformat_alloc_output_context2(&oc, nullptr, "flv", server.c_str());
@@ -610,6 +617,41 @@ struct StreamRelay::Impl {
 			st->codecpar->codec_tag = 0;
 			st->time_base = AVRational{1, 1000};
 			map[i] = st->index;
+		}
+
+		if (!sink.ffmpegRtmp && RtmpPublisher::Handles(server)) {
+			pub = std::make_unique<RtmpPublisher>();
+			const RtmpPublisher::OpenResult result =
+				pub->Open(server, sink.dest.key, &oc->interrupt_callback, error);
+			if (result == RtmpPublisher::OpenResult::Ok) {
+				oc->pb = pub->MuxerIo();
+				oc->flags |= AVFMT_FLAG_CUSTOM_IO;
+				sink.setupProblems = 0;
+			} else {
+				pub.reset();
+				if (result == RtmpPublisher::OpenResult::Failed)
+					return false;
+				// Once could be the network; twice in a row, this code.
+				if (result == RtmpPublisher::OpenResult::ProtocolProblem && ++sink.setupProblems < 2)
+					return false;
+				sink.ffmpegRtmp = true;
+				TRIGGLOW_LOG_WARN(kComponent, "%s: %s; FFmpeg's RTMP client is used from now on",
+						  host.c_str(), error.c_str());
+				if (result == RtmpPublisher::OpenResult::ProtocolProblem)
+					return false;
+				error.clear();
+			}
+		}
+		if (pub) {
+			AVDictionary *mux = nullptr;
+			av_dict_set(&mux, "flvflags", "no_duration_filesize", 0);
+			ret = avformat_write_header(oc, &mux);
+			av_dict_free(&mux);
+			if (ret < 0) {
+				error = AvError(ret);
+				return false;
+			}
+			return pub->Flush(error);
 		}
 
 		AVDictionary *io = nullptr;
@@ -636,12 +678,19 @@ struct StreamRelay::Impl {
 		return true;
 	}
 
-	static void Disconnect(AVFormatContext *&oc, bool writeTrailer)
+	static void Disconnect(AVFormatContext *&oc, std::unique_ptr<RtmpPublisher> &pub, bool writeTrailer)
 	{
+		if (oc && writeTrailer && oc->pb)
+			av_write_trailer(oc);
+		if (pub) {
+			// Sends what the trailer wrote, then FCUnpublish and deleteStream.
+			pub->Close(writeTrailer);
+			if (oc)
+				oc->pb = nullptr; // The publisher's.
+			pub.reset();
+		}
 		if (!oc)
 			return;
-		if (writeTrailer && oc->pb)
-			av_write_trailer(oc);
 		if (oc->pb)
 			avio_closep(&oc->pb);
 		avformat_free_context(oc);
@@ -651,6 +700,7 @@ struct StreamRelay::Impl {
 	void SinkMain(Sink &sink)
 	{
 		AVFormatContext *oc = nullptr;
+		std::unique_ptr<RtmpPublisher> pub;
 		std::vector<int> map;
 		SinkInterruptCtx ictx{this, &sink};
 		int backoffSeconds = 2;
@@ -702,20 +752,25 @@ struct StreamRelay::Impl {
 				waitingForDisk = true;
 				return false;
 			});
-			if (due.empty()) {
+			// Nothing to send: wait, unless the server's messages are due to
+			// be read (an idle connection still answers pings).
+			const bool serviceOnly = due.empty();
+			if (serviceOnly) {
 				if (ingestEnded && sink.sched.Started() && sink.sched.CaughtUp(history))
 					break;
-				if (waitingForDisk) {
-					ioCv.notify_one();
-					cv.wait_for(lock, std::chrono::milliseconds(5));
+				if (!pub || !pub->ServiceDue()) {
+					if (waitingForDisk) {
+						ioCv.notify_one();
+						cv.wait_for(lock, std::chrono::milliseconds(5));
+						continue;
+					}
+					const int64_t next = sink.sched.NextDueNs(history);
+					int64_t waitNs = 100 * 1000000LL;
+					if (next >= 0)
+						waitNs = std::clamp<int64_t>(next - NowNs(), 1000000LL, waitNs);
+					cv.wait_for(lock, std::chrono::nanoseconds(waitNs));
 					continue;
 				}
-				const int64_t next = sink.sched.NextDueNs(history);
-				int64_t waitNs = 100 * 1000000LL;
-				if (next >= 0)
-					waitNs = std::clamp<int64_t>(next - NowNs(), 1000000LL, waitNs);
-				cv.wait_for(lock, std::chrono::nanoseconds(waitNs));
-				continue;
 			}
 			scratch.clear();
 			out.clear();
@@ -726,7 +781,7 @@ struct StreamRelay::Impl {
 				out.push_back(Outgoing{at, o.packet->recordBytes, o.packet->stream, o.ptsMs, o.dtsMs,
 						       o.packet->arrivalNs});
 			}
-			if (out.empty())
+			if (out.empty() && !serviceOnly)
 				continue;
 			lock.unlock();
 
@@ -738,9 +793,10 @@ struct StreamRelay::Impl {
 					sink.status.state = sink.status.reconnects > 0 ? SinkState::Reconnecting
 										       : SinkState::Connecting;
 				}
-				ok = Connect(sink, oc, map, ictx, error);
+				ok = Connect(sink, oc, pub, map, ictx, host, error);
 				if (ok) {
-					TRIGGLOW_LOG_INFO(kComponent, "%s: connected", host.c_str());
+					TRIGGLOW_LOG_INFO(kComponent, "%s: connected%s", host.c_str(),
+							  pub ? "" : " (FFmpeg's RTMP client)");
 					backoffSeconds = 2;
 					std::lock_guard<std::mutex> statusLock(m);
 					sink.status.state = SinkState::Live;
@@ -770,6 +826,10 @@ struct StreamRelay::Impl {
 					error = AvError(ret);
 				}
 			}
+			// The batch goes out in a few large writes (and the server's
+			// messages are read).
+			if (ok && pub)
+				ok = pub->Flush(error);
 			// A catch-up burst can make the scratch large: don't keep it.
 			if (scratch.capacity() > 2 * PayloadStore::kDefaultBlockBytes)
 				std::vector<uint8_t>().swap(scratch);
@@ -777,8 +837,14 @@ struct StreamRelay::Impl {
 			lock.lock();
 			if (ok) {
 				const int64_t now = NowNs();
-				sink.status.behindSeconds = static_cast<double>(now - out.back().arrivalNs) / 1e9;
-				const int64_t written = oc && oc->pb ? avio_tell(oc->pb) : 0;
+				if (!out.empty())
+					sink.status.behindSeconds =
+						static_cast<double>(now - out.back().arrivalNs) / 1e9;
+				int64_t written = 0;
+				if (pub)
+					written = static_cast<int64_t>(pub->BytesSent());
+				else if (oc && oc->pb)
+					written = avio_tell(oc->pb);
 				sink.status.bytesSent = static_cast<uint64_t>(std::max<int64_t>(written, 0));
 				if (sink.statNs == 0) {
 					sink.statNs = now;
@@ -810,7 +876,7 @@ struct StreamRelay::Impl {
 			// Failed to connect or to send: reconnect after a back-off, with a
 			// fresh timeline, at the delay.
 			lock.unlock();
-			Disconnect(oc, false);
+			Disconnect(oc, pub, false);
 			TRIGGLOW_LOG_WARN(kComponent, "%s: %s; retrying in %d s", host.c_str(), error.c_str(),
 					  backoffSeconds);
 			Event(sink.dest.name + ": " + error);
@@ -830,7 +896,7 @@ struct StreamRelay::Impl {
 		const bool drained = ingestEnded && !stop.load() && !gaveUp;
 		lock.unlock();
 		av_packet_free(&pk);
-		Disconnect(oc, !gaveUp);
+		Disconnect(oc, pub, !gaveUp);
 		{
 			std::lock_guard<std::mutex> statusLock(m);
 			if (sink.status.state != SinkState::Failed)

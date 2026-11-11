@@ -23,8 +23,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // only; the streamer's service settings are never changed). The relay keeps
 // the encoded packets (packet-delay-core.hpp) and sends them on to every
 // destination -- the streamer's own service plus any extra ones (multistream)
-// -- each after the delay, through FFmpeg's RTMP/RTMPS client. Nothing is
-// decoded or encoded again.
+// -- each after the delay: FFmpeg's FLV muxer, the relay's own RTMP layer
+// (rtmp-publisher.hpp: 4096-byte chunks whatever the server announces) over
+// FFmpeg's TCP/TLS, with FFmpeg's RTMP client as the fallback and for other
+// URLs. Nothing is decoded or encoded again.
 //
 // Threads: one reads OBS's stream, one per destination writes. All of them
 // stop and are joined in Stop() / the destructor. No OBS or Qt call is made

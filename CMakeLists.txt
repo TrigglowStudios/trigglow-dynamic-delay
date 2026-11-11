@@ -106,8 +106,8 @@ if(OS_WINDOWS)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxgi)
 
   # v1.0.0 stream mode: the relay (src/stream-relay.*) reads OBS's stream on
-  # 127.0.0.1 and sends it on with FFmpeg's FLV muxer and RTMP/RTMPS client
-  # (TLS through Windows' own SChannel). avformat-63.dll comes from the same
+  # 127.0.0.1 and sends it on with FFmpeg's FLV muxer, its own RTMP layer
+  # (src/rtmp-*) and FFmpeg's TCP/TLS (TLS through Windows' own SChannel). avformat-63.dll comes from the same
   # BtbN package and imports only avcodec-63, avutil-61 and system DLLs.
   # Not in the core-only build: hosts there have their own outputs.
   if(NOT TRIGGLOW_CORE_ONLY)
@@ -364,6 +364,10 @@ else()
       src/spill-file.hpp
       src/stream-relay.cpp
       src/stream-relay.hpp
+      src/rtmp-publisher.cpp
+      src/rtmp-publisher.hpp
+      src/rtmp-wire.cpp
+      src/rtmp-wire.hpp
       src/stream-delay-controller.cpp
       src/stream-delay-controller.hpp
       src/stream-mode-panel.cpp

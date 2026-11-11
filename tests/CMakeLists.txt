@@ -102,6 +102,13 @@ target_include_directories(payload_store_tests PRIVATE "${_src}")
 set_target_properties(payload_store_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME payload_store_tests COMMAND payload_store_tests)
 
+# v1.0.0 stream mode: the relay's RTMP bytes (AMF0, chunks both ways, FLV tags
+# to messages), no sockets.
+add_executable(rtmp_wire_tests rtmp_wire_tests.cpp check.hpp "${_src}/rtmp-wire.cpp" "${_src}/rtmp-wire.hpp")
+target_include_directories(rtmp_wire_tests PRIVATE "${_src}")
+set_target_properties(rtmp_wire_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME rtmp_wire_tests COMMAND rtmp_wire_tests)
+
 # v1.0.0 stream mode: the encrypted spill file (real temp files, the system's
 # AES: bcrypt on Windows, CommonCrypto on macOS, OpenSSL on Linux when found;
 # without it the encryption checks are skipped).
@@ -271,6 +278,10 @@ if(WIN32)
       relay_harness.cpp
       "${_src}/stream-relay.cpp"
       "${_src}/stream-relay.hpp"
+      "${_src}/rtmp-publisher.cpp"
+      "${_src}/rtmp-publisher.hpp"
+      "${_src}/rtmp-wire.cpp"
+      "${_src}/rtmp-wire.hpp"
       "${_src}/packet-delay-core.cpp"
       "${_src}/packet-delay-core.hpp"
       "${_src}/payload-store.cpp"
