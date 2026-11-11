@@ -172,6 +172,7 @@ private:
 	int64_t offsetMs_ = 0;
 	bool haveTimeline_ = false;
 	int64_t lastVideoDtsOut_ = 0;
+	int64_t maxVideoPtsOut_ = 0; // Newest display time sent (B-frames: ahead of dts).
 	int64_t lastAudioDtsOut_ = 0;
 	int64_t lastAnyDtsOut_ = 0;
 	bool haveVideoOut_ = false;
