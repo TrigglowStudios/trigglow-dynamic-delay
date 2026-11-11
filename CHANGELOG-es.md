@@ -29,6 +29,14 @@ inicio de sesión se mantienen.
     usan el modo escena.
   - El dock muestra el estado de cada destino, la RAM usada y el bitrate.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+- **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
+  "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
+  La sesión se guarda en un archivo que solo puede leer tu usuario.
+- **La insignia de delay para los espectadores en el modo stream**, en la esquina que elijas, hasta
+  600 s.
+- **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
+  automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
+  emisión propio de OBS está activado (se suman).
 - **Atajos nuevos:** Volver al directo, Delay +5 s y Delay -5 s. Los tres de siempre mantienen su
   nombre y su tecla.
 - **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre

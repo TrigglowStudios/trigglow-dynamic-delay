@@ -64,10 +64,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //   - Header values with CR or LF are refused (no header injection).
 //   - Nothing here is logged: not the URL, headers, tokens nor bodies.
 //
-// macOS and Linux have no HTTP client yet (planned for a later version): there
-// Available() is false and Send() returns Error::Unavailable at once, so the
-// account, Trigi and ticket features degrade cleanly instead of failing to
-// build.
+// v1.0.0: macOS and Linux use libcurl (win-http.cpp, TRIGGLOW_HAVE_CURL) with
+// the same rules. Without it (the standalone unit tests there) Available() is
+// false and Send() returns Error::Unavailable at once, so the account, Trigi
+// and ticket features degrade cleanly instead of failing to build.
 namespace trigglow::http {
 
 // Per-step timeouts (WinHttpSetTimeouts). WinHTTP checks them with a coarse

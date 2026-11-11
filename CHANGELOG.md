@@ -27,6 +27,12 @@ sign-in are kept.
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
   - The dock shows each destination's state, the RAM used and the bitrate.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
+- **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
+  "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
+  in a file only your user can read.
+- **The delay badge for viewers in stream mode**, in the corner you choose, up to 600 s.
+- **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
+  delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
 - **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
   names and bindings.
 - **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the

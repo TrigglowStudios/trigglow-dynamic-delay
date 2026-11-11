@@ -299,9 +299,29 @@ void TestPlatformProtector()
 	CHECK(store.Load() == TokenStore::LoadResult::Loaded);
 	CHECK_STR(store.CurrentToken(), "tgp_dpapi-store_7");
 #else
-	CHECK(!protector->Available());
-	std::string out;
-	CHECK(!protector->Protect("x", out));
+	// v1.0.0: a user-only file on macOS and Linux.
+	CHECK(protector->Available());
+	const std::string plain = R"({"v":1,"token":"tgp_posix-check_42"})";
+	std::string sealed;
+	CHECK(protector->Protect(plain, sealed));
+	std::string back;
+	CHECK(protector->Unprotect(sealed, back));
+	CHECK_STR(back, plain);
+	std::string ignored;
+	CHECK(!protector->Unprotect(plain, ignored)); // Not ours: no marker.
+
+	ScratchDir dir("store-posix");
+	const auto file = dir.path() / "trigglow-auth.dat";
+	{
+		TokenStore store(file, {}, MakePlatformProtector());
+		CHECK(store.Save(Sample("tgp_posix-store_7")));
+	}
+	const auto perms = std::filesystem::status(file).permissions();
+	CHECK((perms & (std::filesystem::perms::group_all | std::filesystem::perms::others_all)) ==
+	      std::filesystem::perms::none);
+	TokenStore store(file, {}, MakePlatformProtector());
+	CHECK(store.Load() == TokenStore::LoadResult::Loaded);
+	CHECK_STR(store.CurrentToken(), "tgp_posix-store_7");
 #endif
 }
 

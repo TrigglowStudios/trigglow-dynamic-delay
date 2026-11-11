@@ -82,6 +82,15 @@ bool WriteAtomic(const fs::path &path, const std::string &data)
 		std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
 		if (!file)
 			return false;
+#ifndef _WIN32
+		// User-only before anything is written to it (PosixFileProtector).
+		fs::permissions(tmp, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
+		if (ec) {
+			file.close();
+			fs::remove(tmp, ec);
+			return false;
+		}
+#endif
 		file.write(data.data(), static_cast<std::streamsize>(data.size()));
 		file.flush();
 		if (!file)
@@ -208,6 +217,35 @@ public:
 	}
 };
 
+#else
+
+// v1.0.0, macOS and Linux: the sign-in is kept in a file only the user can
+// read (0600, set by WriteAtomic() before it takes the real name), the way
+// OBS keeps the stream key in its own service.json. The marker only rejects a
+// file that isn't one of ours. The token is scoped to the plugin and revoked
+// by Sign out or from trigglow.com's connected apps.
+constexpr char kPosixMarker[] = "trigglow-posix-v1\n";
+
+class PosixFileProtector final : public SecretProtector {
+public:
+	bool Available() const override { return true; }
+
+	bool Protect(const std::string &plain, std::string &sealed) const override
+	{
+		sealed = kPosixMarker + plain;
+		return true;
+	}
+
+	bool Unprotect(const std::string &sealed, std::string &plain) const override
+	{
+		const std::string marker = kPosixMarker;
+		if (sealed.compare(0, marker.size(), marker) != 0)
+			return false;
+		plain = sealed.substr(marker.size());
+		return true;
+	}
+};
+
 #endif
 
 class UnavailableProtector final : public SecretProtector {
@@ -224,7 +262,7 @@ std::unique_ptr<SecretProtector> MakePlatformProtector()
 #ifdef _WIN32
 	return std::make_unique<DpapiProtector>();
 #else
-	return std::make_unique<UnavailableProtector>();
+	return std::make_unique<PosixFileProtector>();
 #endif
 }
 

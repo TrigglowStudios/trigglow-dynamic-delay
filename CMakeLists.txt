@@ -190,6 +190,15 @@ if(ENABLE_QT)
   find_package(Qt6 COMPONENTS Widgets Core Svg)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Svg)
 
+  # v1.0.0: the HTTPS client on macOS (the SDK's libcurl) and Linux (the
+  # distro's, which OBS itself needs): sign-in, and with it Enable, Trigi and
+  # tickets, work there too (src/win-http.cpp).
+  if(OS_MACOS OR OS_LINUX)
+    find_package(CURL REQUIRED)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_CURL)
+  endif()
+
   if(OS_WINDOWS)
     # AuthManager's HTTPS calls (see docs/ACCOUNT_GATE.md, src/auth-manager.hpp,
     # src/win-http.hpp) go through WinHTTP, not Qt's QNetworkAccessManager --
