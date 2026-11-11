@@ -37,6 +37,12 @@ inicio de sesión se mantienen.
 - **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
   automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
   emisión propio de OBS está activado (se suman).
+- **Borrar lo que aún no se ha emitido (modo stream).** ¿Se ha visto algo que no debía? Un botón o
+  un atajo y los segundos que aún esperan en el delay no se envían nunca: el directo salta al
+  momento actual y el delay vuelve solo.
+- **Delay por escena (modo stream).** Activa el delay (con sus propios segundos) o quítalo al
+  cambiar a una escena: activado en tu escena de juego y quitado en la de charla, sin tocar nada.
+- **Tres presets de delay**, cada uno con su atajo.
 - **Atajos nuevos:** Volver al directo, Delay +5 s y Delay -5 s. Los tres de siempre mantienen su
   nombre y su tecla.
 - **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre

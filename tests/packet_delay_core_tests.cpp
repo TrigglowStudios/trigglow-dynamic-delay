@@ -301,10 +301,58 @@ void TestAudioOnly()
 	CHECK(!out.empty() && out.back().packet->arrivalNs <= 1600 * kMs);
 }
 
+void TestDumpNeverSendsUnaired()
+{
+	g_currentTest = "dump";
+	FakeStream s;
+	SinkScheduler sink;
+	s.RunUntil(0);
+	sink.SetDelay(10000 * kMs, 0, s.history);
+	OutLog log;
+	Run(s, sink, log, 0, 40000);
+	// At 40 s viewers are at ~30 s; 30-40 s hasn't aired. Dump: floor at
+	// now, delay off.
+	s.history.SetSpliceFloor(40000 * kMs + 1);
+	const SpliceInfo info = sink.SetDelay(0, 40000 * kMs, s.history);
+	CHECK(!info.spliced); // No keyframe after the floor yet: wait for it.
+	OutLog after;
+	after.lastVideo = log.lastVideo;
+	after.lastAudio = log.lastAudio;
+	Run(s, sink, after, 40000, 50000);
+	CHECK(after.monotonic);
+	CHECK(!after.packets.empty());
+	bool aired = false;
+	for (const OutPacket &o : after.packets) {
+		if (o.packet->arrivalNs < 40000 * kMs)
+			aired = true;
+	}
+	CHECK(!aired);
+	// The first video sent is the first keyframe after the floor (42 s).
+	for (const OutPacket &o : after.packets) {
+		if (o.packet->kind == MediaKind::Video) {
+			CHECK(o.packet->keyframe && o.packet->arrivalNs == 42000 * kMs);
+			break;
+		}
+	}
+
+	// Raising the delay again never rewinds into what was dumped.
+	const SpliceInfo again = sink.SetDelay(20000 * kMs, 50000 * kMs, s.history);
+	CHECK(again.spliced);
+	CHECK(again.shortHistory);
+	OutLog later;
+	later.lastVideo = after.lastVideo;
+	later.lastAudio = after.lastAudio;
+	Run(s, sink, later, 50000, 70000);
+	for (const OutPacket &o : later.packets)
+		CHECK(o.packet->arrivalNs >= 40000 * kMs);
+	CHECK(later.monotonic);
+}
+
 } // namespace
 
 int main()
 {
+	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();
 	TestDisableSkipsForward();

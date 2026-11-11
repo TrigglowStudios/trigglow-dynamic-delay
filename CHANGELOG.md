@@ -33,6 +33,12 @@ sign-in are kept.
 - **The delay badge for viewers in stream mode**, in the corner you choose, up to 600 s.
 - **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
   delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
+- **Dump what viewers haven't seen (stream mode).** Something slipped on screen? One button or
+  hotkey and the seconds still waiting in the delay are never sent: the stream jumps to live and the
+  delay comes back on its own.
+- **Delay by scene (stream mode).** Turn the delay on (with its own seconds) or off when you switch
+  to a scene: on in your game scene, off in Just Chatting, without touching anything.
+- **Three delay presets**, each with its own hotkey.
 - **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
   names and bindings.
 - **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the

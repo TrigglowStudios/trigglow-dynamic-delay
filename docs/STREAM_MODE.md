@@ -68,6 +68,22 @@ When OBS stops, the relay keeps sending what viewers haven't seen yet (the last 
 unless "When I stop streaming, send the seconds viewers haven't seen" is off; the dock offers "Stop
 sending now". A new stream, or closing OBS, cuts it.
 
+### Dump
+
+"Dump what viewers haven't seen" (dock, hotkey, obs-websocket `DumpDelay`) sets a splice floor at
+now on the history (`PacketHistory::SetSpliceFloor`) and the delay to 0, under the lock the senders
+take before `Due()`. Every sender re-splices to the first keyframe that arrives after the floor
+(within one keyframe interval), so the seconds still waiting in the delay are never sent. The
+controller raises the delay again after its seconds plus 3 s; the splice can't go below the floor,
+so it only rewinds into what came after the dump. Checked with the harness: dump at 25 s with a
+10 s delay, live within ~2 s, delay back, timestamps continuous, output decodes clean.
+
+### Scene rules and presets
+
+Rules map a scene to "delay on (with its seconds)" or "delay off", applied on
+`OBS_FRONTEND_EVENT_SCENE_CHANGED` and when a stream starts. Three presets (default 10/30/60 s) set
+the seconds and turn the delay on, each with a hotkey and `ApplyPreset {index}` over obs-websocket.
+
 ## What stays live
 
 Recording, the Replay Buffer and the virtual camera read OBS's program, which stream mode never

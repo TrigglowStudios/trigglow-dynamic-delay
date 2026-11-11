@@ -76,19 +76,29 @@ bool PacketHistory::FindSplicePoint(int64_t atNs, uint64_t &seqOut) const
 	if (packets_.empty())
 		return false;
 	if (!sawVideo_) {
+		bool haveOldestAudio = false;
+		size_t oldestAudio = 0;
 		for (size_t i = packets_.size(); i-- > 0;) {
+			if (packets_[i].arrivalNs < spliceFloorNs_)
+				break;
 			if (packets_[i].arrivalNs <= atNs) {
 				seqOut = frontSeq_ + i;
 				return true;
 			}
+			oldestAudio = i;
+			haveOldestAudio = true;
 		}
-		seqOut = frontSeq_;
+		if (!haveOldestAudio)
+			return false;
+		seqOut = frontSeq_ + oldestAudio;
 		return true;
 	}
 	bool haveOldest = false;
 	size_t oldest = 0;
 	for (size_t i = packets_.size(); i-- > 0;) {
 		const Packet &p = packets_[i];
+		if (p.arrivalNs < spliceFloorNs_)
+			break;
 		if (!IsVideoKey(p))
 			continue;
 		if (p.arrivalNs <= atNs) {
@@ -150,6 +160,7 @@ void PacketHistory::Clear()
 	bytes_ = 0;
 	frontSeq_ = nextSeq_;
 	sawVideo_ = false;
+	spliceFloorNs_ = INT64_MIN;
 }
 
 // -------------------------------------------------------------- scheduler --

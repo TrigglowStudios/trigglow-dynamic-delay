@@ -28,6 +28,7 @@ extern "C" {
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <util/config-file.h>
+#include <util/platform.h>
 }
 
 #include "logging.hpp"
@@ -105,6 +106,74 @@ void StreamDelayController::Shutdown()
 	}
 	engaged_ = false;
 	ClearOverlay();
+}
+
+bool StreamDelayController::Dump()
+{
+	if (!engaged_ || !delayOn_ || relay_.Delay() == 0)
+		return false;
+	relay_.Dump();
+	// Back to the delay once there are its seconds of stream after the dump
+	// (plus a keyframe interval for the splice), rewinding only into them.
+	dumpRestoreAtNs_ =
+		static_cast<int64_t>(os_gettime_ns()) + (static_cast<int64_t>(delaySeconds_) + 3) * 1000000000LL;
+	TRIGGLOW_LOG_INFO(kComponent, "dump: unaired seconds dropped; the %us delay comes back on its own",
+			  delaySeconds_);
+	Notify();
+	return true;
+}
+
+void StreamDelayController::SetPreset(int index, uint32_t seconds)
+{
+	if (index < 0 || index > 2)
+		return;
+	presets_[index] = std::max<uint32_t>(1, relay::ClampDelaySeconds(seconds));
+	Notify();
+}
+
+uint32_t StreamDelayController::Preset(int index) const
+{
+	return (index >= 0 && index <= 2) ? presets_[index] : 0;
+}
+
+void StreamDelayController::ApplyPreset(int index)
+{
+	if (index < 0 || index > 2)
+		return;
+	SetDelaySeconds(presets_[index]);
+	Enable();
+}
+
+void StreamDelayController::SetSceneRules(std::vector<SceneRule> rules)
+{
+	sceneRules_ = std::move(rules);
+	Notify();
+}
+
+void StreamDelayController::ApplySceneRule()
+{
+	if (!HandlesControls())
+		return;
+	obs_source_t *scene = obs_frontend_get_current_scene();
+	const std::string name = scene ? obs_source_get_name(scene) : "";
+	obs_source_release(scene);
+	for (const SceneRule &rule : sceneRules_) {
+		if (rule.scene != name || rule.action == SceneAction::None)
+			continue;
+		ruleScene_ = name;
+		if (rule.action == SceneAction::DelayOn) {
+			if (rule.seconds > 0)
+				SetDelaySeconds(rule.seconds);
+			if (!delayOn_)
+				TRIGGLOW_LOG_INFO(kComponent, "scene rule: delay on for this scene");
+			Enable();
+		} else {
+			if (delayOn_)
+				TRIGGLOW_LOG_INFO(kComponent, "scene rule: delay off for this scene");
+			Disable();
+		}
+		return;
+	}
 }
 
 void StreamDelayController::SetShowOverlay(bool show)
@@ -277,6 +346,7 @@ void StreamDelayController::Disable()
 	if (!delayOn_)
 		return;
 	delayOn_ = false;
+	dumpRestoreAtNs_ = 0;
 	if (engaged_)
 		relay_.SetDelay(0);
 	TRIGGLOW_LOG_INFO(kComponent, "delay off");
@@ -339,6 +409,11 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	status.warnings = warnings_;
 	status.showOverlay = showOverlay_;
 	status.overlayCorner = overlayCorner_;
+	status.ruleScene = ruleScene_;
+	if (dumpRestoreAtNs_ > 0) {
+		const int64_t left = dumpRestoreAtNs_ - static_cast<int64_t>(os_gettime_ns());
+		status.dumpRestoreIn = left > 0 ? static_cast<uint32_t>((left + 999999999LL) / 1000000000LL) : 0;
+	}
 	// OBS's own Stream Delay is checked live too: it's the one setting worth
 	// fixing before a stream starts.
 	if (config_t *profile = obs_frontend_get_profile_config()) {
@@ -360,6 +435,9 @@ void StreamDelayController::FrontendEvent(int event, void *param)
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
 		self->OnStreamingStopped();
+		break;
+	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+		self->ApplySceneRule();
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
 		self->relay_.Stop();
@@ -475,8 +553,11 @@ void StreamDelayController::OnStreamingStarting()
 	obs_output_release(output);
 
 	engaged_ = true;
+	dumpRestoreAtNs_ = 0;
 	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s%s, delay %us", primary.name.c_str(),
 			  destinations.size() > 1 ? " and more destinations" : "", EffectiveDelay());
+	// The scene the stream starts on may have a rule.
+	ApplySceneRule();
 	Notify();
 }
 
@@ -500,6 +581,13 @@ void StreamDelayController::Tick()
 		relay_.Stop();
 		draining_ = false;
 		TRIGGLOW_LOG_INFO(kComponent, "the last seconds were sent; stream finished");
+	}
+	if (dumpRestoreAtNs_ > 0 && static_cast<int64_t>(os_gettime_ns()) >= dumpRestoreAtNs_) {
+		dumpRestoreAtNs_ = 0;
+		if (engaged_ && delayOn_) {
+			relay_.SetDelay(delaySeconds_);
+			TRIGGLOW_LOG_INFO(kComponent, "dump: the %us delay is back", delaySeconds_);
+		}
 	}
 	Notify();
 }

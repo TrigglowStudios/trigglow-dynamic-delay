@@ -32,6 +32,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
+extern "C" {
+#include <obs-frontend-api.h>
+}
+
 #include "auth-manager.hpp"
 #include "i18n.hpp"
 #include "packet-delay-core.hpp"
@@ -145,6 +151,17 @@ void StreamModePanel::BuildUi()
 		controller_.Disable();
 		Refresh();
 	});
+
+	dumpButton_ = new QPushButton(Tr("Stream.Dump"), controlsBox_);
+	dumpButton_->setToolTip(Tr("Stream.DumpHelp"));
+	controls->addWidget(dumpButton_);
+	connect(dumpButton_, &QPushButton::clicked, this, [this] {
+		controller_.Dump();
+		Refresh();
+	});
+	dumpLabel_ = new QLabel(controlsBox_);
+	dumpLabel_->setWordWrap(true);
+	controls->addWidget(dumpLabel_);
 
 	cutButton_ = new QPushButton(Tr("Stream.Cut"), controlsBox_);
 	controls->addWidget(cutButton_);
@@ -296,6 +313,125 @@ void StreamModePanel::BuildUi()
 	settingsWarnings_ = new QLabel(controlsBox_);
 	settingsWarnings_->setWordWrap(true);
 	controls->addWidget(settingsWarnings_);
+
+	BuildExtras(controls);
+}
+
+void StreamModePanel::BuildExtras(QVBoxLayout *controls)
+{
+	// Presets, each with a hotkey (Settings > Hotkeys).
+	auto *presetBox = new QGroupBox(Tr("Stream.Presets"), controlsBox_);
+	auto *presetLayout = new QHBoxLayout(presetBox);
+	for (int i = 0; i < 3; ++i) {
+		auto *spin = new QSpinBox(presetBox);
+		spin->setRange(1, static_cast<int>(relay::kMaxDelaySeconds));
+		spin->setSuffix(Tr("Stream.Seconds"));
+		spin->setKeyboardTracking(false);
+		spin->setValue(static_cast<int>(controller_.Preset(i)));
+		spin->setToolTip(Tr("Stream.PresetHelp").arg(i + 1));
+		presetLayout->addWidget(spin);
+		presetSpins_[i] = spin;
+		connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this, i](int value) {
+			if (refreshing_)
+				return;
+			controller_.SetPreset(i, static_cast<uint32_t>(value));
+			SettingsChanged();
+		});
+	}
+	controls->addWidget(presetBox);
+
+	// Scene rules.
+	auto *rulesBox = new QGroupBox(Tr("Stream.Rules"), controlsBox_);
+	auto *rulesLayout = new QVBoxLayout(rulesBox);
+	auto *rulesHelp = new QLabel(Tr("Stream.RulesHelp"), rulesBox);
+	rulesHelp->setWordWrap(true);
+	rulesLayout->addWidget(rulesHelp);
+	rulesTable_ = new QTableWidget(0, 3, rulesBox);
+	rulesTable_->setHorizontalHeaderLabels(
+		{Tr("Stream.Rules.Scene"), Tr("Stream.Rules.Action"), Tr("Stream.Delay")});
+	rulesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	rulesTable_->verticalHeader()->setVisible(false);
+	rulesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+	rulesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+	rulesTable_->setMinimumHeight(90);
+	rulesLayout->addWidget(rulesTable_);
+	auto *ruleButtons = new QHBoxLayout();
+	auto *addRule = new QPushButton(Tr("Stream.Rules.Add"), rulesBox);
+	auto *removeRule = new QPushButton(Tr("Stream.Dest.Remove"), rulesBox);
+	ruleButtons->addWidget(addRule);
+	ruleButtons->addWidget(removeRule);
+	rulesLayout->addLayout(ruleButtons);
+	controls->addWidget(rulesBox);
+
+	for (const SceneRule &rule : controller_.SceneRules())
+		AddRuleRow(rule.scene, static_cast<int>(rule.action), static_cast<int>(rule.seconds));
+	connect(addRule, &QPushButton::clicked, this, [this] {
+		obs_source_t *current = obs_frontend_get_current_scene();
+		const std::string name = current ? obs_source_get_name(current) : "";
+		obs_source_release(current);
+		AddRuleRow(name, static_cast<int>(SceneAction::DelayOn), 0);
+		RulesChanged();
+	});
+	connect(removeRule, &QPushButton::clicked, this, [this] {
+		const int row = rulesTable_->currentRow();
+		if (row < 0)
+			return;
+		rulesTable_->removeRow(row);
+		RulesChanged();
+	});
+}
+
+void StreamModePanel::AddRuleRow(const std::string &scene, int action, int seconds)
+{
+	const int row = rulesTable_->rowCount();
+	rulesTable_->insertRow(row);
+
+	auto *sceneCombo = new QComboBox(rulesTable_);
+	char **names = obs_frontend_get_scene_names();
+	for (char **n = names; n && *n; ++n)
+		sceneCombo->addItem(QString::fromUtf8(*n));
+	bfree(names);
+	const QString sceneName = QString::fromStdString(scene);
+	if (!sceneName.isEmpty() && sceneCombo->findText(sceneName) < 0)
+		sceneCombo->addItem(sceneName); // A scene that no longer exists keeps its rule.
+	sceneCombo->setCurrentText(sceneName);
+
+	auto *actionCombo = new QComboBox(rulesTable_);
+	actionCombo->addItems({Tr("Stream.Rules.None"), Tr("Stream.Rules.On"), Tr("Stream.Rules.Off")});
+	actionCombo->setCurrentIndex(std::clamp(action, 0, 2));
+
+	auto *secondsSpin = new QSpinBox(rulesTable_);
+	secondsSpin->setRange(0, static_cast<int>(relay::kMaxDelaySeconds));
+	secondsSpin->setSpecialValueText(Tr("Stream.Rules.Keep"));
+	secondsSpin->setSuffix(Tr("Stream.Seconds"));
+	secondsSpin->setKeyboardTracking(false);
+	secondsSpin->setValue(seconds);
+
+	rulesTable_->setCellWidget(row, 0, sceneCombo);
+	rulesTable_->setCellWidget(row, 1, actionCombo);
+	rulesTable_->setCellWidget(row, 2, secondsSpin);
+	connect(sceneCombo, &QComboBox::currentTextChanged, this, [this] { RulesChanged(); });
+	connect(actionCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] { RulesChanged(); });
+	connect(secondsSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this] { RulesChanged(); });
+}
+
+void StreamModePanel::RulesChanged()
+{
+	std::vector<SceneRule> rules;
+	for (int row = 0; row < rulesTable_->rowCount(); ++row) {
+		auto *sceneCombo = qobject_cast<QComboBox *>(rulesTable_->cellWidget(row, 0));
+		auto *actionCombo = qobject_cast<QComboBox *>(rulesTable_->cellWidget(row, 1));
+		auto *secondsSpin = qobject_cast<QSpinBox *>(rulesTable_->cellWidget(row, 2));
+		if (!sceneCombo || !actionCombo || !secondsSpin || sceneCombo->currentText().isEmpty())
+			continue;
+		SceneRule rule;
+		rule.scene = sceneCombo->currentText().toStdString();
+		rule.action = static_cast<SceneAction>(actionCombo->currentIndex());
+		rule.seconds = static_cast<uint32_t>(secondsSpin->value());
+		rules.push_back(std::move(rule));
+	}
+	controller_.SetSceneRules(std::move(rules));
+	SettingsChanged();
 }
 
 void StreamModePanel::AddDestination()
@@ -434,6 +570,15 @@ void StreamModePanel::Refresh()
 	toggleButton_->setText(status.delayOn ? Tr("Stream.Disable") : Tr("Stream.Enable"));
 	liveButton_->setVisible(status.delayOn && status.engaged);
 	cutButton_->setVisible(status.state == StreamDelayState::Draining);
+	dumpButton_->setVisible(status.engaged && status.delayOn);
+	dumpButton_->setEnabled(status.dumpRestoreIn == 0 && status.relay.delaySeconds > 0);
+	QString dumpText;
+	if (status.dumpRestoreIn > 0)
+		dumpText = Tr("Stream.DumpPending").arg(status.dumpRestoreIn);
+	else if (!status.ruleScene.empty() && status.engaged)
+		dumpText = Tr("Stream.RuleApplied").arg(QString::fromStdString(status.ruleScene));
+	dumpLabel_->setText(dumpText);
+	dumpLabel_->setVisible(!dumpText.isEmpty());
 
 	QString stats;
 	QString warning;

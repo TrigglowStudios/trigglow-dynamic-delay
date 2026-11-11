@@ -79,7 +79,7 @@ void FillStatus(obs_data_t *out)
 	obs_data_set_double(out, "ramMegabytes", std::round(s.ramMegabytes * 10.0) / 10.0);
 }
 
-enum class Op { Status, Enable, Disable, Toggle, SkipToLive, SetDelay, AdjustDelay };
+enum class Op { Status, Enable, Disable, Toggle, SkipToLive, SetDelay, AdjustDelay, Dump, ApplyPreset };
 
 struct Job {
 	Op op;
@@ -115,6 +115,12 @@ void RunJob(void *param)
 	}
 	case Op::AdjustDelay:
 		g_router->AdjustDelay(static_cast<int>(obs_data_get_int(job->request, "delta")));
+		break;
+	case Op::Dump:
+		obs_data_set_bool(job->response, "dumped", g_router->Dump());
+		break;
+	case Op::ApplyPreset:
+		g_router->ApplyPreset(static_cast<int>(obs_data_get_int(job->request, "index")));
 		break;
 	}
 	FillStatus(job->response);
@@ -166,6 +172,8 @@ void Register(DelayRouter &router)
 	RegisterRequest("SkipToLive", &Handle<Op::SkipToLive>);
 	RegisterRequest("SetDelay", &Handle<Op::SetDelay>);
 	RegisterRequest("AdjustDelay", &Handle<Op::AdjustDelay>);
+	RegisterRequest("DumpDelay", &Handle<Op::Dump>);
+	RegisterRequest("ApplyPreset", &Handle<Op::ApplyPreset>);
 	TRIGGLOW_LOG_INFO(kComponent, "obs-websocket vendor \"%s\" registered", kVendorName);
 }
 

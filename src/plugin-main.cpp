@@ -368,6 +368,30 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
 		controller.SetOverlayCorner(static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")));
+	for (int i = 0; i < 3; ++i) {
+		const std::string key = "preset" + std::to_string(i + 1);
+		if (obs_data_has_user_value(data, key.c_str()))
+			controller.SetPreset(i, static_cast<uint32_t>(obs_data_get_int(data, key.c_str())));
+	}
+	std::vector<trigglow::SceneRule> rules;
+	if (obs_data_array_t *array = obs_data_get_array(data, "scene_rules")) {
+		const size_t count = obs_data_array_count(array);
+		for (size_t i = 0; i < count; ++i) {
+			obs_data_t *item = obs_data_array_item(array, i);
+			trigglow::SceneRule rule;
+			rule.scene = obs_data_get_string(item, "scene");
+			const long long action = obs_data_get_int(item, "action");
+			rule.action = action == 1   ? trigglow::SceneAction::DelayOn
+				      : action == 2 ? trigglow::SceneAction::DelayOff
+						    : trigglow::SceneAction::None;
+			rule.seconds = static_cast<uint32_t>(obs_data_get_int(item, "seconds"));
+			obs_data_release(item);
+			if (!rule.scene.empty())
+				rules.push_back(std::move(rule));
+		}
+		obs_data_array_release(array);
+	}
+	controller.SetSceneRules(std::move(rules));
 	std::vector<trigglow::ExtraDestination> extras;
 	if (obs_data_array_t *array = obs_data_get_array(data, "destinations")) {
 		const size_t count = obs_data_array_count(array);
@@ -404,6 +428,19 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
+	for (int i = 0; i < 3; ++i)
+		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
+	obs_data_array_t *rules = obs_data_array_create();
+	for (const trigglow::SceneRule &rule : controller.SceneRules()) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "scene", rule.scene.c_str());
+		obs_data_set_int(item, "action", static_cast<long long>(rule.action));
+		obs_data_set_int(item, "seconds", rule.seconds);
+		obs_data_array_push_back(rules, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "scene_rules", rules);
+	obs_data_array_release(rules);
 	obs_data_array_t *array = obs_data_array_create();
 	for (const trigglow::ExtraDestination &extra : controller.ExtraDestinations()) {
 		obs_data_t *item = obs_data_create();

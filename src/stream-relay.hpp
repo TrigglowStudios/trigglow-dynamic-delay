@@ -108,6 +108,12 @@ public:
 	void SetDelay(uint32_t seconds);
 	uint32_t Delay() const;
 
+	// Dump: what viewers haven't seen yet is never sent. Every destination
+	// jumps to the next keyframe that arrives (live, delay 0); nothing from
+	// before this moment can be spliced to again. The caller raises the delay
+	// again later (SetDelay), which only rewinds into what came after.
+	void Dump();
+
 	// Cuts everything now (OBS closing, a new stream starting).
 	void Stop();
 

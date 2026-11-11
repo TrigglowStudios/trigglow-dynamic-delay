@@ -71,6 +71,7 @@ bool StreamRelay::Start(const std::vector<Destination> &, const RelayOptions &, 
 	return false;
 }
 void StreamRelay::SetDelay(uint32_t) {}
+void StreamRelay::Dump() {}
 uint32_t StreamRelay::Delay() const
 {
 	return 0;
@@ -639,6 +640,20 @@ void StreamRelay::SetDelay(uint32_t seconds)
 	{
 		std::lock_guard<std::mutex> lock(impl_->m);
 		impl_->delaySeconds = ClampDelaySeconds(seconds);
+		++impl_->delayGen;
+	}
+	impl_->cv.notify_all();
+}
+
+void StreamRelay::Dump()
+{
+	{
+		// Under the same lock the senders take before Due(): each re-splices
+		// (delayGen) before it can send anything that arrived until now.
+		std::lock_guard<std::mutex> lock(impl_->m);
+		impl_->history.SetSpliceFloor(NowNs() + 1);
+		TRIGGLOW_LOG_INFO(kComponent, "dump: the last %us won't be sent", impl_->delaySeconds);
+		impl_->delaySeconds = 0;
 		++impl_->delayGen;
 	}
 	impl_->cv.notify_all();

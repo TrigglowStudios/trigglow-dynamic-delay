@@ -78,6 +78,21 @@ void DelayRouter::SetDelay(uint32_t seconds)
 		scene_.SetDelaySeconds(std::clamp<uint32_t>(seconds, 1, 60));
 }
 
+bool DelayRouter::Dump()
+{
+	return StreamMode() && stream_.Dump();
+}
+
+void DelayRouter::ApplyPreset(int index)
+{
+	if (StreamMode()) {
+		stream_.ApplyPreset(index);
+		return;
+	}
+	scene_.SetDelaySeconds(std::clamp<uint32_t>(stream_.Preset(index), 1, 60));
+	scene_.Enable();
+}
+
 RouterStatus DelayRouter::Status() const
 {
 	RouterStatus out;

@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWidget>
 
 #include <functional>
+#include <string>
 
 class QCheckBox;
 class QComboBox;
@@ -35,6 +36,7 @@ class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QTimer;
+class QVBoxLayout;
 
 namespace trigglow {
 
@@ -87,6 +89,14 @@ private:
 	QPushButton *signInButton_ = nullptr;
 	QSpinBox *keepSpin_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
+	// Dump, presets and scene rules.
+	void BuildExtras(QVBoxLayout *controls);
+	void AddRuleRow(const std::string &scene, int action, int seconds);
+	void RulesChanged();
+	QPushButton *dumpButton_ = nullptr;
+	QLabel *dumpLabel_ = nullptr;
+	QSpinBox *presetSpins_[3] = {nullptr, nullptr, nullptr};
+	QTableWidget *rulesTable_ = nullptr;
 	QCheckBox *overlayCheck_ = nullptr;
 	QComboBox *cornerCombo_ = nullptr;
 	QLabel *settingsWarnings_ = nullptr;

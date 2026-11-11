@@ -40,6 +40,10 @@ constexpr HotkeyDef kHotkeys[] = {
 	{DelayHotkeys::Action::SkipLive, "trigglow_dynamic_delay.skip_live", "Hotkey.SkipLive"},
 	{DelayHotkeys::Action::DelayUp, "trigglow_dynamic_delay.delay_up", "Hotkey.DelayUp"},
 	{DelayHotkeys::Action::DelayDown, "trigglow_dynamic_delay.delay_down", "Hotkey.DelayDown"},
+	{DelayHotkeys::Action::Dump, "trigglow_dynamic_delay.dump", "Hotkey.Dump"},
+	{DelayHotkeys::Action::Preset1, "trigglow_dynamic_delay.preset1", "Hotkey.Preset1"},
+	{DelayHotkeys::Action::Preset2, "trigglow_dynamic_delay.preset2", "Hotkey.Preset2"},
+	{DelayHotkeys::Action::Preset3, "trigglow_dynamic_delay.preset3", "Hotkey.Preset3"},
 };
 } // namespace
 
@@ -106,6 +110,18 @@ void DelayHotkeys::RunOnUiThread(void *param)
 		break;
 	case Action::DelayDown:
 		router.AdjustDelay(-5);
+		break;
+	case Action::Dump:
+		router.Dump();
+		break;
+	case Action::Preset1:
+		router.ApplyPreset(0);
+		break;
+	case Action::Preset2:
+		router.ApplyPreset(1);
+		break;
+	case Action::Preset3:
+		router.ApplyPreset(2);
 		break;
 	case Action::Count:
 		break;
