@@ -122,8 +122,9 @@ Delaying audio needed a **different attachment point**, found live: `obs_source_
 keep-alive tricks — it's a hard `libobs` constraint.
 
 So `AudioDelayFilter` (an `OBS_SOURCE_AUDIO`-only filter) is instead attached to **each individual
-audio-capable leaf source** inside the live scene (mic, desktop audio, etc.), one instance per source,
-each running the same delay-window ring-buffer logic as video, in sample space (`ring_[channel][frame]`).
+audio-capable leaf source** the stream hears with the live scene on Program: every one inside the
+live scene at any depth (nested scenes and groups included) plus the global audio sources on output
+channels 1+ (Settings > Audio: Desktop Audio, Mic/Aux), one instance per source, each running the same delay-window ring-buffer logic as video, in sample space (`ring_[channel][frame]`).
 Video and audio use the same `delaySeconds`, so both land in sync; when the RAM budget trims the
 video ring, both use the same whole-second effective delay instead (§3.3).
 

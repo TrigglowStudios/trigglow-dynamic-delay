@@ -1617,24 +1617,49 @@ std::vector<OBSSourceAutoRelease> ObsFrontendBridge::GetAudioCapableChildren(con
 	std::vector<OBSSourceAutoRelease> result;
 
 	OBSSourceAutoRelease liveSource = obs_get_source_by_name(liveSceneName.c_str());
-	if (!liveSource)
+	if (!liveSource || !obs_scene_from_source(liveSource))
 		return result;
 
-	obs_scene_t *liveScene = obs_scene_from_source(liveSource);
-	if (liveScene) {
-		obs_scene_enum_items(
-			liveScene,
-			[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
-				obs_source_t *itemSource = obs_sceneitem_get_source(item); // Borrowed from the item.
-				if (itemSource && (obs_source_get_output_flags(itemSource) & OBS_SOURCE_AUDIO) != 0) {
-					// Own reference: the caller uses it after the enumeration.
-					if (obs_source_t *ref = obs_source_get_ref(itemSource))
-						static_cast<std::vector<OBSSourceAutoRelease> *>(param)->emplace_back(
-							ref);
-				}
-				return true; // Keep enumerating -- unlike FindBufferFilter, we want ALL matches.
-			},
-			&result);
+	// Everything the stream hears while the live scene is on Program: its
+	// audio sources at any depth (nested scenes and groups too, which carry no
+	// OBS_SOURCE_AUDIO of their own) plus the global audio sources on the
+	// output channels (Settings -> Audio: Desktop Audio, Mic/Aux), which are
+	// mixed into every output whatever the scene. Any of them left out plays
+	// the whole delay ahead of the video.
+	struct Walk {
+		std::vector<OBSSourceAutoRelease> &result;
+		std::vector<obs_source_t *> seen; // Borrowed; dedupes shared sources and nested scenes.
+		void Visit(obs_source_t *source)
+		{
+			if (!source || std::find(seen.begin(), seen.end(), source) != seen.end())
+				return;
+			seen.push_back(source);
+			obs_scene_t *scene = obs_scene_from_source(source);
+			if (!scene)
+				scene = obs_group_from_source(source);
+			if (scene) {
+				obs_scene_enum_items(
+					scene,
+					[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
+						static_cast<Walk *>(param)->Visit(obs_sceneitem_get_source(item));
+						return true;
+					},
+					this);
+				return;
+			}
+			if ((obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO) != 0) {
+				// Own reference: the caller uses it after the enumeration.
+				if (obs_source_t *ref = obs_source_get_ref(source))
+					result.emplace_back(ref);
+			}
+		}
+	} walk{result, {}};
+
+	walk.Visit(liveSource);
+	// Channel 0 is the Program transition (video); the rest are audio inputs.
+	for (uint32_t channel = 1; channel < MAX_CHANNELS; ++channel) {
+		if (OBSSourceAutoRelease source = obs_get_output_source(channel))
+			walk.Visit(source);
 	}
 	return result;
 }
@@ -1646,7 +1671,7 @@ bool ObsFrontendBridge::EnsureAudioDelayFilters(const std::string &liveSceneName
 		// Not a warning: plenty of scenes legitimately have no direct
 		// audio-capable children (audio routed some other way, or a
 		// video-only scene) -- buffer mode still works fine for video only.
-		TRIGGLOW_LOG_INFO(kComponent, "audio delay: \"%s\" has no direct audio-capable children",
+		TRIGGLOW_LOG_INFO(kComponent, "audio delay: \"%s\" has no audio sources (scene tree or global)",
 				  liveSceneName.c_str());
 		return false;
 	}

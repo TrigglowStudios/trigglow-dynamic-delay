@@ -2,6 +2,19 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v0.7.3 — 2026-11-11 (Early Access)
+
+A fix release: your mic and the rest of your audio stay in sync with the delayed video.
+
+**Before you update:** nothing to do. Install it like 0.7.2; your scenes, settings, hotkeys and
+sign-in are kept.
+
+**What it fixes:**
+- **Audio ahead of the camera.** Only audio sources placed directly in the live scene were delayed.
+  The global audio sources from OBS Settings > Audio (Desktop Audio, Mic/Aux) and audio sources
+  inside nested scenes or groups played undelayed, so viewers heard them the whole delay ahead of
+  the picture. The delay now covers all of them, each source once.
+
 ## v0.7.2 — 2026-11-02 (Early Access)
 
 A build release: the delay doesn't change in OBS, and the update notice works again now that the

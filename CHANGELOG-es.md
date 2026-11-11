@@ -2,6 +2,20 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v0.7.3 — 2026-11-11 (Early Access)
+
+Una versión de corrección: tu micro y el resto del audio van a la par que el vídeo retrasado.
+
+**Antes de actualizar:** nada que hacer. Se instala como la v0.7.2; tus escenas, ajustes, atajos e
+inicio de sesión se mantienen.
+
+**Qué arregla:**
+- **Audio adelantado respecto a la cámara.** Solo se retrasaban las fuentes de audio colocadas
+  directamente en la escena en vivo. Las fuentes de audio globales de Ajustes de OBS > Audio (Audio
+  del escritorio, Mic/Aux) y las que están dentro de escenas anidadas o grupos sonaban sin retraso,
+  así que tu audiencia las oía todo el delay antes que la imagen. Ahora el delay las cubre todas,
+  cada fuente una sola vez.
+
 ## v0.7.2 — 2026-11-02 (Early Access)
 
 Una versión de compilación: el delay no cambia en OBS, y el aviso de actualización vuelve a
