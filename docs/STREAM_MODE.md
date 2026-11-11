@@ -127,8 +127,23 @@ The free-account gate applies to Enable as in scene mode.
     (TriggerHotkeyByName): the measured delay is the one asked for plus those 1.4 s.
   - Stop with the delay on sends the last seconds and finishes; a new stream while draining cuts it;
     closing OBS mid-stream or mid-drain exits in ~0.3 s.
-  - Multistream: the service plus an extra destination get the same stream; a destination that
-    can't connect retries without disturbing the others and doesn't hold up the end of a drain.
+  - Scene switches while delayed (12, down to 0.3 s apart, delay 10 s): every switch reached
+    viewers 11.4-11.6 s later, the delay stayed 11.37-11.53 s on every frame, no frame showed a
+    scene that wasn't on at its content time, nothing newer than the delay got out, no cut.
+  - 19 live changes up and down in one stream (hotkeys +/-5, the three presets, `SetDelay`,
+    `AdjustDelay`, off and on, 3-40 s): each measured within 0.04 s of the delay asked for, one
+    connection to the platform throughout, timestamps continuous.
+  - Long delays with "Keep for instant raises" at 600 s: 300, 120 and 600 s held to the frame
+    (measured 300.0, 120.1, 600.0 s), back down to 30 s live. Raising beyond the history kept
+    (30 -> 300 s 76 s into the stream, 120 -> 600 s at 436 s) holds: nothing at all (video or
+    audio) reaches the platform for the missing seconds (232.6 s and 172.5 s here), then the
+    stream goes on at the new delay. The local test platform kept the connection; a real platform
+    may drop a publisher that sends nothing for minutes (not checked). Once the stream has run
+    for the kept seconds, raises are instant replays.
+  - RAM: the history is the stream's bitrate times the seconds kept (192 MB for 605 s at 2.66
+    Mbps; it stops growing there). OBS's working set grew by the history plus ~15% (693 -> 906 MB)
+    and went back to its idle size after the stream. The +275 MB when streaming starts is OBS's
+    own (the same with stream mode off).
   - 12 start/stop cycles, half with every core busy: OBS always reached the relay (listener ready
     in 5-50 ms).
   - The free-account gate refuses Enable, presets and Toggle when signed out (a test-only build
