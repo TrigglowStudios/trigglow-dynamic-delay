@@ -82,6 +82,17 @@ target_include_directories(overlay_layout_tests PRIVATE "${_src}")
 set_target_properties(overlay_layout_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME overlay_layout_tests COMMAND overlay_layout_tests)
 
+# v1.0.0 stream mode: the packet history and the splicing scheduler.
+add_executable(
+  packet_delay_core_tests
+  packet_delay_core_tests.cpp
+  "${_src}/packet-delay-core.cpp"
+  "${_src}/packet-delay-core.hpp"
+)
+target_include_directories(packet_delay_core_tests PRIVATE "${_src}")
+set_target_properties(packet_delay_core_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME packet_delay_core_tests COMMAND packet_delay_core_tests)
+
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
 # with a fake codec (threads, no FFmpeg).
@@ -205,6 +216,32 @@ if(WIN32)
         "${_ffmpeg}/bin/swresample-7.dll" "$<TARGET_FILE_DIR:hw_storage_codec_tests>"
     )
     add_test(NAME hw_storage_codec_tests COMMAND hw_storage_codec_tests)
+
+    # v1.0.0: manual end-to-end check of the stream mode relay with FFmpeg's
+    # command line tools standing in for OBS and the platform. Not a ctest:
+    # it opens local ports. See the file's header for how to run it.
+    add_executable(
+      relay_harness
+      relay_harness.cpp
+      "${_src}/stream-relay.cpp"
+      "${_src}/stream-relay.hpp"
+      "${_src}/packet-delay-core.cpp"
+      "${_src}/packet-delay-core.hpp"
+    )
+    target_include_directories(relay_harness PRIVATE "${_src}" "${_ffmpeg}/include")
+    target_compile_definitions(relay_harness PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+    target_link_libraries(
+      relay_harness
+      PRIVATE "${_ffmpeg}/lib/avformat.lib" "${_ffmpeg}/lib/avcodec.lib" "${_ffmpeg}/lib/avutil.lib" ws2_32
+    )
+    set_target_properties(relay_harness PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    add_custom_command(
+      TARGET relay_harness
+      POST_BUILD
+      COMMAND
+        "${CMAKE_COMMAND}" -E copy_if_different "${_ffmpeg}/bin/avformat-63.dll" "${_ffmpeg}/bin/avcodec-63.dll"
+        "${_ffmpeg}/bin/avutil-61.dll" "${_ffmpeg}/bin/swresample-7.dll" "$<TARGET_FILE_DIR:relay_harness>"
+    )
   endif()
 endif()
 

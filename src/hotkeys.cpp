@@ -25,30 +25,25 @@ namespace trigglow {
 namespace {
 constexpr const char *kComponent = "hotkeys";
 
-// obs_hotkey_register_frontend callbacks fire on OBS's internal hotkey
-// thread, never the Qt UI thread — that's true for a real key press AND for
-// a Stream Deck press via System > Hotkey, which is this plugin's advertised
-// main control path (see docs/SPEC.md). Calling into BufferModeController (and,
-// through its status callback, straight into the Qt dock's widgets) from
-// that thread is a data race / Qt thread-affinity violation. Route the
-// actual call through OBS's own UI task queue instead.
-void ToggleOnUiThread(void *param)
-{
-	static_cast<BufferModeController *>(param)->Toggle();
-}
+struct HotkeyDef {
+	DelayHotkeys::Action action;
+	const char *name;
+	const char *textKey;
+};
 
-void EnableOnUiThread(void *param)
-{
-	static_cast<BufferModeController *>(param)->Enable();
-}
-
-void DisableOnUiThread(void *param)
-{
-	static_cast<BufferModeController *>(param)->Disable();
-}
+// The first three names are unchanged since v0.2.0, so existing key
+// bindings (and Stream Deck "Hotkey" buttons) keep working.
+constexpr HotkeyDef kHotkeys[] = {
+	{DelayHotkeys::Action::Toggle, "trigglow_dynamic_delay.toggle", "Hotkey.Toggle"},
+	{DelayHotkeys::Action::Enable, "trigglow_dynamic_delay.enable", "Hotkey.Enable"},
+	{DelayHotkeys::Action::Disable, "trigglow_dynamic_delay.disable", "Hotkey.Disable"},
+	{DelayHotkeys::Action::SkipLive, "trigglow_dynamic_delay.skip_live", "Hotkey.SkipLive"},
+	{DelayHotkeys::Action::DelayUp, "trigglow_dynamic_delay.delay_up", "Hotkey.DelayUp"},
+	{DelayHotkeys::Action::DelayDown, "trigglow_dynamic_delay.delay_down", "Hotkey.DelayDown"},
+};
 } // namespace
 
-DelayHotkeys::DelayHotkeys(BufferModeController &controller) : controller_(controller) {}
+DelayHotkeys::DelayHotkeys(DelayRouter &router) : router_(router) {}
 
 DelayHotkeys::~DelayHotkeys()
 {
@@ -57,58 +52,64 @@ DelayHotkeys::~DelayHotkeys()
 
 void DelayHotkeys::Init()
 {
-	toggleId_ = obs_hotkey_register_frontend("trigglow_dynamic_delay.toggle", Str("Hotkey.Toggle"),
-						 &DelayHotkeys::ToggleCallback, this);
-	enableId_ = obs_hotkey_register_frontend("trigglow_dynamic_delay.enable", Str("Hotkey.Enable"),
-						 &DelayHotkeys::EnableCallback, this);
-	disableId_ = obs_hotkey_register_frontend("trigglow_dynamic_delay.disable", Str("Hotkey.Disable"),
-						  &DelayHotkeys::DisableCallback, this);
-
-	TRIGGLOW_LOG_INFO(kComponent, "registered 3 hotkeys (toggle/enable/disable) — assign them in "
-				      "Settings > Hotkeys");
+	for (const HotkeyDef &def : kHotkeys) {
+		Binding &b = bindings_[static_cast<size_t>(def.action)];
+		b.self = this;
+		b.action = def.action;
+		b.id = obs_hotkey_register_frontend(def.name, Str(def.textKey), &DelayHotkeys::Callback, &b);
+	}
+	TRIGGLOW_LOG_INFO(kComponent, "registered %zu hotkeys — assign them in Settings > Hotkeys",
+			  sizeof(kHotkeys) / sizeof(kHotkeys[0]));
 }
 
 void DelayHotkeys::Shutdown()
 {
-	if (toggleId_ != OBS_INVALID_HOTKEY_ID) {
-		obs_hotkey_unregister(toggleId_);
-		toggleId_ = OBS_INVALID_HOTKEY_ID;
-	}
-	if (enableId_ != OBS_INVALID_HOTKEY_ID) {
-		obs_hotkey_unregister(enableId_);
-		enableId_ = OBS_INVALID_HOTKEY_ID;
-	}
-	if (disableId_ != OBS_INVALID_HOTKEY_ID) {
-		obs_hotkey_unregister(disableId_);
-		disableId_ = OBS_INVALID_HOTKEY_ID;
+	for (Binding &b : bindings_) {
+		if (b.id != OBS_INVALID_HOTKEY_ID) {
+			obs_hotkey_unregister(b.id);
+			b.id = OBS_INVALID_HOTKEY_ID;
+		}
 	}
 }
 
-void DelayHotkeys::ToggleCallback(void *data, obs_hotkey_id /*id*/, obs_hotkey_t * /*hotkey*/, bool pressed)
+// obs_hotkey_register_frontend callbacks fire on OBS's internal hotkey
+// thread, never the Qt UI thread. Both controllers (and, through their status
+// callbacks, the dock's widgets) live on the UI thread, so the call goes
+// through OBS's own UI task queue.
+void DelayHotkeys::Callback(void *data, obs_hotkey_id /*id*/, obs_hotkey_t * /*hotkey*/, bool pressed)
 {
-	// Hotkey callbacks fire on both key-down (pressed=true) and key-up
-	// (pressed=false); we only want to act once, on press, exactly like
-	// OBS's own built-in hotkeys (Start/Stop Streaming, Mute, etc).
+	// Key-down only, exactly like OBS's own built-in hotkeys.
 	if (!pressed)
 		return;
-	auto *self = static_cast<DelayHotkeys *>(data);
-	obs_queue_task(OBS_TASK_UI, ToggleOnUiThread, &self->controller_, false);
+	obs_queue_task(OBS_TASK_UI, &DelayHotkeys::RunOnUiThread, data, false);
 }
 
-void DelayHotkeys::EnableCallback(void *data, obs_hotkey_id /*id*/, obs_hotkey_t * /*hotkey*/, bool pressed)
+void DelayHotkeys::RunOnUiThread(void *param)
 {
-	if (!pressed)
-		return;
-	auto *self = static_cast<DelayHotkeys *>(data);
-	obs_queue_task(OBS_TASK_UI, EnableOnUiThread, &self->controller_, false);
-}
-
-void DelayHotkeys::DisableCallback(void *data, obs_hotkey_id /*id*/, obs_hotkey_t * /*hotkey*/, bool pressed)
-{
-	if (!pressed)
-		return;
-	auto *self = static_cast<DelayHotkeys *>(data);
-	obs_queue_task(OBS_TASK_UI, DisableOnUiThread, &self->controller_, false);
+	auto *b = static_cast<Binding *>(param);
+	DelayRouter &router = b->self->router_;
+	switch (b->action) {
+	case Action::Toggle:
+		router.Toggle();
+		break;
+	case Action::Enable:
+		router.Enable();
+		break;
+	case Action::Disable:
+		router.Disable();
+		break;
+	case Action::SkipLive:
+		router.SkipToLive();
+		break;
+	case Action::DelayUp:
+		router.AdjustDelay(5);
+		break;
+	case Action::DelayDown:
+		router.AdjustDelay(-5);
+		break;
+	case Action::Count:
+		break;
+	}
 }
 
 } // namespace trigglow

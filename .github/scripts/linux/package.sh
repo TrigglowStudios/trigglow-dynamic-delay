@@ -165,6 +165,7 @@ deb_depends=(
   "libqt6gui6t64 (>= 6.4) | libqt6gui6 (>= 6.4)"
   "libqt6widgets6t64 (>= 6.4) | libqt6widgets6 (>= 6.4)"
   "libqt6svg6t64 (>= 6.4) | libqt6svg6 (>= 6.4)"
+  "libcurl4t64 | libcurl4"
   "obs-studio (>= ${obs_min})"
 )
 # Fedora and openSUSE name their packages differently, so the libraries are
@@ -181,6 +182,7 @@ arch_depends=(
   "libgcc"
   "qt6-base>=6.4"
   "qt6-svg>=6.4"
+  "curl"
   "obs-studio>=${obs_min}"
 )
 

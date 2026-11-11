@@ -11,6 +11,32 @@ builds are still alpha (they build and pass CI, but haven't been run on a live s
 sign-in are kept.
 
 **What's new:**
+- **Stream mode (Windows): the delay on your stream itself, at almost no cost.** The plugin now
+  holds the stream OBS has already encoded and sends it out later, instead of keeping your
+  rendered picture in RAM. RAM is your bitrate times the seconds kept (about 45 MB per minute at
+  6 Mbps) and there's no second encode. With it:
+  - **0 to 600 s of delay, changed while you're live.** Turn it on, off, up or down at any moment;
+    your stream never reconnects. Turning it on, viewers see the last seconds again and never
+    anything newer.
+  - **Every scene is delayed**, so you can switch scenes while delayed.
+  - **Your recording, Replay Buffer and virtual camera stay live.**
+  - **Multistream:** add more destinations (any rtmp:// or rtmps:// server and key) and they get
+    the same delayed stream, from one encode.
+  - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
+  - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
+    RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
+  - The dock shows each destination's state, the RAM used and the bitrate.
+  - Scene mode is still there, folded under the new section, for what stream mode can't do.
+- **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
+  "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
+  in a file only your user can read.
+- **The delay badge for viewers in stream mode**, in the corner you choose, up to 600 s.
+- **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
+  delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
+- **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
+  names and bindings.
+- **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the
+  delay's state on its key.
 - **Out of beta.** The dock no longer shows the "Beta" tag next to the version.
 - **Trigglow's new design in the dock.** The same look as trigglow.com: the Figtree typeface, the
   violet accent, a solid violet main button instead of the cyan-to-magenta gradient, and rounded

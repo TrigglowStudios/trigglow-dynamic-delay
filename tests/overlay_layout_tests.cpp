@@ -256,9 +256,11 @@ void TestFileNames()
 	CHECK(BadgeFileName(5) == "delay-badge-r4-5s.png");
 	CHECK(BadgeFileName(60) == "delay-badge-r4-60s.png");
 	CHECK(BadgeFileName(0) == "delay-badge-r4-1s.png");
-	CHECK(BadgeFileName(600) == "delay-badge-r4-60s.png");
+	CHECK(BadgeFileName(600) == "delay-badge-r4-600s.png");
+	CHECK(BadgeFileName(9000) == "delay-badge-r4-600s.png");
 	CHECK(ClampSeconds(0) == kMinSeconds);
-	CHECK(ClampSeconds(61) == kMaxSeconds);
+	CHECK(ClampSeconds(601) == kMaxSeconds);
+	CHECK(ClampSeconds(61) == 61);
 	CHECK(ClampSeconds(42) == 42);
 }
 

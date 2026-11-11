@@ -61,6 +61,8 @@ packages=(
   uthash-dev
   uuid-dev
   zlib1g-dev
+  # v1.0.0: the plugin's HTTPS client on Linux (sign-in, Trigi, tickets)
+  libcurl4-openssl-dev
   # The plugin's Qt (Ubuntu 24.04: Qt 6.4.2, the oldest the packages accept)
   qt6-base-dev
   qt6-base-private-dev
