@@ -174,6 +174,10 @@ const char *IconFile(IconId id)
 		return ":/trigglow/icons/bolt.svg";
 	case IconId::Check:
 		return ":/trigglow/icons/check.svg";
+	case IconId::ChevronDown:
+		return ":/trigglow/icons/chevron-down.svg";
+	case IconId::ChevronRight:
+		return ":/trigglow/icons/chevron-right.svg";
 	case IconId::Circle:
 		return ":/trigglow/icons/circle.svg";
 	case IconId::Clock:
@@ -190,6 +194,8 @@ const char *IconFile(IconId id)
 		return ":/trigglow/icons/flag.svg";
 	case IconId::Info:
 		return ":/trigglow/icons/info.svg";
+	case IconId::Keyboard:
+		return ":/trigglow/icons/keyboard.svg";
 	case IconId::Loader:
 		return ":/trigglow/icons/loader.svg";
 	case IconId::Lock:
@@ -200,8 +206,14 @@ const char *IconFile(IconId id)
 		return ":/trigglow/icons/message-circle.svg";
 	case IconId::Paperclip:
 		return ":/trigglow/icons/paperclip.svg";
+	case IconId::Plus:
+		return ":/trigglow/icons/plus.svg";
+	case IconId::Radio:
+		return ":/trigglow/icons/radio.svg";
 	case IconId::Refresh:
 		return ":/trigglow/icons/refresh.svg";
+	case IconId::Scissors:
+		return ":/trigglow/icons/scissors.svg";
 	case IconId::Send:
 		return ":/trigglow/icons/send.svg";
 	case IconId::Shield:
@@ -214,6 +226,8 @@ const char *IconFile(IconId id)
 		return ":/trigglow/icons/thumbs-up.svg";
 	case IconId::Ticket:
 		return ":/trigglow/icons/ticket.svg";
+	case IconId::Trash:
+		return ":/trigglow/icons/trash.svg";
 	case IconId::User:
 		return ":/trigglow/icons/user.svg";
 	case IconId::WifiOff:

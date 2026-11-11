@@ -26,7 +26,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFileInfo>
 #include <QPointer>
 #include <QScrollArea>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 extern "C" {
@@ -461,33 +460,31 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 // folds while stream mode handles the controls.
 QWidget *BuildDockContainer(trigglow::StreamModePanel *panel, trigglow::TrigglowDelayDock *sceneDock)
 {
+	// Stream mode's panel on top (it scrolls on its own), then scene mode's
+	// dock under a fold the panel draws and keeps current: folded while stream
+	// mode handles the delay and the hotkeys, open otherwise. The streamer can
+	// still open or fold it by hand.
 	auto *container = new QWidget();
 	auto *layout = new QVBoxLayout(container);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
 	auto *panelScroll = new QScrollArea(container);
+	panelScroll->setObjectName(QStringLiteral("tgDockScroll")); // Transparent, like scene mode's.
 	panelScroll->setWidgetResizable(true);
 	panelScroll->setFrameShape(QFrame::NoFrame);
+	// Not a focus stop of its own (QScrollArea brings each focused child into
+	// view), and no sideways scrolling: narrow docks reflow instead.
+	panelScroll->setFocusPolicy(Qt::NoFocus);
+	panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	panelScroll->setWidget(panel);
 	layout->addWidget(panelScroll, 1);
 
-	auto *header = new QToolButton(container);
-	header->setText(QString::fromUtf8(Str("Stream.SceneSection")));
-	header->setCheckable(true);
-	header->setChecked(true);
-	header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	header->setArrowType(Qt::DownArrow);
-	header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	layout->addWidget(header);
+	layout->addWidget(panel->CreateSceneHeader(container, [sceneDock](bool open) { sceneDock->setVisible(open); }));
 	sceneDock->setParent(container);
 	layout->addWidget(sceneDock, 1);
 
-	QObject::connect(header, &QToolButton::toggled, container, [header, sceneDock](bool open) {
-		header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-		sceneDock->setVisible(open);
-	});
-	panel->SetHandlesControlsChanged([header](bool streamHandles) { header->setChecked(!streamHandles); });
+	panel->SetHandlesControlsChanged([panel](bool streamHandles) { panel->SetSceneSectionOpen(!streamHandles); });
 	return container;
 }
 

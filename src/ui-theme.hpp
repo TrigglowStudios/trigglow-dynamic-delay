@@ -105,6 +105,8 @@ enum class IconId {
 	ArrowLeft, // "Back to Trigi".
 	Bolt,      // Trigi's avatar (the web's assistant mark).
 	Check,
+	ChevronDown,  // Open section.
+	ChevronRight, // Folded section.
 	Circle,
 	Clock,
 	Copy,
@@ -113,18 +115,23 @@ enum class IconId {
 	Eye, // "See what is sent".
 	Flag,
 	Info,
-	Loader, // Trigi is thinking (turns unless the system asks for less motion).
+	Keyboard, // Which mode the hotkeys drive.
+	Loader,   // Trigi is thinking (turns unless the system asks for less motion).
 	Lock,
 	LogIn,
 	MessageCircle, // "Write to the team".
 	Paperclip,
-	Refresh, // "Try again".
+	Plus,
+	Radio,    // "Back to live", live without delay.
+	Refresh,  // "Try again".
+	Scissors, // Dump what viewers haven't seen.
 	Send,
 	Shield,
 	Sliders, // Something was adjusted for the user: the degradation notice.
 	ThumbsDown,
 	ThumbsUp,
 	Ticket,
+	Trash,
 	User,
 	WifiOff, // No connection to trigglow.com.
 	X,

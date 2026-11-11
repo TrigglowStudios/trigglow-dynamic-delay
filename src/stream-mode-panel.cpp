@@ -18,21 +18,24 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "stream-mode-panel.hpp"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QFormLayout>
-#include <QGroupBox>
+#include <QEvent>
+#include <QFrame>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QSignalBlocker>
 #include <QSpinBox>
-#include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 extern "C" {
 #include <obs-frontend-api.h>
@@ -47,9 +50,37 @@ namespace trigglow {
 
 namespace {
 
+// Same sizes as scene mode's dock (settings-ui.cpp).
+constexpr int kStatusIconSize = 18;
+constexpr int kAccountIconSize = 16;
+constexpr int kInlineIconSize = 14;
+constexpr int kButtonIconSize = 15;
+constexpr int kButtonIconGap = 7;
+const QSize kButtonIconBox(kButtonIconSize + kButtonIconGap, kButtonIconSize);
+const QSize kSectionIconBox(kInlineIconSize + 6, kInlineIconSize);
+// Rows side by side reflow to a column below these dock widths.
+constexpr int kTinyWidth = 250;
+constexpr int kNarrowWidth = 300;
+
 QString Tr(const char *key)
 {
 	return QString::fromUtf8(Str(key));
+}
+
+QLabel *MakeIconLabel(QWidget *parent, int size)
+{
+	auto *label = new QLabel(parent);
+	label->setFixedSize(size, size);
+	label->setAlignment(Qt::AlignCenter);
+	return label;
+}
+
+QFrame *MakeDivider(QWidget *parent)
+{
+	auto *divider = new QFrame(parent);
+	divider->setProperty("tgDivider", QStringLiteral("true"));
+	divider->setFixedHeight(1);
+	return divider;
 }
 
 QString SinkStateText(relay::SinkState state)
@@ -71,9 +102,44 @@ QString SinkStateText(relay::SinkState state)
 	return {};
 }
 
+QString SinkStateTone(relay::SinkState state)
+{
+	switch (state) {
+	case relay::SinkState::Live:
+		return QStringLiteral("accent");
+	case relay::SinkState::Connecting:
+	case relay::SinkState::Reconnecting:
+	case relay::SinkState::Waiting:
+		return QStringLiteral("warning");
+	case relay::SinkState::Failed:
+		return QStringLiteral("danger");
+	case relay::SinkState::Done:
+		break;
+	}
+	return QStringLiteral("muted");
+}
+
 QString Megabytes(uint64_t bytes)
 {
 	return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1);
+}
+
+// "font-family: ...; font-size: ...; font-weight: ...;" for the panel-only
+// rules, with the same sizes ui-theme.cpp gives the role.
+QString FontCss(const QString &family, double basePt, double delta, int weight)
+{
+	QString css;
+	if (!family.isEmpty())
+		css += QStringLiteral("font-family: \"%1\"; ").arg(family);
+	const double size = std::max(7.5, std::round((basePt + delta) * 2.0) / 2.0);
+	css += QStringLiteral("font-size: %1pt; font-weight: %2;").arg(size, 0, 'f', 1).arg(weight);
+	return css;
+}
+
+void OnFrontendEvent(enum obs_frontend_event event, void *data)
+{
+	if (event == OBS_FRONTEND_EVENT_THEME_CHANGED)
+		static_cast<StreamModePanel *>(data)->ApplyTheme();
 }
 
 } // namespace
@@ -88,7 +154,15 @@ StreamModePanel::StreamModePanel(StreamDelayController &controller, AuthManager 
 	timer_->setInterval(1000);
 	connect(timer_, &QTimer::timeout, this, &StreamModePanel::Refresh);
 	timer_->start();
-	Refresh();
+	obs_frontend_add_event_callback(OnFrontendEvent, this);
+	frontendCallback_ = true;
+	ApplyTheme(/*force=*/true); // Styles everything, then Refresh().
+}
+
+StreamModePanel::~StreamModePanel()
+{
+	if (frontendCallback_)
+		obs_frontend_remove_event_callback(OnFrontendEvent, this);
 }
 
 void StreamModePanel::SetHandlesControlsChanged(std::function<void(bool)> callback)
@@ -98,21 +172,65 @@ void StreamModePanel::SetHandlesControlsChanged(std::function<void(bool)> callba
 	Refresh();
 }
 
+void StreamModePanel::SetRole(QWidget *widget, const char *qssRole, ui::FontRole fontRole)
+{
+	widget->setProperty("tgRole", QString::fromLatin1(qssRole));
+	fontRoles_.emplace_back(widget, fontRole);
+}
+
+void StreamModePanel::GuardWheel(QWidget *field)
+{
+	field->setFocusPolicy(Qt::StrongFocus);
+	field->installEventFilter(this);
+}
+
+// ---- Building --------------------------------------------------------------
+
 void StreamModePanel::BuildUi()
 {
 	auto *root = new QVBoxLayout(this);
-	root->setContentsMargins(8, 8, 8, 8);
-	root->setSpacing(6);
+	root->setContentsMargins(12, 12, 12, 12);
+	root->setSpacing(10);
 
-	auto *title = new QLabel(Tr("Stream.Title"), this);
-	QFont titleFont = title->font();
-	titleFont.setBold(true);
-	titleFont.setPointSizeF(titleFont.pointSizeF() * 1.15);
-	title->setFont(titleFont);
-	root->addWidget(title);
+	// --- Mode card: the switch between stream mode and scene mode, and which
+	// of the two the hotkeys and Stream Deck drive right now. ---
+	auto *modeCard = new QFrame(this);
+	modeCard->setProperty("tgCard", QStringLiteral("true"));
+	{
+		auto *layout = new QVBoxLayout(modeCard);
+		layout->setContentsMargins(12, 10, 12, 10);
+		layout->setSpacing(6);
+		auto *eyebrow = new QLabel(Tr("Stream.Title"), modeCard);
+		SetRole(eyebrow, "eyebrow", ui::FontRole::Eyebrow);
+		layout->addWidget(eyebrow);
 
-	modeCheck_ = new QCheckBox(Tr("Stream.Use"), this);
-	root->addWidget(modeCheck_);
+		modeCheck_ = new QCheckBox(modeCard);
+		modeCheck_->setFocusPolicy(Qt::TabFocus);
+		modeCheck_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+		modeCheck_->setAccessibleName(Tr("Stream.Use"));
+		// The check box's text as a wrapping label: a QCheckBox can't wrap.
+		modeText_ = new QLabel(Tr("Stream.Use"), modeCard);
+		modeText_->setWordWrap(true);
+		modeText_->setBuddy(modeCheck_);
+		modeText_->setCursor(Qt::PointingHandCursor);
+		modeText_->installEventFilter(this);
+		auto *checkRow = new QHBoxLayout();
+		checkRow->setSpacing(8);
+		checkRow->addWidget(modeCheck_, 0, Qt::AlignTop);
+		checkRow->addWidget(modeText_, 1);
+		layout->addLayout(checkRow);
+
+		auto *hotkeysRow = new QHBoxLayout();
+		hotkeysRow->setSpacing(6);
+		hotkeysIcon_ = MakeIconLabel(modeCard, kInlineIconSize);
+		hotkeysLabel_ = new QLabel(modeCard);
+		hotkeysLabel_->setWordWrap(true);
+		SetRole(hotkeysLabel_, "hint", ui::FontRole::Hint);
+		hotkeysRow->addWidget(hotkeysIcon_, 0, Qt::AlignTop);
+		hotkeysRow->addWidget(hotkeysLabel_, 1);
+		layout->addLayout(hotkeysRow);
+	}
+	root->addWidget(modeCard);
 	connect(modeCheck_, &QCheckBox::toggled, this, [this](bool on) {
 		if (refreshing_)
 			return;
@@ -124,321 +242,991 @@ void StreamModePanel::BuildUi()
 	controlsBox_ = new QWidget(this);
 	auto *controls = new QVBoxLayout(controlsBox_);
 	controls->setContentsMargins(0, 0, 0, 0);
-	controls->setSpacing(6);
+	controls->setSpacing(10);
 	root->addWidget(controlsBox_);
 
-	stateLabel_ = new QLabel(controlsBox_);
-	QFont stateFont = stateLabel_->font();
-	stateFont.setBold(true);
-	stateLabel_->setFont(stateFont);
-	stateLabel_->setWordWrap(true);
-	controls->addWidget(stateLabel_);
-	detailLabel_ = new QLabel(controlsBox_);
-	detailLabel_->setWordWrap(true);
-	controls->addWidget(detailLabel_);
+	controls->addWidget(BuildStatusCard());
+	controls->addWidget(BuildAccountCard());
 
-	auto *buttons = new QHBoxLayout();
-	toggleButton_ = new QPushButton(controlsBox_);
+	// --- Actions: one primary button (on, or off in the danger style), then
+	// Back to live and Dump while the delay runs, Stop sending while draining. ---
+	onButton_ = new QPushButton(Tr("Stream.Enable"), controlsBox_);
+	onButton_->setProperty("tgVariant", QStringLiteral("primary"));
+	offButton_ = new QPushButton(Tr("Stream.Disable"), controlsBox_);
+	offButton_->setProperty("tgVariant", QStringLiteral("danger"));
 	liveButton_ = new QPushButton(Tr("Stream.SkipLive"), controlsBox_);
-	buttons->addWidget(toggleButton_, 2);
-	buttons->addWidget(liveButton_, 1);
-	controls->addLayout(buttons);
-	connect(toggleButton_, &QPushButton::clicked, this, [this] {
-		controller_.Toggle();
+	liveButton_->setToolTip(Tr("Stream.SkipLiveHelp"));
+	liveButton_->setAccessibleDescription(Tr("Stream.SkipLiveHelp"));
+	dumpButton_ = new QPushButton(Tr("Stream.DumpShort"), controlsBox_);
+	dumpButton_->setToolTip(Tr("Stream.DumpHelp"));
+	dumpButton_->setAccessibleName(Tr("Stream.Dump"));
+	dumpButton_->setAccessibleDescription(Tr("Stream.DumpHelp"));
+	cutButton_ = new QPushButton(Tr("Stream.Cut"), controlsBox_);
+	cutButton_->setToolTip(Tr("Stream.CutHelp"));
+	cutButton_->setAccessibleDescription(Tr("Stream.CutHelp"));
+	for (QPushButton *button : {liveButton_, dumpButton_, cutButton_}) {
+		button->setProperty("tgVariant", QStringLiteral("secondary"));
+		button->setProperty("tgSize", QStringLiteral("large"));
+	}
+	for (QPushButton *button : {onButton_, offButton_, liveButton_, dumpButton_, cutButton_}) {
+		button->setFocusPolicy(Qt::TabFocus);
+		button->setIconSize(kButtonIconBox);
+		SetRole(button, "button", ui::FontRole::Button);
+	}
+	controls->addWidget(onButton_);
+	controls->addWidget(offButton_);
+	actionRow_ = new QBoxLayout(QBoxLayout::LeftToRight);
+	actionRow_->setSpacing(8);
+	actionRow_->addWidget(liveButton_, 1);
+	actionRow_->addWidget(dumpButton_, 1);
+	controls->addLayout(actionRow_);
+	controls->addWidget(cutButton_);
+	connect(onButton_, &QPushButton::clicked, this, [this] {
+		controller_.Enable();
+		Refresh();
+	});
+	connect(offButton_, &QPushButton::clicked, this, [this] {
+		controller_.Disable();
 		Refresh();
 	});
 	connect(liveButton_, &QPushButton::clicked, this, [this] {
 		controller_.Disable();
 		Refresh();
 	});
-
-	dumpButton_ = new QPushButton(Tr("Stream.Dump"), controlsBox_);
-	dumpButton_->setToolTip(Tr("Stream.DumpHelp"));
-	controls->addWidget(dumpButton_);
 	connect(dumpButton_, &QPushButton::clicked, this, [this] {
 		controller_.Dump();
 		Refresh();
 	});
-	dumpLabel_ = new QLabel(controlsBox_);
-	dumpLabel_->setWordWrap(true);
-	controls->addWidget(dumpLabel_);
-
-	cutButton_ = new QPushButton(Tr("Stream.Cut"), controlsBox_);
-	controls->addWidget(cutButton_);
 	connect(cutButton_, &QPushButton::clicked, this, [this] {
 		controller_.CutDrain();
 		Refresh();
 	});
 
-	auto *delayRow = new QHBoxLayout();
-	delayRow->addWidget(new QLabel(Tr("Stream.Delay"), controlsBox_));
-	delaySpin_ = new QSpinBox(controlsBox_);
+	controls->addWidget(BuildDelayCard());
+
+	// --- Settings worth changing in OBS: their own amber card, opened the
+	// first time something shows up. ---
+	auto *warningsCard = new QFrame(controlsBox_);
+	warningsCard->setProperty("tgBanner", QStringLiteral("warning"));
+	{
+		auto *layout = new QVBoxLayout(warningsCard);
+		layout->setContentsMargins(6, 6, 6, 6);
+		layout->setSpacing(0);
+		warningsSection_ = AddSection(layout, Tr("Stream.Section.Warnings"), true);
+		warningsSection_->header->setProperty("tgTone", QStringLiteral("warning"));
+		BuildWarnings(qobject_cast<QVBoxLayout *>(warningsSection_->body->layout()));
+	}
+	warningsList_ = warningsCard;
+	warningsCard->setVisible(false);
+	controls->addWidget(warningsCard);
+
+	// --- Everything else, folded: one card, a section each. ---
+	auto *moreCard = new QFrame(controlsBox_);
+	moreCard->setProperty("tgCard", QStringLiteral("true"));
+	{
+		auto *layout = new QVBoxLayout(moreCard);
+		layout->setContentsMargins(6, 6, 6, 6);
+		layout->setSpacing(0);
+		destSection_ = AddSection(layout, Tr("Stream.Destinations"), false);
+		BuildDestinations(qobject_cast<QVBoxLayout *>(destSection_->body->layout()));
+		layout->addWidget(MakeDivider(moreCard));
+		rulesSection_ = AddSection(layout, Tr("Stream.Rules"), false);
+		BuildRules(qobject_cast<QVBoxLayout *>(rulesSection_->body->layout()));
+		layout->addWidget(MakeDivider(moreCard));
+		Section *presets = AddSection(layout, Tr("Stream.Section.Presets"), false);
+		BuildPresets(qobject_cast<QVBoxLayout *>(presets->body->layout()));
+		layout->addWidget(MakeDivider(moreCard));
+		Section *options = AddSection(layout, Tr("Stream.Section.Options"), false);
+		BuildOptions(qobject_cast<QVBoxLayout *>(options->body->layout()));
+	}
+	controls->addWidget(moreCard);
+
+	root->addStretch(1);
+}
+
+QFrame *StreamModePanel::BuildStatusCard()
+{
+	// Rule, eyebrow + seconds chip, icon + headline, detail, stats, and a
+	// line each for the last problem and the scene rule applied.
+	statusCard_ = new QFrame(controlsBox_);
+	statusCard_->setProperty("tgCard", QStringLiteral("true"));
+	auto *cardLayout = new QVBoxLayout(statusCard_);
+	cardLayout->setContentsMargins(0, 0, 0, 0);
+	cardLayout->setSpacing(0);
+	statusRule_ = new QFrame(statusCard_);
+	statusRule_->setFixedHeight(2);
+	statusRule_->setProperty("tgRule", QStringLiteral("none"));
+	cardLayout->addWidget(statusRule_);
+
+	auto *body = new QVBoxLayout();
+	body->setContentsMargins(12, 11, 12, 12);
+	body->setSpacing(4);
+	auto *eyebrowRow = new QHBoxLayout();
+	eyebrowRow->setSpacing(6);
+	auto *eyebrow = new QLabel(Tr("Dock.Status.Eyebrow"), statusCard_);
+	SetRole(eyebrow, "eyebrow", ui::FontRole::Eyebrow);
+	eyebrowRow->addWidget(eyebrow);
+	eyebrowRow->addStretch(1);
+	statusChip_ = new QLabel(statusCard_);
+	SetRole(statusChip_, "chip", ui::FontRole::Chip);
+	statusChip_->setVisible(false);
+	eyebrowRow->addWidget(statusChip_);
+	body->addLayout(eyebrowRow);
+
+	auto *headlineRow = new QHBoxLayout();
+	headlineRow->setSpacing(8);
+	statusIcon_ = MakeIconLabel(statusCard_, kStatusIconSize);
+	stateLabel_ = new QLabel(statusCard_);
+	stateLabel_->setWordWrap(true);
+	SetRole(stateLabel_, "headline", ui::FontRole::Headline);
+	headlineRow->addWidget(statusIcon_, 0, Qt::AlignVCenter);
+	headlineRow->addWidget(stateLabel_, 1);
+	body->addLayout(headlineRow);
+
+	detailLabel_ = new QLabel(statusCard_);
+	detailLabel_->setWordWrap(true);
+	detailLabel_->setProperty("tgRole", QStringLiteral("muted"));
+	body->addWidget(detailLabel_);
+
+	statsLabel_ = new QLabel(statusCard_);
+	statsLabel_->setWordWrap(true);
+	SetRole(statsLabel_, "dataHint", ui::FontRole::DataHint);
+	statsLabel_->setVisible(false);
+	body->addSpacing(2);
+	body->addWidget(statsLabel_);
+
+	auto makeLine = [this, body](QWidget *&row, QLabel *&icon, QLabel *&label, const char *tone) {
+		row = new QWidget(statusCard_);
+		auto *layout = new QHBoxLayout(row);
+		layout->setContentsMargins(0, 4, 0, 0);
+		layout->setSpacing(6);
+		icon = MakeIconLabel(row, kInlineIconSize);
+		label = new QLabel(row);
+		label->setWordWrap(true);
+		SetRole(label, "hint", ui::FontRole::Hint);
+		label->setProperty("tgTone", QString::fromLatin1(tone));
+		layout->addWidget(icon, 0, Qt::AlignTop);
+		layout->addWidget(label, 1);
+		row->setVisible(false);
+		body->addWidget(row);
+	};
+	makeLine(ruleRow_, ruleIcon_, ruleLabel_, "accent");
+	makeLine(noticeRow_, noticeIcon_, noticeLabel_, "danger");
+	cardLayout->addLayout(body);
+	return statusCard_;
+}
+
+QFrame *StreamModePanel::BuildAccountCard()
+{
+	accountCard_ = new QFrame(controlsBox_);
+	accountCard_->setProperty("tgCard", QStringLiteral("true"));
+	auto *column = new QVBoxLayout(accountCard_);
+	column->setContentsMargins(12, 10, 12, 10);
+	column->setSpacing(8);
+	auto *row = new QHBoxLayout();
+	row->setSpacing(10);
+	accountIcon_ = MakeIconLabel(accountCard_, kAccountIconSize);
+	accountLabel_ = new QLabel(accountCard_);
+	accountLabel_->setWordWrap(true);
+	row->addWidget(accountIcon_, 0, Qt::AlignTop);
+	row->addWidget(accountLabel_, 1);
+	column->addLayout(row);
+	signInButton_ = new QPushButton(Tr("Stream.Account.SignIn"), accountCard_);
+	signInButton_->setProperty("tgVariant", QStringLiteral("primary"));
+	signInButton_->setFocusPolicy(Qt::TabFocus);
+	signInButton_->setCursor(Qt::PointingHandCursor);
+	signInButton_->setToolTip(Tr("Dock.Account.OpensBrowser"));
+	signInButton_->setIconSize(kButtonIconBox);
+	signInButton_->setLayoutDirection(Qt::RightToLeft); // Icon after the text: it opens the browser.
+	SetRole(signInButton_, "button", ui::FontRole::Button);
+	column->addWidget(signInButton_);
+	connect(signInButton_, &QPushButton::clicked, this, [this] {
+		auth_.StartLogin();
+		Refresh();
+	});
+	accountCard_->setVisible(false);
+	return accountCard_;
+}
+
+QFrame *StreamModePanel::BuildDelayCard()
+{
+	// "DELAY": the seconds, 5 s steps, and the three presets as quick picks.
+	auto *card = new QFrame(controlsBox_);
+	card->setProperty("tgCard", QStringLiteral("true"));
+	auto *layout = new QVBoxLayout(card);
+	layout->setContentsMargins(12, 12, 12, 12);
+	layout->setSpacing(6);
+
+	delaySpin_ = new QSpinBox(card);
 	delaySpin_->setRange(1, static_cast<int>(relay::kMaxDelaySeconds));
 	delaySpin_->setSuffix(Tr("Stream.Seconds"));
 	delaySpin_->setKeyboardTracking(false);
-	delayRow->addWidget(delaySpin_, 1);
-	connect(delaySpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
-		if (refreshing_)
-			return;
-		controller_.SetDelaySeconds(static_cast<uint32_t>(value));
-		SettingsChanged();
-	});
-	auto addStep = [this, delayRow](const QString &text, int delta) {
-		auto *button = new QPushButton(text, controlsBox_);
-		button->setMaximumWidth(48);
-		delayRow->addWidget(button);
+	delaySpin_->setAccessibleName(Tr("Stream.Delay"));
+	delaySpin_->setToolTip(Tr("Stream.DelayHelp").arg(relay::kMaxDelaySeconds));
+	GuardWheel(delaySpin_);
+	auto *eyebrow = new QLabel(Tr("Stream.Delay"), card);
+	SetRole(eyebrow, "eyebrow", ui::FontRole::Eyebrow);
+	eyebrow->setBuddy(delaySpin_);
+	layout->addWidget(eyebrow);
+
+	auto *row = new QHBoxLayout();
+	row->setSpacing(6);
+	row->addWidget(delaySpin_, 1);
+	auto makeStep = [this, card, row](const QString &text, const char *nameKey, int delta) {
+		auto *button = new QPushButton(text, card);
+		button->setProperty("tgVariant", QStringLiteral("step"));
+		button->setFocusPolicy(Qt::TabFocus);
+		button->setAccessibleName(Tr(nameKey));
+		button->setToolTip(Tr(nameKey));
+		SetRole(button, "step", ui::FontRole::Data);
+		row->addWidget(button);
 		connect(button, &QPushButton::clicked, this, [this, delta] {
 			controller_.AdjustDelay(delta);
 			SettingsChanged();
 			Refresh();
 		});
+		return button;
 	};
-	addStep(QStringLiteral("-5"), -5);
-	addStep(QStringLiteral("+5"), 5);
-	controls->addLayout(delayRow);
+	lessButton_ = makeStep(QStringLiteral("-5"), "Stream.Delay.Less", -5);
+	moreButton_ = makeStep(QStringLiteral("+5"), "Stream.Delay.More", 5);
+	layout->addLayout(row);
+	connect(delaySpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+		if (refreshing_)
+			return;
+		controller_.SetDelaySeconds(static_cast<uint32_t>(value));
+		SettingsChanged();
+		Refresh();
+	});
 
-	auto *presets = new QHBoxLayout();
-	for (int seconds : {10, 30, 60, 120, 300}) {
-		auto *button = new QPushButton(QString::number(seconds) + Tr("Stream.Seconds"), controlsBox_);
-		presets->addWidget(button);
-		connect(button, &QPushButton::clicked, this, [this, seconds] {
-			controller_.SetDelaySeconds(static_cast<uint32_t>(seconds));
+	// "Presets" then the chips; the label goes above them in narrow docks.
+	chipRow_ = new QBoxLayout(QBoxLayout::LeftToRight);
+	chipRow_->setSpacing(6);
+	auto *chipsLabel = new QLabel(Tr("Stream.QuickPick"), card);
+	SetRole(chipsLabel, "hint", ui::FontRole::Hint);
+	chipRow_->addWidget(chipsLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+	auto *chips = new QHBoxLayout();
+	chips->setSpacing(6);
+	for (int i = 0; i < 3; ++i) {
+		auto *chip = new QPushButton(card);
+		chip->setProperty("tgVariant", QStringLiteral("chip"));
+		chip->setFocusPolicy(Qt::TabFocus);
+		chip->setToolTip(Tr("Stream.PresetHelp").arg(i + 1));
+		SetRole(chip, "chip", ui::FontRole::Chip);
+		chips->addWidget(chip);
+		presetChips_[i] = chip;
+		connect(chip, &QPushButton::clicked, this, [this, i] {
+			controller_.SetDelaySeconds(controller_.Preset(i));
 			SettingsChanged();
 			Refresh();
 		});
 	}
-	controls->addLayout(presets);
-
-	statsLabel_ = new QLabel(controlsBox_);
-	statsLabel_->setWordWrap(true);
-	controls->addWidget(statsLabel_);
-	warningLabel_ = new QLabel(controlsBox_);
-	warningLabel_->setWordWrap(true);
-	controls->addWidget(warningLabel_);
-
-	auto *accountRow = new QHBoxLayout();
-	accountLabel_ = new QLabel(controlsBox_);
-	accountLabel_->setWordWrap(true);
-	signInButton_ = new QPushButton(Tr("Stream.Account.SignIn"), controlsBox_);
-	accountRow->addWidget(accountLabel_, 1);
-	accountRow->addWidget(signInButton_);
-	controls->addLayout(accountRow);
-	connect(signInButton_, &QPushButton::clicked, this, [this] {
-		auth_.StartLogin();
-		Refresh();
-	});
-
-	// Destinations (multistream).
-	auto *destBox = new QGroupBox(Tr("Stream.Destinations"), controlsBox_);
-	auto *destLayout = new QVBoxLayout(destBox);
-	auto *destHelp = new QLabel(Tr("Stream.Dest.Help"), destBox);
-	destHelp->setWordWrap(true);
-	destLayout->addWidget(destHelp);
-	destTable_ = new QTableWidget(0, 3, destBox);
-	destTable_->setHorizontalHeaderLabels(
-		{Tr("Stream.Col.Destination"), Tr("Stream.Col.State"), Tr("Stream.Col.Sent")});
-	destTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-	destTable_->verticalHeader()->setVisible(false);
-	destTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-	destTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-	destTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-	destTable_->setMinimumHeight(90);
-	destLayout->addWidget(destTable_);
-	auto *form = new QFormLayout();
-	destName_ = new QLineEdit(destBox);
-	destServer_ = new QLineEdit(destBox);
-	destServer_->setPlaceholderText(QStringLiteral("rtmps://..."));
-	destKey_ = new QLineEdit(destBox);
-	destKey_->setEchoMode(QLineEdit::Password);
-	form->addRow(Tr("Stream.Dest.Name"), destName_);
-	form->addRow(Tr("Stream.Dest.Server"), destServer_);
-	form->addRow(Tr("Stream.Dest.Key"), destKey_);
-	destLayout->addLayout(form);
-	auto *destButtons = new QHBoxLayout();
-	destAdd_ = new QPushButton(Tr("Stream.Dest.Add"), destBox);
-	destRemove_ = new QPushButton(Tr("Stream.Dest.Remove"), destBox);
-	destButtons->addWidget(destAdd_);
-	destButtons->addWidget(destRemove_);
-	destLayout->addLayout(destButtons);
-	connect(destAdd_, &QPushButton::clicked, this, &StreamModePanel::AddDestination);
-	connect(destRemove_, &QPushButton::clicked, this, &StreamModePanel::RemoveSelectedDestination);
-	controls->addWidget(destBox);
-
-	// Options.
-	auto *keepRow = new QHBoxLayout();
-	keepRow->addWidget(new QLabel(Tr("Stream.Keep"), controlsBox_));
-	keepSpin_ = new QSpinBox(controlsBox_);
-	keepSpin_->setRange(10, static_cast<int>(relay::kMaxDelaySeconds));
-	keepSpin_->setSuffix(Tr("Stream.Seconds"));
-	keepSpin_->setToolTip(Tr("Stream.KeepHelp"));
-	keepSpin_->setKeyboardTracking(false);
-	keepRow->addWidget(keepSpin_, 1);
-	controls->addLayout(keepRow);
-	connect(keepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
-		if (refreshing_)
-			return;
-		controller_.SetKeepSeconds(static_cast<uint32_t>(value));
-		SettingsChanged();
-	});
-	drainCheck_ = new QCheckBox(Tr("Stream.Drain"), controlsBox_);
-	controls->addWidget(drainCheck_);
-	connect(drainCheck_, &QCheckBox::toggled, this, [this](bool on) {
-		if (refreshing_)
-			return;
-		controller_.SetDrainOnStop(on);
-		SettingsChanged();
-	});
-
-	auto *overlayRow = new QHBoxLayout();
-	overlayCheck_ = new QCheckBox(Tr("Stream.Overlay"), controlsBox_);
-	cornerCombo_ = new QComboBox(controlsBox_);
-	cornerCombo_->addItems({Tr("Stream.Corner.TopLeft"), Tr("Stream.Corner.TopRight"),
-				Tr("Stream.Corner.BottomLeft"), Tr("Stream.Corner.BottomRight")});
-	overlayRow->addWidget(overlayCheck_, 1);
-	overlayRow->addWidget(cornerCombo_);
-	controls->addLayout(overlayRow);
-	connect(overlayCheck_, &QCheckBox::toggled, this, [this](bool on) {
-		if (refreshing_)
-			return;
-		controller_.SetShowOverlay(on);
-		SettingsChanged();
-	});
-	connect(cornerCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
-		if (refreshing_ || index < 0)
-			return;
-		controller_.SetOverlayCorner(static_cast<uint32_t>(index));
-		SettingsChanged();
-	});
-
-	settingsWarnings_ = new QLabel(controlsBox_);
-	settingsWarnings_->setWordWrap(true);
-	controls->addWidget(settingsWarnings_);
-
-	BuildExtras(controls);
+	chips->addStretch(1);
+	chipRow_->addLayout(chips, 1);
+	layout->addLayout(chipRow_);
+	return card;
 }
 
-void StreamModePanel::BuildExtras(QVBoxLayout *controls)
+StreamModePanel::Section *StreamModePanel::AddSection(QVBoxLayout *parent, const QString &title, bool open)
 {
-	// Presets, each with a hotkey (Settings > Hotkeys).
-	auto *presetBox = new QGroupBox(Tr("Stream.Presets"), controlsBox_);
-	auto *presetLayout = new QHBoxLayout(presetBox);
+	auto owned = std::make_unique<Section>();
+	Section *section = owned.get();
+	sections_.push_back(std::move(owned));
+	QWidget *host = parent->parentWidget();
+
+	auto *headerRow = new QHBoxLayout();
+	headerRow->setContentsMargins(0, 0, 4, 0);
+	headerRow->setSpacing(6);
+	section->header = new QPushButton(title, host);
+	section->header->setProperty("tgVariant", QStringLiteral("section"));
+	section->header->setCheckable(true);
+	section->header->setFocusPolicy(Qt::TabFocus);
+	section->header->setCursor(Qt::PointingHandCursor);
+	section->header->setIconSize(kSectionIconBox);
+	section->header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	SetRole(section->header, "section", ui::FontRole::Strong);
+	section->count = new QLabel(host);
+	SetRole(section->count, "tag", ui::FontRole::Chip);
+	section->count->setVisible(false);
+	headerRow->addWidget(section->header, 1);
+	headerRow->addWidget(section->count, 0, Qt::AlignVCenter);
+	parent->addLayout(headerRow);
+
+	section->body = new QWidget(host);
+	auto *bodyLayout = new QVBoxLayout(section->body);
+	bodyLayout->setContentsMargins(8, 4, 8, 10);
+	bodyLayout->setSpacing(6);
+	parent->addWidget(section->body);
+
+	connect(section->header, &QPushButton::clicked, this,
+		[this, section] { SetSectionOpen(*section, !section->open); });
+	SetSectionOpen(*section, open);
+	return section;
+}
+
+void StreamModePanel::SetSectionOpen(Section &section, bool open)
+{
+	section.open = open;
+	{
+		const QSignalBlocker block(section.header);
+		section.header->setChecked(open);
+	}
+	section.body->setVisible(open);
+	const QString tone = section.header->property("tgTone").toString();
+	SetButtonIcon(section.header, open ? ui::IconId::ChevronDown : ui::IconId::ChevronRight,
+		      ToneColor(tone.isEmpty() ? QStringLiteral("text") : tone));
+}
+
+void StreamModePanel::BuildWarnings(QVBoxLayout *body)
+{
+	warningsLayout_ = body;
+}
+
+void StreamModePanel::BuildDestinations(QVBoxLayout *body)
+{
+	QWidget *host = body->parentWidget();
+	auto *help = new QLabel(Tr("Stream.Dest.Help"), host);
+	help->setWordWrap(true);
+	SetRole(help, "hint", ui::FontRole::Hint);
+	body->addWidget(help);
+
+	destList_ = new QVBoxLayout();
+	destList_->setSpacing(6);
+	body->addLayout(destList_);
+
+	body->addSpacing(4);
+	auto addField = [this, host, body](QLineEdit *&field, const char *labelKey) {
+		field = new QLineEdit(host);
+		field->setAccessibleName(Tr(labelKey));
+		auto *label = new QLabel(Tr(labelKey), host);
+		SetRole(label, "eyebrow", ui::FontRole::Eyebrow);
+		label->setBuddy(field);
+		body->addWidget(label);
+		body->addWidget(field);
+	};
+	addField(destName_, "Stream.Dest.Name");
+	destName_->setPlaceholderText(Tr("Stream.Dest.NamePlaceholder"));
+	addField(destServer_, "Stream.Dest.Server");
+	destServer_->setPlaceholderText(QStringLiteral("rtmps://"));
+	destServer_->setToolTip(Tr("Stream.Dest.Invalid"));
+	// Right under the server field, only after a click on Add with a bad address.
+	destInvalid_ = new QLabel(Tr("Stream.Dest.Invalid"), host);
+	destInvalid_->setWordWrap(true);
+	SetRole(destInvalid_, "hint", ui::FontRole::Hint);
+	destInvalid_->setProperty("tgTone", QStringLiteral("danger"));
+	destInvalid_->setVisible(false);
+	body->addWidget(destInvalid_);
+	addField(destKey_, "Stream.Dest.Key");
+	destKey_->setEchoMode(QLineEdit::Password);
+	connect(destServer_, &QLineEdit::textChanged, this, [this] {
+		ui::SetStyleProperty(destServer_, "tgInvalid", QStringLiteral("false"));
+		destInvalid_->setVisible(false);
+	});
+
+	destAdd_ = new QPushButton(Tr("Stream.Dest.Add"), host);
+	destAdd_->setProperty("tgVariant", QStringLiteral("secondary"));
+	destAdd_->setProperty("tgSize", QStringLiteral("large"));
+	destAdd_->setFocusPolicy(Qt::TabFocus);
+	destAdd_->setIconSize(kButtonIconBox);
+	SetRole(destAdd_, "button", ui::FontRole::Button);
+	body->addSpacing(2);
+	body->addWidget(destAdd_);
+	connect(destAdd_, &QPushButton::clicked, this, &StreamModePanel::AddDestination);
+	connect(destKey_, &QLineEdit::returnPressed, this, &StreamModePanel::AddDestination);
+}
+
+void StreamModePanel::BuildRules(QVBoxLayout *body)
+{
+	QWidget *host = body->parentWidget();
+	auto *help = new QLabel(Tr("Stream.RulesHelp"), host);
+	help->setWordWrap(true);
+	SetRole(help, "hint", ui::FontRole::Hint);
+	body->addWidget(help);
+
+	rulesList_ = new QVBoxLayout();
+	rulesList_->setSpacing(6);
+	body->addLayout(rulesList_);
+	rulesEmpty_ = new QLabel(Tr("Stream.Rules.Empty"), host);
+	rulesEmpty_->setWordWrap(true);
+	SetRole(rulesEmpty_, "dataHint", ui::FontRole::DataHint);
+	body->addWidget(rulesEmpty_);
+
+	addRule_ = new QPushButton(Tr("Stream.Rules.Add"), host);
+	addRule_->setProperty("tgVariant", QStringLiteral("secondary"));
+	addRule_->setProperty("tgSize", QStringLiteral("large"));
+	addRule_->setFocusPolicy(Qt::TabFocus);
+	addRule_->setIconSize(kButtonIconBox);
+	addRule_->setToolTip(Tr("Stream.Rules.AddHelp"));
+	SetRole(addRule_, "button", ui::FontRole::Button);
+	body->addWidget(addRule_);
+
+	for (const SceneRule &rule : controller_.SceneRules())
+		AddRuleRow(rule.scene, static_cast<int>(rule.action), static_cast<int>(rule.seconds));
+	connect(addRule_, &QPushButton::clicked, this, [this] {
+		obs_source_t *current = obs_frontend_get_current_scene();
+		const std::string name = current ? obs_source_get_name(current) : "";
+		obs_source_release(current);
+		AddRuleRow(name, static_cast<int>(SceneAction::DelayOn), 0);
+		RulesChanged();
+		if (!ruleRows_.empty())
+			ruleRows_.back().scene->setFocus(Qt::TabFocusReason);
+	});
+}
+
+void StreamModePanel::BuildPresets(QVBoxLayout *body)
+{
+	QWidget *host = body->parentWidget();
+	auto *help = new QLabel(Tr("Stream.Presets.Help"), host);
+	help->setWordWrap(true);
+	SetRole(help, "hint", ui::FontRole::Hint);
+	body->addWidget(help);
+
+	presetRow_ = new QBoxLayout(QBoxLayout::LeftToRight);
+	presetRow_->setSpacing(8);
 	for (int i = 0; i < 3; ++i) {
-		auto *spin = new QSpinBox(presetBox);
+		auto *column = new QVBoxLayout();
+		column->setSpacing(5);
+		auto *spin = new QSpinBox(host);
 		spin->setRange(1, static_cast<int>(relay::kMaxDelaySeconds));
 		spin->setSuffix(Tr("Stream.Seconds"));
 		spin->setKeyboardTracking(false);
 		spin->setValue(static_cast<int>(controller_.Preset(i)));
 		spin->setToolTip(Tr("Stream.PresetHelp").arg(i + 1));
-		presetLayout->addWidget(spin);
+		spin->setAccessibleName(Tr("Stream.Preset.Label").arg(i + 1));
+		GuardWheel(spin);
+		auto *label = new QLabel(Tr("Stream.Preset.Label").arg(i + 1), host);
+		SetRole(label, "eyebrow", ui::FontRole::Eyebrow);
+		label->setBuddy(spin);
+		column->addWidget(label);
+		column->addWidget(spin);
+		presetRow_->addLayout(column, 1);
 		presetSpins_[i] = spin;
 		connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this, i](int value) {
 			if (refreshing_)
 				return;
 			controller_.SetPreset(i, static_cast<uint32_t>(value));
 			SettingsChanged();
+			Refresh();
 		});
 	}
-	controls->addWidget(presetBox);
+	body->addLayout(presetRow_);
+}
 
-	// Scene rules.
-	auto *rulesBox = new QGroupBox(Tr("Stream.Rules"), controlsBox_);
-	auto *rulesLayout = new QVBoxLayout(rulesBox);
-	auto *rulesHelp = new QLabel(Tr("Stream.RulesHelp"), rulesBox);
-	rulesHelp->setWordWrap(true);
-	rulesLayout->addWidget(rulesHelp);
-	rulesTable_ = new QTableWidget(0, 3, rulesBox);
-	rulesTable_->setHorizontalHeaderLabels(
-		{Tr("Stream.Rules.Scene"), Tr("Stream.Rules.Action"), Tr("Stream.Delay")});
-	rulesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-	rulesTable_->verticalHeader()->setVisible(false);
-	rulesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-	rulesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-	rulesTable_->setMinimumHeight(90);
-	rulesLayout->addWidget(rulesTable_);
-	auto *ruleButtons = new QHBoxLayout();
-	auto *addRule = new QPushButton(Tr("Stream.Rules.Add"), rulesBox);
-	auto *removeRule = new QPushButton(Tr("Stream.Dest.Remove"), rulesBox);
-	ruleButtons->addWidget(addRule);
-	ruleButtons->addWidget(removeRule);
-	rulesLayout->addLayout(ruleButtons);
-	controls->addWidget(rulesBox);
+void StreamModePanel::BuildOptions(QVBoxLayout *body)
+{
+	QWidget *host = body->parentWidget();
 
-	for (const SceneRule &rule : controller_.SceneRules())
-		AddRuleRow(rule.scene, static_cast<int>(rule.action), static_cast<int>(rule.seconds));
-	connect(addRule, &QPushButton::clicked, this, [this] {
-		obs_source_t *current = obs_frontend_get_current_scene();
-		const std::string name = current ? obs_source_get_name(current) : "";
-		obs_source_release(current);
-		AddRuleRow(name, static_cast<int>(SceneAction::DelayOn), 0);
-		RulesChanged();
-	});
-	connect(removeRule, &QPushButton::clicked, this, [this] {
-		const int row = rulesTable_->currentRow();
-		if (row < 0)
+	keepSpin_ = new QSpinBox(host);
+	keepSpin_->setRange(10, static_cast<int>(relay::kMaxDelaySeconds));
+	keepSpin_->setSuffix(Tr("Stream.Seconds"));
+	keepSpin_->setKeyboardTracking(false);
+	keepSpin_->setAccessibleName(Tr("Stream.Keep"));
+	keepSpin_->setAccessibleDescription(Tr("Stream.KeepHelp"));
+	GuardWheel(keepSpin_);
+	auto *keepLabel = new QLabel(Tr("Stream.Keep"), host);
+	SetRole(keepLabel, "eyebrow", ui::FontRole::Eyebrow);
+	keepLabel->setBuddy(keepSpin_);
+	auto *keepHelp = new QLabel(Tr("Stream.KeepHelp"), host);
+	keepHelp->setWordWrap(true);
+	SetRole(keepHelp, "hint", ui::FontRole::Hint);
+	body->addWidget(keepLabel);
+	body->addWidget(keepSpin_);
+	body->addWidget(keepHelp);
+	connect(keepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+		if (refreshing_)
 			return;
-		rulesTable_->removeRow(row);
-		RulesChanged();
+		controller_.SetKeepSeconds(static_cast<uint32_t>(value));
+		SettingsChanged();
+	});
+
+	// Check boxes with wrapping labels (clicking the label toggles).
+	auto addCheck = [this, host, body](QCheckBox *&check, QLabel *&text, const char *key) {
+		check = new QCheckBox(host);
+		check->setFocusPolicy(Qt::TabFocus);
+		check->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+		check->setAccessibleName(Tr(key));
+		text = new QLabel(Tr(key), host);
+		text->setWordWrap(true);
+		text->setBuddy(check);
+		text->setCursor(Qt::PointingHandCursor);
+		text->installEventFilter(this);
+		auto *row = new QHBoxLayout();
+		row->setSpacing(8);
+		row->addWidget(check, 0, Qt::AlignTop);
+		row->addWidget(text, 1);
+		body->addSpacing(4);
+		body->addLayout(row);
+	};
+	addCheck(drainCheck_, drainText_, "Stream.Drain");
+	connect(drainCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		controller_.SetDrainOnStop(on);
+		SettingsChanged();
+	});
+	addCheck(overlayCheck_, overlayText_, "Stream.Overlay");
+	connect(overlayCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		controller_.SetShowOverlay(on);
+		SettingsChanged();
+		Refresh();
+	});
+
+	cornerCombo_ = new QComboBox(host);
+	cornerCombo_->addItems({Tr("Stream.Corner.TopLeft"), Tr("Stream.Corner.TopRight"),
+				Tr("Stream.Corner.BottomLeft"), Tr("Stream.Corner.BottomRight")});
+	cornerCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	cornerCombo_->setMinimumContentsLength(8);
+	cornerCombo_->setAccessibleName(Tr("Stream.Overlay.Position"));
+	GuardWheel(cornerCombo_);
+	auto *cornerLabel = new QLabel(Tr("Stream.Overlay.Position"), host);
+	SetRole(cornerLabel, "eyebrow", ui::FontRole::Eyebrow);
+	cornerLabel->setBuddy(cornerCombo_);
+	body->addSpacing(2);
+	body->addWidget(cornerLabel);
+	body->addWidget(cornerCombo_);
+	connect(cornerCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+		if (refreshing_ || index < 0)
+			return;
+		controller_.SetOverlayCorner(static_cast<uint32_t>(index));
+		SettingsChanged();
 	});
 }
 
+QWidget *StreamModePanel::CreateSceneHeader(QWidget *parent, std::function<void(bool open)> onToggled)
+{
+	onSceneToggled_ = std::move(onToggled);
+	auto *header = new QWidget(parent);
+	auto *layout = new QVBoxLayout(header);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+	layout->addWidget(MakeDivider(header));
+	auto *inner = new QVBoxLayout();
+	inner->setContentsMargins(12, 8, 12, 8);
+	inner->setSpacing(2);
+	sceneToggle_ = new QPushButton(Tr("Stream.SceneSection"), header);
+	sceneToggle_->setProperty("tgVariant", QStringLiteral("section"));
+	sceneToggle_->setCheckable(true);
+	sceneToggle_->setFocusPolicy(Qt::TabFocus);
+	sceneToggle_->setCursor(Qt::PointingHandCursor);
+	sceneToggle_->setIconSize(kSectionIconBox);
+	SetRole(sceneToggle_, "section", ui::FontRole::Strong);
+	sceneHint_ = new QLabel(header);
+	sceneHint_->setWordWrap(true);
+	SetRole(sceneHint_, "hint", ui::FontRole::Hint);
+	sceneHint_->setContentsMargins(6, 0, 6, 0);
+	inner->addWidget(sceneToggle_);
+	inner->addWidget(sceneHint_);
+	layout->addLayout(inner);
+	connect(sceneToggle_, &QPushButton::clicked, this, [this] { SetSceneSectionOpen(!sceneOpen_); });
+
+	// The whole container takes the panel's style sheet: the panel's scroll
+	// area (tgDockScroll) turns transparent like scene mode's, and the header
+	// gets the section style. Scene mode's dock keeps its own sheet.
+	themedPeers_.emplace_back(parent);
+	parent->setStyleSheet(styleSheet());
+	SetSceneSectionOpen(sceneOpen_);
+	Refresh();
+	return header;
+}
+
+void StreamModePanel::SetSceneSectionOpen(bool open)
+{
+	sceneOpen_ = open;
+	if (sceneToggle_) {
+		const QSignalBlocker block(sceneToggle_);
+		sceneToggle_->setChecked(open);
+		SetButtonIcon(sceneToggle_, open ? ui::IconId::ChevronDown : ui::IconId::ChevronRight,
+			      ToneColor(QStringLiteral("text")));
+	}
+	if (onSceneToggled_)
+		onSceneToggled_(open);
+}
+
+// ---- Theme -----------------------------------------------------------------
+
+QString StreamModePanel::ExtraStyleSheet() const
+{
+	// Panel-only components, from the same tokens as ui-theme.cpp's sheet:
+	// section headers, preset chips, the 5 s steps, icon buttons and the
+	// danger tone of a tag.
+	const uitokens::Tokens &t = theme_.tokens;
+	auto c = [](uitokens::Rgb color) {
+		return QString::fromStdString(uitokens::Hex(color));
+	};
+	const double base = theme_.basePt;
+	const ui::BrandFonts &fonts = ui::Fonts();
+	const QString strong = FontCss(QString(), base, 0.0, 600);
+	const QString mono = FontCss(fonts.mono, base, -1.5, 500);
+	const QString data = FontCss(fonts.mono, base, 0.0, 500);
+	const QString text = c(t.text);
+	const QString muted = c(t.textMuted);
+	const QString line = c(t.line);
+	const QString lineStrong = c(t.lineStrong);
+	const QString accentText = c(t.accentText);
+	const QString accentTint = c(t.accentTint);
+	const QString focus = c(t.focus);
+	const QString disabled = c(t.disabledFg);
+
+	QStringList s;
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"section\"] { background: transparent; color: %1; border: 1px solid "
+		     "transparent; border-radius: 8px; padding: 0px 6px; text-align: left; height: 28px; "
+		     "min-height: 28px; max-height: 28px; margin: 0px; %2 }")
+			.arg(text, strong);
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"section\"]:hover, QPushButton[tgVariant=\"section\"]:checked:hover "
+		     "{ color: %1; background-color: %2; }")
+			.arg(accentText, accentTint);
+	s << QStringLiteral("QPushButton[tgVariant=\"section\"]:checked { background: transparent; }");
+	s << QStringLiteral("QPushButton[tgVariant=\"section\"][tgTone=\"warning\"] { color: %1; }")
+			.arg(c(t.warningText));
+	s << QStringLiteral("QPushButton[tgVariant=\"section\"]:focus { border: 2px solid %1; }").arg(focus);
+
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"chip\"] { background: transparent; color: %1; border: 1px solid %2; "
+		     "border-radius: 11px; padding: 0px 10px; height: 22px; min-height: 22px; max-height: 22px; "
+		     "margin: 0px; %3 }")
+			.arg(muted, lineStrong, mono);
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"chip\"]:hover, QPushButton[tgVariant=\"chip\"][tgActive=\"true\"] { "
+		     "color: %1; border-color: %1; background-color: %2; }")
+			.arg(accentText, accentTint);
+	s << QStringLiteral("QPushButton[tgVariant=\"chip\"]:focus { border: 2px solid %1; }").arg(focus);
+	s << QStringLiteral("QPushButton[tgVariant=\"chip\"]:disabled { color: %1; border-color: %2; background: "
+			    "transparent; }")
+			.arg(disabled, line);
+
+	// 28 + 2 x 1 border = 30 px: the spin box's height.
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"step\"] { background: transparent; color: %1; border: 1px solid %2; "
+		     "border-radius: 10px; padding: 0px 10px; height: 28px; min-height: 28px; max-height: 28px; "
+		     "margin: 0px; %3 }")
+			.arg(text, lineStrong, data);
+	s << QStringLiteral(
+		     "QPushButton[tgVariant=\"step\"]:hover { color: %1; border-color: %1; background-color: %2; }")
+			.arg(accentText, accentTint);
+	s << QStringLiteral("QPushButton[tgVariant=\"step\"]:pressed { background-color: %1; padding-top: 1px; }")
+			.arg(accentTint);
+	s << QStringLiteral("QPushButton[tgVariant=\"step\"]:focus { border: 2px solid %1; }").arg(focus);
+	s << QStringLiteral("QPushButton[tgVariant=\"step\"]:disabled { color: %1; border-color: %2; }")
+			.arg(disabled, line);
+
+	s << QStringLiteral(
+		"QPushButton[tgVariant=\"icon\"] { background: transparent; border: 1px solid transparent; "
+		"border-radius: 8px; padding: 0px; margin: 0px; width: 26px; height: 26px; min-width: 26px; "
+		"max-width: 26px; min-height: 26px; max-height: 26px; }");
+	s << QStringLiteral("QPushButton[tgVariant=\"icon\"]:hover { background-color: %1; border-color: %2; }")
+			.arg(c(t.dangerTint), c(t.dangerBorder));
+	s << QStringLiteral("QPushButton[tgVariant=\"icon\"]:focus { border: 2px solid %1; }").arg(focus);
+
+	s << QStringLiteral(
+		     "QLabel[tgRole=\"tag\"][tgTone=\"danger\"] { color: %1; background-color: %2; border-color: "
+		     "%1; }")
+			.arg(c(t.dangerText), c(t.dangerTint));
+	return s.join(QLatin1Char('\n'));
+}
+
+void StreamModePanel::ApplyTheme(bool force)
+{
+	if (applyingTheme_ || detached_)
+		return;
+	applyingTheme_ = true;
+	const double basePt = ui::BaseFontPointSize(this);
+	ui::Theme theme = ui::BuildTheme(QApplication::palette(), basePt);
+	if (force || !themeApplied_ || theme.styleSheet != theme_.styleSheet) {
+		theme_ = std::move(theme);
+		themeApplied_ = true;
+		fontRoles_.erase(std::remove_if(fontRoles_.begin(), fontRoles_.end(),
+						[](const auto &entry) { return entry.first.isNull(); }),
+				 fontRoles_.end());
+		const QString sheet = theme_.styleSheet + QLatin1Char('\n') + ExtraStyleSheet();
+		setStyleSheet(sheet);
+		for (const QPointer<QWidget> &peer : themedPeers_) {
+			if (peer)
+				peer->setStyleSheet(sheet);
+		}
+		for (auto &[widget, role] : fontRoles_) {
+			if (widget)
+				ui::ApplyFont(widget, role, theme_.basePt);
+		}
+		ApplyIcons();
+		Refresh();
+	}
+	applyingTheme_ = false;
+}
+
+void StreamModePanel::changeEvent(QEvent *event)
+{
+	QWidget::changeEvent(event);
+	switch (event->type()) {
+	case QEvent::PaletteChange:
+	case QEvent::ApplicationPaletteChange:
+	case QEvent::ApplicationFontChange:
+		ApplyTheme();
+		break;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+	case QEvent::DevicePixelRatioChange:
+		if (themeApplied_)
+			ApplyTheme(/*force=*/true);
+		break;
+#endif
+	default:
+		break;
+	}
+}
+
+QColor StreamModePanel::ToneColor(const QString &tone) const
+{
+	const uitokens::Tokens &t = theme_.tokens;
+	if (tone == QLatin1String("accent"))
+		return ui::ToQColor(t.accentText);
+	if (tone == QLatin1String("warning"))
+		return ui::ToQColor(t.warningText);
+	if (tone == QLatin1String("danger"))
+		return ui::ToQColor(t.dangerText);
+	if (tone == QLatin1String("text"))
+		return ui::ToQColor(t.text);
+	return ui::ToQColor(t.textMuted);
+}
+
+void StreamModePanel::SetIcon(QLabel *label, ui::IconId icon, const QString &tone, int size)
+{
+	label->setPixmap(ui::IconPixmap(icon, ToneColor(tone), size, label->devicePixelRatioF()));
+}
+
+void StreamModePanel::SetButtonIcon(QPushButton *button, ui::IconId icon, const QColor &color, Qt::Alignment alignment)
+{
+	button->setIcon(ui::Icon(icon, color, ui::ToQColor(theme_.tokens.disabledFg), alignment));
+}
+
+void StreamModePanel::ApplyIcons()
+{
+	const uitokens::Tokens &t = theme_.tokens;
+	const QColor text = ui::ToQColor(t.text);
+	SetIcon(hotkeysIcon_, ui::IconId::Keyboard, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
+	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
+	SetButtonIcon(onButton_, ui::IconId::Shield, ui::ToQColor(t.onGradient));
+	SetButtonIcon(offButton_, ui::IconId::X, ui::ToQColor(t.dangerButtonText));
+	SetButtonIcon(liveButton_, ui::IconId::Radio, text);
+	SetButtonIcon(dumpButton_, ui::IconId::Scissors, text);
+	SetButtonIcon(cutButton_, ui::IconId::X, text);
+	SetButtonIcon(signInButton_, ui::IconId::ExternalLink, ui::ToQColor(t.onGradient), Qt::AlignRight);
+	SetButtonIcon(destAdd_, ui::IconId::Plus, text);
+	SetButtonIcon(addRule_, ui::IconId::Plus, text);
+	for (const std::unique_ptr<Section> &section : sections_)
+		SetSectionOpen(*section, section->open);
+	if (sceneToggle_)
+		SetButtonIcon(sceneToggle_, sceneOpen_ ? ui::IconId::ChevronDown : ui::IconId::ChevronRight, text);
+	const QColor muted = ui::ToQColor(t.textMuted);
+	for (const DestinationRow &row : destRows_)
+		SetButtonIcon(row.remove, ui::IconId::Trash, muted, Qt::AlignCenter);
+	for (const RuleRow &row : ruleRows_)
+		SetButtonIcon(row.remove, ui::IconId::Trash, muted, Qt::AlignCenter);
+	for (auto &[icon, label] : warningRows_)
+		SetIcon(icon, ui::IconId::AlertTriangle, QStringLiteral("warning"), kInlineIconSize);
+	RefreshAccount();
+}
+
+// ---- Events ----------------------------------------------------------------
+
+void StreamModePanel::resizeEvent(QResizeEvent *event)
+{
+	QWidget::resizeEvent(event);
+	ApplyNarrowLayout(event->size().width());
+}
+
+void StreamModePanel::ApplyNarrowLayout(int width)
+{
+	// Back to live | Dump stack in very narrow docks; the three presets and
+	// the quick-pick label in narrow ones.
+	const bool tiny = width < kTinyWidth;
+	const auto direction = tiny ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+	if (actionRow_)
+		actionRow_->setDirection(direction);
+	const auto narrow = width < kNarrowWidth ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+	if (presetRow_)
+		presetRow_->setDirection(narrow);
+	if (chipRow_)
+		chipRow_->setDirection(narrow);
+}
+
+bool StreamModePanel::eventFilter(QObject *watched, QEvent *event)
+{
+	if (event->type() == QEvent::MouseButtonRelease) {
+		QCheckBox *check = nullptr;
+		if (watched == modeText_)
+			check = modeCheck_;
+		else if (watched == drainText_)
+			check = drainCheck_;
+		else if (watched == overlayText_)
+			check = overlayCheck_;
+		auto *label = qobject_cast<QLabel *>(watched);
+		auto *mouse = static_cast<QMouseEvent *>(event);
+		if (check && label && mouse->button() == Qt::LeftButton && check->isEnabled() &&
+		    label->rect().contains(mouse->position().toPoint()))
+			check->click();
+		if (check)
+			return false;
+	}
+	if (event->type() == QEvent::Wheel) {
+		auto *widget = qobject_cast<QWidget *>(watched);
+		if (widget && !widget->hasFocus()) {
+			event->ignore();
+			return true;
+		}
+	}
+	return QWidget::eventFilter(watched, event);
+}
+
+// ---- Scene rules -----------------------------------------------------------
+
 void StreamModePanel::AddRuleRow(const std::string &scene, int action, int seconds)
 {
-	const int row = rulesTable_->rowCount();
-	rulesTable_->insertRow(row);
+	QWidget *host = rulesList_->parentWidget();
+	RuleRow row;
+	row.card = new QFrame(host);
+	row.card->setProperty("tgCard", QStringLiteral("inset"));
+	auto *layout = new QVBoxLayout(row.card);
+	layout->setContentsMargins(10, 8, 8, 10);
+	layout->setSpacing(5);
 
-	auto *sceneCombo = new QComboBox(rulesTable_);
+	row.scene = new QComboBox(row.card);
 	char **names = obs_frontend_get_scene_names();
 	for (char **n = names; n && *n; ++n)
-		sceneCombo->addItem(QString::fromUtf8(*n));
+		row.scene->addItem(QString::fromUtf8(*n));
 	bfree(names);
 	const QString sceneName = QString::fromStdString(scene);
-	if (!sceneName.isEmpty() && sceneCombo->findText(sceneName) < 0)
-		sceneCombo->addItem(sceneName); // A scene that no longer exists keeps its rule.
-	sceneCombo->setCurrentText(sceneName);
+	if (!sceneName.isEmpty() && row.scene->findText(sceneName) < 0)
+		row.scene->addItem(sceneName); // A scene that no longer exists keeps its rule.
+	row.scene->setCurrentText(sceneName);
+	row.scene->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	row.scene->setMinimumContentsLength(6);
+	row.scene->setAccessibleName(Tr("Stream.Rules.Scene"));
+	GuardWheel(row.scene);
 
-	auto *actionCombo = new QComboBox(rulesTable_);
-	actionCombo->addItems({Tr("Stream.Rules.None"), Tr("Stream.Rules.On"), Tr("Stream.Rules.Off")});
-	actionCombo->setCurrentIndex(std::clamp(action, 0, 2));
+	row.remove = new QPushButton(row.card);
+	row.remove->setProperty("tgVariant", QStringLiteral("icon"));
+	row.remove->setFocusPolicy(Qt::TabFocus);
+	row.remove->setIconSize(QSize(kInlineIconSize, kInlineIconSize));
+	row.remove->setCursor(Qt::PointingHandCursor);
 
-	auto *secondsSpin = new QSpinBox(rulesTable_);
-	secondsSpin->setRange(0, static_cast<int>(relay::kMaxDelaySeconds));
-	secondsSpin->setSpecialValueText(Tr("Stream.Rules.Keep"));
-	secondsSpin->setSuffix(Tr("Stream.Seconds"));
-	secondsSpin->setKeyboardTracking(false);
-	secondsSpin->setValue(seconds);
+	auto *sceneLabel = new QLabel(Tr("Stream.Rules.Scene"), row.card);
+	SetRole(sceneLabel, "eyebrow", ui::FontRole::Eyebrow);
+	sceneLabel->setBuddy(row.scene);
+	auto *top = new QHBoxLayout();
+	top->setSpacing(6);
+	top->addWidget(sceneLabel, 1, Qt::AlignBottom);
+	top->addWidget(row.remove, 0, Qt::AlignRight);
+	layout->addLayout(top);
+	layout->addWidget(row.scene);
 
-	rulesTable_->setCellWidget(row, 0, sceneCombo);
-	rulesTable_->setCellWidget(row, 1, actionCombo);
-	rulesTable_->setCellWidget(row, 2, secondsSpin);
-	connect(sceneCombo, &QComboBox::currentTextChanged, this, [this] { RulesChanged(); });
-	connect(actionCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] { RulesChanged(); });
-	connect(secondsSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this] { RulesChanged(); });
+	row.action = new QComboBox(row.card);
+	row.action->addItems({Tr("Stream.Rules.None"), Tr("Stream.Rules.On"), Tr("Stream.Rules.Off")});
+	row.action->setCurrentIndex(std::clamp(action, 0, 2));
+	row.action->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	row.action->setMinimumContentsLength(6);
+	row.action->setAccessibleName(Tr("Stream.Rules.Action"));
+	GuardWheel(row.action);
+
+	row.seconds = new QSpinBox(row.card);
+	row.seconds->setRange(0, static_cast<int>(relay::kMaxDelaySeconds));
+	row.seconds->setSpecialValueText(Tr("Stream.Rules.Keep"));
+	row.seconds->setSuffix(Tr("Stream.Seconds"));
+	row.seconds->setKeyboardTracking(false);
+	row.seconds->setValue(seconds);
+	row.seconds->setAccessibleName(Tr("Stream.Delay"));
+	row.seconds->setToolTip(Tr("Stream.Rules.SecondsHelp"));
+	row.seconds->setEnabled(row.action->currentIndex() == static_cast<int>(SceneAction::DelayOn));
+	GuardWheel(row.seconds);
+
+	auto *actionLabel = new QLabel(Tr("Stream.Rules.Action"), row.card);
+	SetRole(actionLabel, "eyebrow", ui::FontRole::Eyebrow);
+	actionLabel->setBuddy(row.action);
+	layout->addSpacing(3);
+	layout->addWidget(actionLabel);
+	auto *bottom = new QHBoxLayout();
+	bottom->setSpacing(6);
+	bottom->addWidget(row.action, 3);
+	bottom->addWidget(row.seconds, 2);
+	layout->addLayout(bottom);
+
+	rulesList_->addWidget(row.card);
+	QFrame *card = row.card;
+	QSpinBox *secondsSpin = row.seconds;
+	connect(row.scene, &QComboBox::currentTextChanged, this, [this, card](const QString &name) {
+		for (const RuleRow &r : ruleRows_) {
+			if (r.card == card)
+				r.remove->setAccessibleName(Tr("Stream.Rules.RemoveName").arg(name));
+		}
+		RulesChanged();
+	});
+	connect(row.action, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, secondsSpin](int index) {
+		secondsSpin->setEnabled(index == static_cast<int>(SceneAction::DelayOn));
+		RulesChanged();
+	});
+	connect(row.seconds, qOverload<int>(&QSpinBox::valueChanged), this, [this] { RulesChanged(); });
+	connect(row.remove, &QPushButton::clicked, this, [this, card] { RemoveRuleRow(card); });
+
+	row.remove->setAccessibleName(Tr("Stream.Rules.RemoveName").arg(row.scene->currentText()));
+	row.remove->setToolTip(Tr("Stream.Dest.Remove"));
+	if (themeApplied_) {
+		SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(theme_.tokens.textMuted), Qt::AlignCenter);
+		for (QWidget *w : row.card->findChildren<QLabel *>())
+			ui::ApplyFont(w, ui::FontRole::Eyebrow, theme_.basePt);
+	}
+	ruleRows_.push_back(row);
+	rulesEmpty_->setVisible(false);
+	rulesSection_->count->setText(QString::number(ruleRows_.size()));
+	rulesSection_->count->setVisible(true);
+}
+
+void StreamModePanel::RemoveRuleRow(QFrame *card)
+{
+	auto it = std::find_if(ruleRows_.begin(), ruleRows_.end(), [card](const RuleRow &r) { return r.card == card; });
+	if (it == ruleRows_.end())
+		return;
+	const size_t index = static_cast<size_t>(it - ruleRows_.begin());
+	ruleRows_.erase(it);
+	card->hide();
+	card->deleteLater();
+	RulesChanged();
+	// Focus goes to the next rule's remove button, or to "Add scene".
+	if (index < ruleRows_.size())
+		ruleRows_[index].remove->setFocus(Qt::TabFocusReason);
+	else
+		addRule_->setFocus(Qt::TabFocusReason);
 }
 
 void StreamModePanel::RulesChanged()
 {
 	std::vector<SceneRule> rules;
-	for (int row = 0; row < rulesTable_->rowCount(); ++row) {
-		auto *sceneCombo = qobject_cast<QComboBox *>(rulesTable_->cellWidget(row, 0));
-		auto *actionCombo = qobject_cast<QComboBox *>(rulesTable_->cellWidget(row, 1));
-		auto *secondsSpin = qobject_cast<QSpinBox *>(rulesTable_->cellWidget(row, 2));
-		if (!sceneCombo || !actionCombo || !secondsSpin || sceneCombo->currentText().isEmpty())
+	for (const RuleRow &row : ruleRows_) {
+		if (row.scene->currentText().isEmpty())
 			continue;
 		SceneRule rule;
-		rule.scene = sceneCombo->currentText().toStdString();
-		rule.action = static_cast<SceneAction>(actionCombo->currentIndex());
-		rule.seconds = static_cast<uint32_t>(secondsSpin->value());
+		rule.scene = row.scene->currentText().toStdString();
+		rule.action = static_cast<SceneAction>(row.action->currentIndex());
+		rule.seconds = static_cast<uint32_t>(row.seconds->value());
 		rules.push_back(std::move(rule));
 	}
 	controller_.SetSceneRules(std::move(rules));
+	rulesEmpty_->setVisible(ruleRows_.empty());
+	rulesSection_->count->setText(QString::number(ruleRows_.size()));
+	rulesSection_->count->setVisible(!ruleRows_.empty());
 	SettingsChanged();
 }
+
+// ---- Destinations ----------------------------------------------------------
 
 void StreamModePanel::AddDestination()
 {
 	const QString server = destServer_->text().trimmed();
 	if (!(server.startsWith(QStringLiteral("rtmp://")) || server.startsWith(QStringLiteral("rtmps://")))) {
-		destServer_->setFocus();
+		ui::SetStyleProperty(destServer_, "tgInvalid", QStringLiteral("true"));
+		destInvalid_->setVisible(true);
+		destServer_->setFocus(Qt::OtherFocusReason);
 		return;
 	}
 	std::vector<ExtraDestination> extras = controller_.ExtraDestinations();
@@ -452,24 +1240,143 @@ void StreamModePanel::AddDestination()
 	destServer_->clear();
 	destKey_->clear();
 	SettingsChanged();
-	RefreshDestinations();
+	Refresh();
 }
 
-void StreamModePanel::RemoveSelectedDestination()
+void StreamModePanel::RemoveDestination(int index)
 {
-	const int row = destTable_->currentRow();
-	// Row 0 is always the streamer's own OBS service.
-	if (row <= 0)
-		return;
 	std::vector<ExtraDestination> extras = controller_.ExtraDestinations();
-	const size_t index = static_cast<size_t>(row - 1);
-	if (index >= extras.size())
+	if (index < 0 || static_cast<size_t>(index) >= extras.size())
 		return;
-	extras.erase(extras.begin() + static_cast<long>(index));
+	extras.erase(extras.begin() + index);
 	controller_.SetExtraDestinations(std::move(extras));
 	SettingsChanged();
-	RefreshDestinations();
+	Refresh();
+	destName_->setFocus(Qt::TabFocusReason);
 }
+
+void StreamModePanel::RefreshDestinations(const StreamDelayStatus &status)
+{
+	struct Entry {
+		QString name;
+		QString sub;
+		QString state;
+		QString stateTone;
+		QString error;
+		int extraIndex = -1; // Removable when >= 0.
+	};
+	std::vector<Entry> entries;
+	const auto &extras = controller_.ExtraDestinations();
+	const bool live = status.engaged || status.state == StreamDelayState::Draining;
+	if (live && !status.relay.sinks.empty()) {
+		// Sink 0 is the streamer's own OBS service, then the extras in order.
+		const bool mapsToExtras = status.relay.sinks.size() == 1 + extras.size();
+		for (size_t i = 0; i < status.relay.sinks.size(); ++i) {
+			const relay::SinkStatus &sink = status.relay.sinks[i];
+			Entry e;
+			e.name = i == 0 ? Tr("Stream.Dest.Primary") : QString::fromStdString(sink.name);
+			e.state = SinkStateText(sink.state);
+			e.stateTone = SinkStateTone(sink.state);
+			e.sub = sink.state == relay::SinkState::Live
+					? QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps")
+					: Megabytes(sink.bytesSent) + QStringLiteral(" MB");
+			if (!sink.error.empty() && sink.state != relay::SinkState::Live)
+				e.error = QString::fromStdString(sink.error);
+			if (i > 0 && mapsToExtras)
+				e.extraIndex = static_cast<int>(i - 1);
+			entries.push_back(std::move(e));
+		}
+	} else {
+		Entry primary;
+		primary.name = Tr("Stream.Dest.Primary");
+		primary.sub = Tr("Stream.Dest.PrimaryHelp");
+		entries.push_back(std::move(primary));
+		for (size_t i = 0; i < extras.size(); ++i) {
+			const ExtraDestination &extra = extras[i];
+			Entry e;
+			const QString host = QString::fromStdString(relay::HostOf(extra.server));
+			e.name = extra.name.empty() ? host : QString::fromStdString(extra.name);
+			e.sub = host;
+			e.extraIndex = static_cast<int>(i);
+			entries.push_back(std::move(e));
+		}
+	}
+
+	if (entries.size() != destRows_.size()) {
+		for (const DestinationRow &row : destRows_) {
+			row.card->hide();
+			row.card->deleteLater();
+		}
+		destRows_.clear();
+		QWidget *host = destList_->parentWidget();
+		for (size_t i = 0; i < entries.size(); ++i) {
+			DestinationRow row;
+			row.card = new QFrame(host);
+			row.card->setProperty("tgCard", QStringLiteral("inset"));
+			auto *layout = new QHBoxLayout(row.card);
+			layout->setContentsMargins(10, 6, 6, 6);
+			layout->setSpacing(8);
+			auto *texts = new QVBoxLayout();
+			texts->setSpacing(1);
+			row.name = new QLabel(row.card);
+			row.name->setWordWrap(true);
+			SetRole(row.name, "strong", ui::FontRole::Strong);
+			row.sent = new QLabel(row.card);
+			row.sent->setWordWrap(true);
+			SetRole(row.sent, "dataHint", ui::FontRole::DataHint);
+			row.error = new QLabel(row.card);
+			row.error->setWordWrap(true);
+			SetRole(row.error, "hint", ui::FontRole::Hint);
+			row.error->setProperty("tgTone", QStringLiteral("danger"));
+			texts->addWidget(row.name);
+			texts->addWidget(row.sent);
+			texts->addWidget(row.error);
+			row.state = new QLabel(row.card);
+			SetRole(row.state, "tag", ui::FontRole::Tag);
+			row.remove = new QPushButton(row.card);
+			row.remove->setProperty("tgVariant", QStringLiteral("icon"));
+			row.remove->setFocusPolicy(Qt::TabFocus);
+			row.remove->setIconSize(QSize(kInlineIconSize, kInlineIconSize));
+			row.remove->setCursor(Qt::PointingHandCursor);
+			row.remove->setToolTip(Tr("Stream.Dest.Remove"));
+			QPushButton *remove = row.remove;
+			connect(row.remove, &QPushButton::clicked, this,
+				[this, remove] { RemoveDestination(remove->property("tgIndex").toInt()); });
+			layout->addLayout(texts, 1);
+			layout->addWidget(row.state, 0, Qt::AlignVCenter);
+			layout->addWidget(row.remove, 0, Qt::AlignVCenter);
+			if (themeApplied_) {
+				ui::ApplyFont(row.name, ui::FontRole::Strong, theme_.basePt);
+				ui::ApplyFont(row.sent, ui::FontRole::DataHint, theme_.basePt);
+				ui::ApplyFont(row.error, ui::FontRole::Hint, theme_.basePt);
+				ui::ApplyFont(row.state, ui::FontRole::Tag, theme_.basePt);
+				SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(theme_.tokens.textMuted),
+					      Qt::AlignCenter);
+			}
+			destList_->addWidget(row.card);
+			destRows_.push_back(row);
+		}
+	}
+	for (size_t i = 0; i < entries.size(); ++i) {
+		const Entry &e = entries[i];
+		DestinationRow &row = destRows_[i];
+		row.name->setText(e.name);
+		row.sent->setText(e.sub);
+		row.sent->setVisible(!e.sub.isEmpty());
+		row.error->setText(e.error);
+		row.error->setVisible(!e.error.isEmpty());
+		row.state->setText(e.state);
+		row.state->setVisible(!e.state.isEmpty());
+		ui::SetStyleProperty(row.state, "tgTone", e.stateTone);
+		row.remove->setProperty("tgIndex", e.extraIndex);
+		row.remove->setVisible(e.extraIndex >= 0);
+		row.remove->setAccessibleName(Tr("Stream.Dest.RemoveName").arg(e.name));
+	}
+	destSection_->count->setText(QString::number(1 + extras.size()));
+	destSection_->count->setVisible(!extras.empty());
+}
+
+// ---- Refresh ---------------------------------------------------------------
 
 void StreamModePanel::SettingsChanged()
 {
@@ -477,52 +1384,257 @@ void StreamModePanel::SettingsChanged()
 		onSettingsChanged_();
 }
 
-void StreamModePanel::RefreshDestinations()
-{
-	const StreamDelayStatus status = controller_.GetStatus();
-	const auto &extras = controller_.ExtraDestinations();
-	destTable_->setRowCount(static_cast<int>(1 + extras.size()));
-	auto setRow = [this](int row, const QString &name, const QString &state, const QString &sent) {
-		destTable_->setItem(row, 0, new QTableWidgetItem(name));
-		destTable_->setItem(row, 1, new QTableWidgetItem(state));
-		destTable_->setItem(row, 2, new QTableWidgetItem(sent));
-	};
-	const bool live = status.engaged || status.state == StreamDelayState::Draining;
-	if (live && !status.relay.sinks.empty()) {
-		destTable_->setRowCount(static_cast<int>(status.relay.sinks.size()));
-		for (size_t i = 0; i < status.relay.sinks.size(); ++i) {
-			const relay::SinkStatus &sink = status.relay.sinks[i];
-			QString state = SinkStateText(sink.state);
-			if (!sink.error.empty() && sink.state != relay::SinkState::Live)
-				state +=
-					QStringLiteral(" (") + QString::fromStdString(sink.error) + QStringLiteral(")");
-			const QString sent = sink.state == relay::SinkState::Live
-						     ? QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps")
-						     : Megabytes(sink.bytesSent) + QStringLiteral(" MB");
-			setRow(static_cast<int>(i), QString::fromStdString(sink.name), state, sent);
-		}
-		return;
-	}
-	setRow(0, Tr("Stream.Dest.Primary"), QString(), QString());
-	for (size_t i = 0; i < extras.size(); ++i) {
-		const ExtraDestination &extra = extras[i];
-		const QString name = extra.name.empty() ? QString::fromStdString(relay::HostOf(extra.server))
-							: QString::fromStdString(extra.name);
-		setRow(static_cast<int>(i + 1), name, QString(), QString());
-	}
-}
-
 void StreamModePanel::Detach()
 {
 	detached_ = true;
 	if (timer_)
 		timer_->stop();
+	if (frontendCallback_) {
+		obs_frontend_remove_event_callback(OnFrontendEvent, this);
+		frontendCallback_ = false;
+	}
 	setEnabled(false);
+}
+
+void StreamModePanel::RefreshStatus(const StreamDelayStatus &status)
+{
+	// Each state differs by rule, icon, headline color AND text -- never by
+	// color alone (as in scene mode's status card).
+	QString headline;
+	QString detail;
+	QString rule = QStringLiteral("none");
+	QString tone = QStringLiteral("text");
+	QString chip;
+	QString chipTone;
+	ui::IconId icon = ui::IconId::Circle;
+	QString iconTone = QStringLiteral("muted");
+	const uint32_t applied = status.relay.delaySeconds;
+	const QString seconds = applied != status.delaySeconds && applied > 0
+					? Tr("Dock.Status.SecondsOf").arg(applied).arg(status.delaySeconds)
+					: Tr("Dock.Status.Seconds").arg(status.delaySeconds);
+
+	if (!status.available) {
+		headline = Tr("Stream.Head.Unavailable");
+		detail = Tr("Stream.Unavailable");
+		icon = ui::IconId::Info;
+	} else if (status.dumpRestoreIn > 0 && status.engaged) {
+		headline = Tr("Stream.Head.Dumped");
+		detail = Tr("Stream.Detail.Dumped").arg(status.dumpRestoreIn);
+		rule = QStringLiteral("warning");
+		tone = QStringLiteral("warning");
+		icon = ui::IconId::Scissors;
+		iconTone = QStringLiteral("warning");
+		chip = Tr("Stream.Chip.Back").arg(status.dumpRestoreIn);
+		chipTone = QStringLiteral("warning");
+	} else {
+		switch (status.state) {
+		case StreamDelayState::Idle:
+			if (!status.ineligible.empty()) {
+				const std::string key = "Stream.Ineligible." + status.ineligible;
+				headline = Tr("Stream.Head.Ineligible");
+				detail = Tr(key.c_str());
+				rule = QStringLiteral("warning");
+				tone = QStringLiteral("warning");
+				icon = ui::IconId::AlertTriangle;
+				iconTone = QStringLiteral("warning");
+			} else if (status.delayOn) {
+				headline = Tr("Stream.Head.Armed");
+				detail = Tr("Stream.Detail.Armed").arg(status.delaySeconds);
+				icon = ui::IconId::Shield;
+				iconTone = QStringLiteral("accent");
+				chip = Tr("Dock.Status.Seconds").arg(status.delaySeconds);
+				chipTone = QStringLiteral("accent");
+			} else {
+				headline = Tr("Stream.Head.Idle");
+				detail = Tr("Stream.Detail.Idle");
+			}
+			break;
+		case StreamDelayState::Live:
+			headline = Tr("Stream.Head.Live");
+			detail = Tr("Stream.Detail.Live");
+			rule = QStringLiteral("warning");
+			tone = QStringLiteral("warning");
+			icon = ui::IconId::Radio;
+			iconTone = QStringLiteral("warning");
+			break;
+		case StreamDelayState::Delayed:
+			headline = Tr("Stream.Head.Delayed");
+			detail = Tr("Stream.Detail.DelayedFor").arg(applied > 0 ? applied : status.delaySeconds);
+			rule = QStringLiteral("active");
+			icon = ui::IconId::Shield;
+			iconTone = QStringLiteral("accent");
+			chip = seconds;
+			chipTone = QStringLiteral("accent");
+			break;
+		case StreamDelayState::Draining:
+			headline = Tr("Stream.Head.Draining");
+			detail = Tr("Stream.Detail.DrainingFor").arg(applied);
+			rule = QStringLiteral("warning");
+			tone = QStringLiteral("warning");
+			icon = ui::IconId::Clock;
+			iconTone = QStringLiteral("warning");
+			chip = Tr("Dock.Status.Seconds").arg(applied);
+			chipTone = QStringLiteral("warning");
+			break;
+		}
+	}
+	stateLabel_->setText(headline);
+	ui::SetStyleProperty(stateLabel_, "tgTone", tone);
+	ui::SetStyleProperty(statusRule_, "tgRule", rule);
+	SetIcon(statusIcon_, icon, iconTone, kStatusIconSize);
+	statusChip_->setVisible(!chip.isEmpty());
+	if (!chip.isEmpty()) {
+		statusChip_->setText(chip);
+		ui::SetStyleProperty(statusChip_, "tgTone", chipTone);
+	}
+	detailLabel_->setText(detail);
+	detailLabel_->setVisible(!detail.isEmpty());
+	statusCard_->setAccessibleName(QStringLiteral("%1: %2. %3").arg(Tr("Dock.Status.Eyebrow"), headline, detail));
+
+	QString stats;
+	if (status.engaged || status.state == StreamDelayState::Draining) {
+		const relay::RelayStatus &r = status.relay;
+		QString video = QString::fromStdString(r.videoCodec);
+		if (r.width > 0)
+			video += QStringLiteral(" %1x%2").arg(r.width).arg(r.height);
+		stats = Tr("Stream.Stats")
+				.arg(QString::number(r.historySeconds, 'f', 0))
+				.arg(Megabytes(r.historyBytes))
+				.arg(QString::number(r.bitrateMbps, 'f', 1))
+				.arg(video);
+	}
+	statsLabel_->setText(stats);
+	statsLabel_->setVisible(!stats.isEmpty());
+
+	const bool ruleShown = !status.ruleScene.empty() && status.engaged && status.dumpRestoreIn == 0;
+	ruleLabel_->setText(ruleShown ? Tr("Stream.RuleApplied").arg(QString::fromStdString(status.ruleScene))
+				      : QString());
+	ruleRow_->setVisible(ruleShown);
+	noticeLabel_->setText(status.lastEvent.empty()
+				      ? QString()
+				      : Tr("Stream.LastEvent").arg(QString::fromStdString(status.lastEvent)));
+	noticeRow_->setVisible(!status.lastEvent.empty());
+
+	// Actions.
+	const bool canEnable = auth_.CanEnable();
+	onButton_->setVisible(status.available && !status.delayOn);
+	onButton_->setEnabled(canEnable);
+	onButton_->setToolTip(canEnable ? QString() : Tr("Stream.Account.Required"));
+	offButton_->setVisible(status.available && status.delayOn);
+	const bool running = status.delayOn && status.engaged;
+	liveButton_->setVisible(running);
+	dumpButton_->setVisible(running);
+	dumpButton_->setEnabled(status.dumpRestoreIn == 0 && status.relay.delaySeconds > 0);
+	cutButton_->setVisible(status.state == StreamDelayState::Draining);
+}
+
+void StreamModePanel::RefreshAccount()
+{
+	if (!accountCard_)
+		return;
+	// Only when turning the delay on needs a sign-in: signed in, the account
+	// lives in scene mode's dock below.
+	if (auth_.CanEnable()) {
+		accountCard_->setVisible(false);
+		return;
+	}
+	accountCard_->setVisible(true);
+	if (auth_.IsLoggingIn() && !auth_.PendingUserCode().empty()) {
+		accountLabel_->setText(
+			Tr("Stream.Account.Pending").arg(QString::fromStdString(auth_.PendingUserCode())));
+		SetIcon(accountIcon_, ui::IconId::Clock, QStringLiteral("accent"), kAccountIconSize);
+		signInButton_->setVisible(false);
+	} else {
+		accountLabel_->setText(Tr("Stream.Account.Required"));
+		SetIcon(accountIcon_, ui::IconId::Lock, QStringLiteral("muted"), kAccountIconSize);
+		signInButton_->setVisible(!auth_.IsLoggingIn());
+	}
+}
+
+void StreamModePanel::RefreshWarnings(const StreamDelayStatus &status)
+{
+	QStringList texts;
+	bool keyintWarned = false;
+	for (const std::string &w : status.warnings) {
+		const size_t colon = w.find(':');
+		const std::string name = w.substr(0, colon);
+		keyintWarned = keyintWarned || name.rfind("keyint", 0) == 0;
+		const std::string key = "Stream.Warn." + name;
+		QString text = Tr(key.c_str());
+		if (colon != std::string::npos)
+			text = text.arg(QString::fromStdString(w.substr(colon + 1)));
+		texts << text;
+	}
+	// The relay measures the real keyframe interval while streaming.
+	const double keyint = status.relay.keyframeIntervalSeconds;
+	if (!keyintWarned && (status.engaged || status.state == StreamDelayState::Draining) && keyint > 4.5)
+		texts << Tr("Stream.KeyframeWarning").arg(QString::number(keyint, 'f', 1));
+
+	while (warningRows_.size() < static_cast<size_t>(texts.size())) {
+		QWidget *host = warningsSection_->body;
+		auto *row = new QHBoxLayout();
+		row->setSpacing(6);
+		QLabel *icon = MakeIconLabel(host, kInlineIconSize);
+		auto *label = new QLabel(host);
+		label->setWordWrap(true);
+		label->setProperty("tgRole", QStringLiteral("muted"));
+		row->addWidget(icon, 0, Qt::AlignTop);
+		row->addWidget(label, 1);
+		warningsLayout_->addLayout(row);
+		SetIcon(icon, ui::IconId::AlertTriangle, QStringLiteral("warning"), kInlineIconSize);
+		warningRows_.emplace_back(icon, label);
+	}
+	for (size_t i = 0; i < warningRows_.size(); ++i) {
+		const bool shown = i < static_cast<size_t>(texts.size());
+		warningRows_[i].first->setVisible(shown);
+		warningRows_[i].second->setVisible(shown);
+		warningRows_[i].second->setText(shown ? texts[static_cast<int>(i)] : QString());
+	}
+	const int count = static_cast<int>(texts.size());
+	warningsList_->setVisible(count > 0);
+	warningsSection_->count->setText(QString::number(count));
+	warningsSection_->count->setVisible(count > 0);
+	ui::SetStyleProperty(warningsSection_->count, "tgTone", QStringLiteral("warning"));
+	// Opened when the first warning shows up; after that the streamer decides.
+	if (count > 0 && lastWarningCount_ == 0)
+		SetSectionOpen(*warningsSection_, true);
+	lastWarningCount_ = count;
+}
+
+void StreamModePanel::RefreshPresetChips(uint32_t delaySeconds)
+{
+	for (int i = 0; i < 3; ++i) {
+		const uint32_t value = controller_.Preset(i);
+		presetChips_[i]->setText(Tr("Dock.Status.Seconds").arg(value));
+		presetChips_[i]->setAccessibleName(Tr("Stream.Preset.Label").arg(i + 1) + QStringLiteral(": ") +
+						   Tr("Dock.Status.Seconds").arg(value));
+		ui::SetStyleProperty(presetChips_[i], "tgActive",
+				     value == delaySeconds ? QStringLiteral("true") : QStringLiteral("false"));
+	}
+}
+
+void StreamModePanel::RefreshModeLines(const StreamDelayStatus &status)
+{
+	// Which mode the hotkeys and Stream Deck drive right now, and why scene
+	// mode is folded (or not).
+	const bool handles = controller_.HandlesControls();
+	QString hotkeys;
+	if (!status.available)
+		hotkeys = Tr("Stream.Unavailable");
+	else if (handles)
+		hotkeys = Tr("Stream.Hotkeys.Stream");
+	else if (!status.modeEnabled)
+		hotkeys = Tr("Stream.Hotkeys.SceneOff");
+	else
+		hotkeys = Tr("Stream.Hotkeys.SceneThis");
+	hotkeysLabel_->setText(hotkeys);
+	if (sceneHint_)
+		sceneHint_->setText(handles ? Tr("Stream.Scene.Folded") : Tr("Stream.Scene.Active"));
 }
 
 void StreamModePanel::Refresh()
 {
-	if (detached_)
+	if (detached_ || !themeApplied_)
 		return;
 	refreshing_ = true;
 	const StreamDelayStatus status = controller_.GetStatus();
@@ -534,103 +1646,25 @@ void StreamModePanel::Refresh()
 		delaySpin_->setValue(static_cast<int>(status.delaySeconds));
 	if (keepSpin_->value() != static_cast<int>(status.keepSeconds))
 		keepSpin_->setValue(static_cast<int>(status.keepSeconds));
+	for (int i = 0; i < 3; ++i) {
+		const int preset = static_cast<int>(controller_.Preset(i));
+		if (presetSpins_[i]->value() != preset)
+			presetSpins_[i]->setValue(preset);
+	}
 	drainCheck_->setChecked(status.drainOnStop);
-
-	QString state;
-	QString detail;
-	switch (status.state) {
-	case StreamDelayState::Idle:
-		state = status.delayOn ? Tr("Stream.State.IdleArmed").arg(status.delaySeconds)
-				       : Tr("Stream.State.Idle");
-		detail = Tr("Stream.Detail.Idle");
-		break;
-	case StreamDelayState::Live:
-		state = Tr("Stream.State.Live");
-		detail = Tr("Stream.Detail.Live");
-		break;
-	case StreamDelayState::Delayed:
-		state = Tr("Stream.State.Delayed").arg(status.relay.delaySeconds);
-		detail = Tr("Stream.Detail.Delayed");
-		break;
-	case StreamDelayState::Draining:
-		state = Tr("Stream.State.Draining").arg(status.relay.delaySeconds);
-		detail = Tr("Stream.Detail.Draining");
-		break;
-	}
-	if (!status.available) {
-		state = Tr("Stream.Unavailable");
-		detail.clear();
-	} else if (!status.ineligible.empty() && status.state == StreamDelayState::Idle) {
-		const std::string key = "Stream.Ineligible." + status.ineligible;
-		detail = Tr(key.c_str());
-	}
-	stateLabel_->setText(state);
-	detailLabel_->setText(detail);
-
-	toggleButton_->setText(status.delayOn ? Tr("Stream.Disable") : Tr("Stream.Enable"));
-	liveButton_->setVisible(status.delayOn && status.engaged);
-	cutButton_->setVisible(status.state == StreamDelayState::Draining);
-	dumpButton_->setVisible(status.engaged && status.delayOn);
-	dumpButton_->setEnabled(status.dumpRestoreIn == 0 && status.relay.delaySeconds > 0);
-	QString dumpText;
-	if (status.dumpRestoreIn > 0)
-		dumpText = Tr("Stream.DumpPending").arg(status.dumpRestoreIn);
-	else if (!status.ruleScene.empty() && status.engaged)
-		dumpText = Tr("Stream.RuleApplied").arg(QString::fromStdString(status.ruleScene));
-	dumpLabel_->setText(dumpText);
-	dumpLabel_->setVisible(!dumpText.isEmpty());
-
-	QString stats;
-	QString warning;
-	if (status.engaged || status.state == StreamDelayState::Draining) {
-		const relay::RelayStatus &r = status.relay;
-		QString video = QString::fromStdString(r.videoCodec);
-		if (r.width > 0)
-			video += QStringLiteral(" %1x%2").arg(r.width).arg(r.height);
-		stats = Tr("Stream.Stats")
-				.arg(QString::number(r.historySeconds, 'f', 0))
-				.arg(Megabytes(r.historyBytes))
-				.arg(QString::number(r.bitrateMbps, 'f', 1))
-				.arg(video);
-		if (r.keyframeIntervalSeconds > 4.5)
-			warning = Tr("Stream.KeyframeWarning").arg(QString::number(r.keyframeIntervalSeconds, 'f', 1));
-	}
-	if (!status.lastEvent.empty())
-		warning += (warning.isEmpty() ? QString() : QStringLiteral("\n")) +
-			   Tr("Stream.LastEvent").arg(QString::fromStdString(status.lastEvent));
-	statsLabel_->setText(stats);
-	statsLabel_->setVisible(!stats.isEmpty());
-	warningLabel_->setText(warning);
-	warningLabel_->setVisible(!warning.isEmpty());
-
 	overlayCheck_->setChecked(status.showOverlay);
 	cornerCombo_->setCurrentIndex(static_cast<int>(status.overlayCorner));
 	cornerCombo_->setEnabled(status.showOverlay);
-	QStringList settingsText;
-	for (const std::string &w : status.warnings) {
-		const size_t colon = w.find(':');
-		const std::string key = "Stream.Warn." + w.substr(0, colon);
-		QString text = Tr(key.c_str());
-		if (colon != std::string::npos)
-			text = text.arg(QString::fromStdString(w.substr(colon + 1)));
-		settingsText << text;
-	}
-	settingsWarnings_->setText(settingsText.join(QStringLiteral("\n")));
-	settingsWarnings_->setVisible(!settingsText.isEmpty());
+	const bool atMax = status.delaySeconds >= relay::kMaxDelaySeconds;
+	lessButton_->setEnabled(status.delaySeconds > 1);
+	moreButton_->setEnabled(!atMax);
 
-	if (auth_.CanEnable()) {
-		accountLabel_->setText(Tr("Stream.Account.SignedIn").arg(QString::fromStdString(auth_.DisplayName())));
-		signInButton_->setVisible(false);
-	} else if (auth_.IsLoggingIn() && !auth_.PendingUserCode().empty()) {
-		accountLabel_->setText(
-			Tr("Stream.Account.Pending").arg(QString::fromStdString(auth_.PendingUserCode())));
-		signInButton_->setVisible(false);
-	} else {
-		accountLabel_->setText(Tr("Stream.Account.Required"));
-		signInButton_->setVisible(!auth_.IsLoggingIn());
-	}
-
-	RefreshDestinations();
+	RefreshStatus(status);
+	RefreshAccount();
+	RefreshDestinations(status);
+	RefreshWarnings(status);
+	RefreshPresetChips(status.delaySeconds);
+	RefreshModeLines(status);
 	refreshing_ = false;
 
 	const bool handles = controller_.HandlesControls();
