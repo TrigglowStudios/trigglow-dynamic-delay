@@ -12,7 +12,8 @@ inicio de sesión se mantienen.
 **Novedades:**
 - **El nuevo logo de Dynamic Delay en todos los sitios donde el plugin muestra uno:** la marca de la
   insignia de delay que ven tus espectadores durante un delay, el icono del instalador y su logo
-  pequeño en las páginas interiores. Llevan la T de Trigglow dentro del cronómetro en lugar del
+  pequeño en las páginas interiores. El banner de bienvenida y de finalización del instalador pierde
+  la neblina morada, y el nombre bajo el logo pasa a blanco sólido. Llevan la T de Trigglow dentro del cronómetro en lugar del
   antiguo botón de play.
 
 ## v0.7.2 — 2026-11-02 (Early Access)

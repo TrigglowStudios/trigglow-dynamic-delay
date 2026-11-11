@@ -11,7 +11,8 @@ sign-in are kept.
 
 **What's new:**
 - **The new Dynamic Delay logo everywhere the plugin shows one:** the mark on the delay badge your
-  viewers see during a delay, the installer's icon and its small logo on the inner pages. They show
+  viewers see during a delay, the installer's icon and its small logo on the inner pages. The installer's Welcome and Finished banner
+  drops the purple haze, and the name under the logo is now solid white. They show
   the Trigglow T inside the stopwatch instead of the old play button.
 
 ## v0.7.2 — 2026-11-02 (Early Access)
