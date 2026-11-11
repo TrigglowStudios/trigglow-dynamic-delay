@@ -112,7 +112,8 @@ if(OS_WINDOWS)
   # Not in the core-only build: hosts there have their own outputs.
   if(NOT TRIGGLOW_CORE_ONLY)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32 iphlpapi)
+    # bcrypt: the history spill's AES and random key (src/spill-file.*).
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32 iphlpapi bcrypt)
   endif()
 
   # Same DESTINATION set_target_properties_plugin() (cmake/windows/helpers.cmake)
@@ -181,7 +182,8 @@ elseif(OS_LINUX)
     find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
     list(PREPEND _ffmpeg_libs "${_ffmpeg_root}/lib/libavformat.a")
     list(APPEND _ffmpeg_libs OpenSSL::SSL OpenSSL::Crypto)
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+    # The same OpenSSL encrypts the history spill (src/spill-file.*).
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY TRIGGLOW_SPILL_OPENSSL)
   endif()
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${_ffmpeg_libs} m)
   target_link_options(
@@ -358,6 +360,8 @@ else()
       src/packet-delay-core.hpp
       src/payload-store.cpp
       src/payload-store.hpp
+      src/spill-file.cpp
+      src/spill-file.hpp
       src/stream-relay.cpp
       src/stream-relay.hpp
       src/stream-delay-controller.cpp

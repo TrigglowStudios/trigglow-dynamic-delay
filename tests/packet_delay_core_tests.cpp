@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <vector>
 
 using namespace trigglow::relay;
@@ -460,10 +461,104 @@ void TestHistoryRecords()
 	CHECK(h.RamBytes() == 0 && h.Bytes() == 0);
 }
 
+// The spill's hooks in the history: where a time is in the store, what a
+// sender needs next, a sender waiting for bytes that aren't in RAM, and
+// packets whose bytes were lost.
+class LosingDisk : public SpillBackend {
+public:
+	std::map<uint64_t, std::vector<uint8_t>> slots;
+	bool failReads = false;
+	bool WriteSlot(uint64_t slot, uint64_t, const uint8_t *data, size_t bytes) override
+	{
+		slots[slot].assign(data, data + bytes);
+		return true;
+	}
+	bool ReadSlot(uint64_t slot, uint64_t, uint8_t *data, size_t bytes) override
+	{
+		if (failReads || slots[slot].size() != bytes)
+			return false;
+		std::copy(slots[slot].begin(), slots[slot].end(), data);
+		return true;
+	}
+	bool Truncate(uint64_t) override { return true; }
+};
+
+void TestSpillHooks()
+{
+	g_currentTest = "SpillHooks";
+	LosingDisk disk;
+	PacketHistory h;
+	PayloadStore::SpillLimits limits;
+	limits.maxBacklogBlocks = 1 << 20;
+	h.Store().SetSpill(&disk, 100000, limits);
+	std::vector<uint8_t> payload(20000, 0x5a);
+	// 30 fps video only, keyframe every 60 frames, 20 kB each: 10 s.
+	for (int i = 0; i < 300; ++i) {
+		Packet p;
+		p.kind = MediaKind::Video;
+		p.keyframe = i % 60 == 0;
+		p.dtsMs = p.ptsMs = i * 1000 / 30;
+		p.arrivalNs = p.dtsMs * kMs;
+		p.bytes = 20000;
+		const PayloadStore::Span part{payload.data(), payload.size()};
+		h.Push(p, &part, 1);
+	}
+	CHECK(h.OffsetAtArrival(0) == 0);
+	CHECK(h.OffsetAtArrival(5000 * kMs) == 150u * 20000u);
+	CHECK(h.OffsetAtArrival(5001 * kMs) == 151u * 20000u);
+	CHECK(h.OffsetAtArrival(99999 * kMs) == h.Store().EndOffset());
+	const PayloadStore::Range ahead = h.AheadRange(30, 1000 * kMs);
+	CHECK(ahead.from == 30u * 20000u && ahead.to == 61u * 20000u);
+
+	// Everything older than the last 2 s goes to "disk".
+	auto pump = [&](const std::vector<PayloadStore::Range> &needed) {
+		for (;;) {
+			PayloadStore::IoJob job = h.Store().PlanIo(h.OffsetAtArrival(8000 * kMs), needed);
+			if (job.kind == PayloadStore::IoJob::Kind::None)
+				return;
+			h.Store().RunIo(job);
+			h.Store().FinishIo(job);
+			h.DropLost();
+		}
+	};
+	pump({});
+	CHECK(h.Store().DiskBytes() > 0);
+	CHECK(!h.RecordInRam(*h.At(0)));
+	CHECK(h.RecordInRam(*h.At(299)));
+
+	// A sink 9.5 s behind: its packets aren't in RAM, so nothing goes and the
+	// cursor waits; once read back they go.
+	SinkScheduler sink;
+	sink.SetDelay(9500 * kMs, 10000 * kMs, h);
+	auto ready = [&](const Packet &p) {
+		return h.RecordInRam(p);
+	};
+	CHECK(sink.Due(10000 * kMs, h, 1000, ready).empty());
+	CHECK(sink.CursorSeq() == 0);
+	pump({h.AheadRange(sink.CursorSeq(), 3000 * kMs)});
+	const auto out = sink.Due(10000 * kMs, h, 1000, ready);
+	CHECK(out.size() == 16); // Arrived at 0..500 ms.
+	CHECK(sink.CursorSeq() == 16);
+
+	// The disk loses what it holds: those packets go, the history starts
+	// again at the next keyframe, and the sink re-splices there.
+	disk.failReads = true;
+	pump({{0, h.Store().EndOffset()}});
+	CHECK(h.Store().Spill() == SpillState::Fallback);
+	CHECK(h.Store().LostBefore() > 0);
+	CHECK(h.FrontSeq() > 0);
+	const Packet *front = h.At(h.FrontSeq());
+	CHECK(front && front->keyframe && h.RecordInRam(*front));
+	CHECK(front && front->recordOffset >= h.Store().LostBefore());
+	const auto after = sink.Due(18000 * kMs, h, 1000, ready);
+	CHECK(!after.empty() && after.front().packet->keyframe);
+}
+
 int main()
 {
 	TestBFramesSpliceKeepsDisplayOrder();
 	TestHistoryRecords();
+	TestSpillHooks();
 	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();

@@ -22,9 +22,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "payload-store.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <iterator>
+#include <map>
+#include <thread>
+#include <utility>
 #include <vector>
 
 using namespace trigglow::relay;
@@ -205,6 +211,333 @@ void TestTrimAll()
 	CHECK(store.CopyOut(at, bytes.size(), got) && got == bytes);
 }
 
+// ------------------------------------------------------------------ spill --
+
+// A backend in memory that can be told to fail or be slow.
+class MemBackend : public SpillBackend {
+public:
+	bool failWrites = false;
+	bool failReads = false;
+	int sleepMs = 0;
+	int writes = 0;
+	int reads = 0;
+	int truncates = 0;
+	uint64_t fileSlots = 0;
+	std::map<uint64_t, std::pair<uint64_t, std::vector<uint8_t>>> slots; // slot -> blockId, bytes
+
+	bool WriteSlot(uint64_t slot, uint64_t blockId, const uint8_t *data, size_t bytes) override
+	{
+		Nap();
+		if (failWrites)
+			return false;
+		++writes;
+		// "Encrypted" with the block id, so a mixed-up slot shows.
+		std::vector<uint8_t> stored(data, data + bytes);
+		for (uint8_t &b : stored)
+			b = static_cast<uint8_t>(b ^ (blockId * 31 + 7));
+		slots[slot] = {blockId, stored};
+		fileSlots = std::max(fileSlots, slot + 1);
+		return true;
+	}
+	bool ReadSlot(uint64_t slot, uint64_t blockId, uint8_t *data, size_t bytes) override
+	{
+		Nap();
+		if (failReads)
+			return false;
+		++reads;
+		auto it = slots.find(slot);
+		if (it == slots.end() || it->second.second.size() != bytes)
+			return false;
+		for (size_t i = 0; i < bytes; ++i)
+			data[i] = static_cast<uint8_t>(it->second.second[i] ^ (blockId * 31 + 7));
+		return true;
+	}
+	bool Truncate(uint64_t keep) override
+	{
+		++truncates;
+		for (auto it = slots.begin(); it != slots.end();)
+			it = it->first >= keep ? slots.erase(it) : std::next(it);
+		fileSlots = keep;
+		return true;
+	}
+
+private:
+	void Nap() const
+	{
+		if (sleepMs > 0)
+			std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+	}
+};
+
+// The tests fill first and run the I/O after: no backlog limit.
+PayloadStore::SpillLimits Roomy()
+{
+	PayloadStore::SpillLimits limits;
+	limits.maxBacklogBlocks = 1 << 20;
+	return limits;
+}
+
+// Runs the store's I/O until it has nothing to do (what the relay's I/O
+// thread does, minus the lock). Returns the jobs run.
+int Pump(PayloadStore &store, uint64_t ramFrom, const std::vector<PayloadStore::Range> &needed = {})
+{
+	int jobs = 0;
+	for (; jobs < 100000; ++jobs) {
+		PayloadStore::IoJob job = store.PlanIo(ramFrom, needed);
+		if (job.kind == PayloadStore::IoJob::Kind::None)
+			break;
+		store.RunIo(job);
+		store.FinishIo(job);
+	}
+	return jobs;
+}
+
+struct Fill {
+	std::vector<std::pair<uint64_t, uint64_t>> records; // offset, number
+	size_t Add(PayloadStore &store, uint64_t count, uint64_t first = 0)
+	{
+		size_t bytes = 0;
+		for (uint64_t n = first; n < first + count; ++n) {
+			const auto data = RecordBytes(n, SizeOf(n) / 16 + 10);
+			records.emplace_back(store.Append(data.data(), data.size()), n);
+			bytes += data.size();
+		}
+		return bytes;
+	}
+	bool AllMatch(const PayloadStore &store, uint64_t fromOffset = 0) const
+	{
+		for (const auto &r : records) {
+			if (r.first < fromOffset)
+				continue;
+			const auto expected = RecordBytes(r.second, SizeOf(r.second) / 16 + 10);
+			std::vector<uint8_t> got;
+			if (!store.CopyOut(r.first, expected.size(), got) || got != expected)
+				return false;
+		}
+		return true;
+	}
+};
+
+void TestSpillRoundTrip()
+{
+	g_currentTest = "SpillRoundTrip";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	store.SetSpill(&disk, 1000, Roomy());
+	CHECK(store.Spill() == SpillState::Active);
+	Fill fill;
+	fill.Add(store, 2000);
+	const uint64_t end = store.EndOffset();
+	// Keep the newest 8 blocks in RAM.
+	const uint64_t ramFrom = end - 8 * block;
+	Pump(store, ramFrom);
+	CHECK(store.Spill() == SpillState::Active);
+	CHECK(disk.writes > 0);
+	// RAM: the window (8 blocks, 9 when it doesn't start on a block) + the
+	// spare. Everything older is on disk.
+	CHECK(store.RamBytes() <= 10 * block);
+	const uint64_t onDisk = (ramFrom / block) * block - (store.FrontOffset() / block) * block;
+	CHECK(store.DiskBytes() == onDisk);
+	CHECK(!store.InRam(0, 10));
+	CHECK(store.InRam(end - 100, 100));
+
+	// A destination about to send the oldest bytes: they come back.
+	const std::vector<PayloadStore::Range> needed = {{0, 3 * block + 5}};
+	Pump(store, ramFrom, needed);
+	CHECK(store.InRam(0, 3 * block + 5));
+	CHECK(disk.reads == 4);
+	CHECK(fill.AllMatch(store, ramFrom)); // RAM window intact.
+	std::vector<uint8_t> got;
+	bool head = true;
+	for (const auto &r : fill.records) {
+		if (r.first + 200 > 3 * block)
+			break;
+		const auto expected = RecordBytes(r.second, SizeOf(r.second) / 16 + 10);
+		got.clear();
+		if (!store.CopyOut(r.first, expected.size(), got) || got != expected)
+			head = false;
+	}
+	CHECK(head);
+	// Not needed any more: out of RAM again, no new write (already on disk).
+	const int writes = disk.writes;
+	Pump(store, ramFrom);
+	CHECK(!store.InRam(0, 10));
+	CHECK(disk.writes == writes);
+
+	// Read every block back, in any order, and compare everything.
+	const std::vector<PayloadStore::Range> all = {{0, end}};
+	Pump(store, ramFrom, all);
+	CHECK(fill.AllMatch(store));
+}
+
+void TestSpillTrimAndTruncate()
+{
+	g_currentTest = "SpillTrimAndTruncate";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	store.SetSpill(&disk, 1000, Roomy());
+	Fill fill;
+	fill.Add(store, 3000);
+	Pump(store, store.EndOffset() - 4 * block);
+	const uint64_t slotsBefore = disk.fileSlots;
+	CHECK(slotsBefore > 20);
+	CHECK(store.FileBytes() == slotsBefore * block);
+
+	// Steady state: the front goes as much as comes in; freed slots are
+	// reused and the file doesn't grow.
+	for (int round = 0; round < 20; ++round) {
+		fill.Add(store, 300, fill.records.size());
+		const uint64_t keepFrom = store.EndOffset() - slotsBefore * block;
+		size_t drop = 0;
+		while (fill.records[drop].first < keepFrom)
+			++drop;
+		store.TrimTo(fill.records[drop].first);
+		Pump(store, store.EndOffset() - 4 * block);
+	}
+	CHECK(disk.fileSlots <= slotsBefore + 6);
+	CHECK(store.Spill() == SpillState::Active);
+	CHECK(fill.AllMatch(store, store.EndOffset() - 4 * block));
+
+	// The retention halves: once the blocks in the file's upper slots have
+	// gone too, the file shrinks to what is still used.
+	const int truncates = disk.truncates;
+	const uint64_t half = store.EndOffset() - (slotsBefore / 2) * block;
+	for (int round = 0; round < 40; ++round) {
+		fill.Add(store, 150, fill.records.size());
+		const uint64_t keepFrom = std::max(half, store.EndOffset() - (slotsBefore / 2) * block);
+		size_t drop = 0;
+		while (fill.records[drop].first < keepFrom)
+			++drop;
+		store.TrimTo(fill.records[drop].first);
+		Pump(store, store.EndOffset() - 4 * block);
+	}
+	CHECK(disk.truncates > truncates);
+	CHECK(disk.fileSlots <= slotsBefore / 2 + 6);
+	CHECK(store.FileBytes() == disk.fileSlots * block);
+	CHECK(store.DiskBytes() <= store.FileBytes());
+
+	// Everything goes: so does the file.
+	store.Clear();
+	Pump(store, store.EndOffset());
+	CHECK(disk.fileSlots == 0 && store.DiskBytes() == 0 && store.FileBytes() == 0);
+}
+
+void TestSpillWriteFailureFallsBack()
+{
+	g_currentTest = "SpillWriteFailureFallsBack";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	store.SetSpill(&disk, 1000, Roomy());
+	Fill fill;
+	fill.Add(store, 1500);
+	Pump(store, store.EndOffset() - 4 * block);
+	CHECK(store.DiskBytes() > 0);
+	// The disk breaks: the spill stops, what was written comes back to RAM
+	// and the rest stays there. Nothing is lost.
+	disk.failWrites = true;
+	fill.Add(store, 1500, 1500);
+	Pump(store, store.EndOffset() - 4 * block);
+	CHECK(store.Spill() == SpillState::Fallback);
+	CHECK(store.SpillProblem() == "couldn't write to the disk");
+	CHECK(store.LostBefore() == 0);
+	CHECK(fill.AllMatch(store));
+	CHECK(store.RamBytes() >= store.EndOffset() - store.FrontOffset());
+	// More data: it simply stays in RAM.
+	fill.Add(store, 500, 3000);
+	CHECK(Pump(store, store.EndOffset() - 4 * block) == 0);
+	CHECK(fill.AllMatch(store));
+}
+
+void TestSpillReadFailureLosesOnlyThatBlock()
+{
+	g_currentTest = "SpillReadFailureLosesOnlyThatBlock";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	store.SetSpill(&disk, 1000, Roomy());
+	Fill fill;
+	fill.Add(store, 1500);
+	const uint64_t ramFrom = store.EndOffset() - 4 * block;
+	Pump(store, ramFrom);
+	disk.failReads = true;
+	const std::vector<PayloadStore::Range> needed = {{block * 2 + 10, block * 2 + 20}};
+	Pump(store, ramFrom, needed);
+	CHECK(store.Spill() == SpillState::Fallback);
+	CHECK(store.SpillProblem() == "couldn't read back from the disk");
+	// Only up to the end of the block that failed is reported lost; the
+	// fallback then tries the other blocks (also failing here, also lost).
+	CHECK(store.LostBefore() >= 3 * block);
+	CHECK(!store.InRam(block * 2 + 10, 10));
+	// The newest bytes never left RAM.
+	CHECK(store.InRam(ramFrom, store.EndOffset() - ramFrom));
+}
+
+void TestSpillSlowDiskFallsBack()
+{
+	g_currentTest = "SpillSlowDiskFallsBack";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	PayloadStore::SpillLimits limits = Roomy();
+	limits.slowIoNs = 1000000; // 1 ms
+	store.SetSpill(&disk, 1000, limits);
+	disk.sleepMs = 5;
+	Fill fill;
+	fill.Add(store, 300);
+	Pump(store, store.EndOffset() - 2 * block);
+	CHECK(store.Spill() == SpillState::Fallback);
+	CHECK(store.SpillProblem() == "the disk is too slow");
+	CHECK(fill.AllMatch(store));
+}
+
+void TestSpillBacklogFallsBack()
+{
+	g_currentTest = "SpillBacklogFallsBack";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	PayloadStore::SpillLimits limits;
+	limits.maxBacklogBlocks = 10;
+	store.SetSpill(&disk, 1000, limits);
+	Fill fill;
+	fill.Add(store, 2000); // Far more than 10 blocks, none written yet.
+	PayloadStore::IoJob job = store.PlanIo(store.EndOffset() - 2 * block, {});
+	CHECK(job.kind == PayloadStore::IoJob::Kind::None);
+	CHECK(store.Spill() == SpillState::Fallback);
+	CHECK(store.SpillProblem() == "the disk can't keep up");
+	CHECK(fill.AllMatch(store));
+}
+
+void TestSpillFullFallsBack()
+{
+	g_currentTest = "SpillFullFallsBack";
+	const size_t block = 4096;
+	PayloadStore store(block);
+	MemBackend disk;
+	store.SetSpill(&disk, 3, Roomy());
+	Fill fill;
+	fill.Add(store, 1000);
+	Pump(store, store.EndOffset() - 2 * block);
+	CHECK(store.Spill() == SpillState::Fallback);
+	CHECK(store.SpillProblem() == "the disk space set aside for it is full");
+	CHECK(disk.writes == 3);
+	CHECK(fill.AllMatch(store));
+}
+
+void TestSpillOff()
+{
+	g_currentTest = "SpillOff";
+	PayloadStore store(4096);
+	CHECK(store.Spill() == SpillState::Off);
+	Fill fill;
+	fill.Add(store, 500);
+	CHECK(store.PlanIo(store.EndOffset(), {}).kind == PayloadStore::IoJob::Kind::None);
+	CHECK(fill.AllMatch(store));
+}
+
 } // namespace
 
 int main()
@@ -214,6 +547,14 @@ int main()
 	TestMultiPartRecord();
 	TestTrimFreesBlocks();
 	TestTrimAll();
+	TestSpillOff();
+	TestSpillRoundTrip();
+	TestSpillTrimAndTruncate();
+	TestSpillWriteFailureFallsBack();
+	TestSpillReadFailureLosesOnlyThatBlock();
+	TestSpillSlowDiskFallsBack();
+	TestSpillBacklogFallsBack();
+	TestSpillFullFallsBack();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

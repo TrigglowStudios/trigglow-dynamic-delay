@@ -20,7 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // without OBS: not part of ctest (it needs FFmpeg's command line tools and
 // opens local ports). Windows, with the plugin's FFmpeg.
 //
-//   relay_harness <destination rtmp url> <destination key> <script> [keep s] [max s]
+//   relay_harness <destination rtmp url> <destination key> <script> [keep s] [max s] [spill MB]
 //
 // It starts the relay with delay 0 and prints "PUBLISH <url> <key>" for the
 // publisher (ffmpeg standing in for OBS). <script> is "t1:d1,t2:d2,...":
@@ -29,7 +29,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // runs of the same input splice at the same keyframes. It prints the relay
 // status and this process's memory every second and stops once the publisher
 // ends and the destination finished, or after [max s] (default 600). [keep s]
-// is the relay's keepSeconds (default 30).
+// is the relay's keepSeconds (default 30). [spill MB]: the spill's size limit
+// (0, the default: the free disk space; -1: no spill, RAM only).
 
 #include "stream-relay.hpp"
 
@@ -103,6 +104,7 @@ int main(int argc, char **argv)
 	}
 	const int keepSeconds = argc > 4 ? std::atoi(argv[4]) : 30;
 	const int maxSeconds = argc > 5 ? std::atoi(argv[5]) : 600;
+	const int spillMb = argc > 6 ? std::atoi(argv[6]) : 0;
 
 	trigglow::relay::StreamRelay relay;
 	relay.SetEventCallback([](const std::string &m) { std::printf("EVENT %s\n", m.c_str()); });
@@ -114,6 +116,8 @@ int main(int argc, char **argv)
 	trigglow::relay::RelayOptions options;
 	options.delaySeconds = 0;
 	options.keepSeconds = static_cast<uint32_t>(keepSeconds);
+	options.spillToDisk = spillMb >= 0;
+	options.spillLimitBytes = spillMb > 0 ? static_cast<uint64_t>(spillMb) << 20 : 0;
 	std::string server, key, error;
 	if (!relay.Start({dest}, options, server, key, error)) {
 		std::printf("START FAILED %s\n", error.c_str());
@@ -151,14 +155,15 @@ int main(int argc, char **argv)
 		double workingSetMb = 0.0;
 		ProcessMemoryMb(privateMb, workingSetMb);
 		std::printf(
-			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
+			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB disk=%.2fMB spill=%d %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
 			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s\n",
 			second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
-			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.bitrateMbps,
-			s.keyframeIntervalSeconds, s.videoCodec.c_str(), s.width, s.height, privateMb, workingSetMb,
-			sink ? static_cast<int>(sink->state) : -1, sink ? sink->behindSeconds : 0.0,
-			sink ? sink->sentMbps : 0.0, sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull,
-			sink ? sink->reconnects : 0, sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
+			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.historyDiskBytes / 1048576.0,
+			s.spillActive ? 1 : 0, s.bitrateMbps, s.keyframeIntervalSeconds, s.videoCodec.c_str(), s.width,
+			s.height, privateMb, workingSetMb, sink ? static_cast<int>(sink->state) : -1,
+			sink ? sink->behindSeconds : 0.0, sink ? sink->sentMbps : 0.0,
+			sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull, sink ? sink->reconnects : 0,
+			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
 		std::fflush(stdout);
 		if (relay.Finished() && s.ingestEnded)
 			break;

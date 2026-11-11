@@ -119,6 +119,61 @@ bool PacketHistory::FindSplicePoint(int64_t atNs, uint64_t &seqOut) const
 	return true;
 }
 
+uint64_t PacketHistory::OffsetAtArrival(int64_t atNs) const
+{
+	// Arrival times never go down: binary search.
+	size_t lo = 0;
+	size_t hi = packets_.size();
+	while (lo < hi) {
+		const size_t mid = lo + (hi - lo) / 2;
+		if (packets_[mid].arrivalNs < atNs)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo < packets_.size() ? packets_[lo].recordOffset : store_.EndOffset();
+}
+
+PayloadStore::Range PacketHistory::AheadRange(uint64_t seq, int64_t aheadNs) const
+{
+	const Packet *first = At(seq);
+	if (!first)
+		return {};
+	const int64_t until = first->arrivalNs + aheadNs;
+	// The last packet that arrived at or before `until`.
+	size_t lo = static_cast<size_t>(seq - frontSeq_);
+	size_t hi = packets_.size();
+	while (lo + 1 < hi) {
+		const size_t mid = lo + (hi - lo) / 2;
+		if (packets_[mid].arrivalNs <= until)
+			lo = mid;
+		else
+			hi = mid;
+	}
+	const Packet &last = packets_[lo];
+	return PayloadStore::Range{first->recordOffset, last.recordOffset + last.recordBytes};
+}
+
+void PacketHistory::DropLost()
+{
+	const uint64_t lost = store_.LostBefore();
+	if (packets_.empty() || packets_.front().recordOffset >= lost)
+		return;
+	size_t drop = 0;
+	while (drop < packets_.size() && packets_[drop].recordOffset < lost)
+		++drop;
+	// What is kept still starts at a keyframe.
+	if (sawVideo_) {
+		while (drop < packets_.size() && !IsVideoKey(packets_[drop]))
+			++drop;
+	}
+	for (size_t i = 0; i < drop; ++i)
+		bytes_ -= packets_[i].bytes;
+	packets_.pop_front(drop);
+	frontSeq_ += drop;
+	store_.TrimTo(packets_.empty() ? store_.EndOffset() : packets_.front().recordOffset);
+}
+
 const Packet *PacketHistory::At(uint64_t seq) const
 {
 	if (seq < frontSeq_ || seq >= EndSeq())
@@ -214,7 +269,8 @@ SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
 	return info;
 }
 
-std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets)
+std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets,
+					  const ReadyFn &ready)
 {
 	std::vector<OutPacket> out;
 	if (!started_ && !needSplice_)
@@ -229,6 +285,8 @@ std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &hi
 	while (cursor_ < history.EndSeq() && out.size() < maxPackets) {
 		const Packet *p = history.At(cursor_);
 		if (!p || p->arrivalNs + delayNs_ > nowNs)
+			break;
+		if (ready && !ready(*p))
 			break;
 		++cursor_;
 

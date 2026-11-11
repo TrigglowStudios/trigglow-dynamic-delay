@@ -95,11 +95,36 @@ target_include_directories(packet_delay_core_tests PRIVATE "${_src}")
 set_target_properties(packet_delay_core_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME packet_delay_core_tests COMMAND packet_delay_core_tests)
 
-# v1.0.0 stream mode: the history's byte store (contiguous blocks).
+# v1.0.0 stream mode: the history's byte store (contiguous blocks, the spill's
+# state machine with a scripted backend).
 add_executable(payload_store_tests payload_store_tests.cpp "${_src}/payload-store.cpp" "${_src}/payload-store.hpp")
 target_include_directories(payload_store_tests PRIVATE "${_src}")
 set_target_properties(payload_store_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME payload_store_tests COMMAND payload_store_tests)
+
+# v1.0.0 stream mode: the encrypted spill file (real temp files, the system's
+# AES: bcrypt on Windows, CommonCrypto on macOS, OpenSSL on Linux when found;
+# without it the encryption checks are skipped).
+add_executable(
+  spill_file_tests
+  spill_file_tests.cpp
+  "${_src}/spill-file.cpp"
+  "${_src}/spill-file.hpp"
+  "${_src}/payload-store.cpp"
+  "${_src}/payload-store.hpp"
+)
+target_include_directories(spill_file_tests PRIVATE "${_src}")
+set_target_properties(spill_file_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(WIN32)
+  target_link_libraries(spill_file_tests PRIVATE bcrypt)
+elseif(NOT APPLE)
+  find_package(OpenSSL QUIET COMPONENTS Crypto)
+  if(OpenSSL_FOUND)
+    target_compile_definitions(spill_file_tests PRIVATE TRIGGLOW_SPILL_OPENSSL)
+    target_link_libraries(spill_file_tests PRIVATE OpenSSL::Crypto)
+  endif()
+endif()
+add_test(NAME spill_file_tests COMMAND spill_file_tests)
 
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
@@ -250,6 +275,8 @@ if(WIN32)
       "${_src}/packet-delay-core.hpp"
       "${_src}/payload-store.cpp"
       "${_src}/payload-store.hpp"
+      "${_src}/spill-file.cpp"
+      "${_src}/spill-file.hpp"
     )
     target_include_directories(relay_harness PRIVATE "${_src}" "${_ffmpeg}/include")
     target_compile_definitions(relay_harness PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
@@ -262,6 +289,7 @@ if(WIN32)
         ws2_32
         iphlpapi
         psapi
+        bcrypt
     )
     set_target_properties(relay_harness PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
     add_custom_command(

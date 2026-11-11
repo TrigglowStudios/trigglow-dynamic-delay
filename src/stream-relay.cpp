@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "logging.hpp"
 #include "packet-delay-core.hpp"
+#include "spill-file.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -107,6 +108,16 @@ constexpr int64_t kSecondNs = 1000000000LL;
 // A destination that falls this far behind its delay (a slow upload) jumps to
 // the delay again at the next keyframe instead of letting the delay grow.
 constexpr int64_t kMaxLagNs = 4 * kSecondNs;
+// Spill: the newest seconds stay in RAM (live and short delays never touch the
+// disk, and a lowered delay splices into RAM): this plus two keyframe
+// intervals.
+constexpr int64_t kRamTailNs = 4 * kSecondNs;
+// What each destination sends next is read back this far ahead.
+constexpr int64_t kPrefetchNs = 3 * kSecondNs;
+// Disk the spill always leaves free on the temp folder's volume.
+constexpr uint64_t kDiskReserveBytes = 1ULL << 30;
+// Below this much room for it, the history stays in RAM.
+constexpr uint64_t kMinSpillBytes = 64ULL << 20;
 
 int64_t NowNs()
 {
@@ -345,6 +356,13 @@ struct StreamRelay::Impl {
 	int64_t keyframeCheckNs = 0;
 	std::vector<std::unique_ptr<Sink>> sinks;
 	std::thread ingest;
+	// Spill (null: RAM only). The I/O thread is the only one that touches the
+	// file; it waits on ioCv.
+	std::unique_ptr<SpillFile> spill;
+	std::thread io;
+	std::condition_variable ioCv;
+	SpillState loggedSpill = SpillState::Off;
+	std::string spillNote; // Why the spill is off or stopped (status).
 	EventCallback callback;
 	std::string listenUrl;
 
@@ -471,9 +489,13 @@ struct StreamRelay::Impl {
 			// The bytes are copied into the history's blocks: no FFmpeg
 			// allocation is kept per packet.
 			RecordParts(pkt, recordMeta, recordSpans);
+			bool blockFilled = false;
 			{
 				std::lock_guard<std::mutex> lock(m);
+				const size_t blockBytes = history.Store().BlockBytes();
+				const uint64_t endBefore = history.Store().EndOffset() / blockBytes;
 				history.Push(p, recordSpans.data(), recordSpans.size());
+				blockFilled = spill && history.Store().EndOffset() / blockBytes != endBefore;
 				const int64_t now = NowNs();
 				if (now - keyframeCheckNs > 2 * kSecondNs) {
 					keyframeInterval = history.KeyframeIntervalSeconds();
@@ -484,12 +506,61 @@ struct StreamRelay::Impl {
 			}
 			av_packet_unref(pkt);
 			cv.notify_all();
+			if (blockFilled)
+				ioCv.notify_one();
 		}
 		av_packet_free(&pkt);
 		avformat_close_input(&ic);
 		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped sending (%s)",
 				  ret == AVERROR_EOF ? "end of stream" : AvError(ret).c_str());
 		FinishIngest("");
+	}
+
+	// The spill's I/O: writes old blocks out, reads back what destinations
+	// are about to send, never under the lock while the disk works.
+	void IoMain()
+	{
+		std::vector<PayloadStore::Range> needed;
+		std::unique_lock<std::mutex> lock(m);
+		while (!stop.load()) {
+			const double gop = std::max(keyframeInterval, 2.0);
+			const int64_t ramNs = kRamTailNs + static_cast<int64_t>(2.0 * gop * 1e9);
+			const uint64_t ramFrom = history.OffsetAtArrival(NowNs() - ramNs);
+			needed.clear();
+			for (const auto &sink : sinks) {
+				if (sink->sched.Started() && !sink->finished)
+					needed.push_back(history.AheadRange(sink->sched.CursorSeq(), kPrefetchNs));
+			}
+			PayloadStore &store = history.Store();
+			PayloadStore::IoJob job = store.PlanIo(ramFrom, needed);
+			LogSpillLocked();
+			if (job.kind == PayloadStore::IoJob::Kind::None) {
+				ioCv.wait_for(lock, std::chrono::milliseconds(50));
+				continue;
+			}
+			lock.unlock();
+			store.RunIo(job); // Only the backend and the job: no lock needed.
+			lock.lock();
+			store.FinishIo(job);
+			history.DropLost();
+			LogSpillLocked();
+			cv.notify_all();
+		}
+	}
+
+	void LogSpillLocked()
+	{
+		const SpillState state = history.Store().Spill();
+		if (state == loggedSpill)
+			return;
+		loggedSpill = state;
+		if (state == SpillState::Fallback) {
+			spillNote = history.Store().SpillProblem();
+			TRIGGLOW_LOG_WARN(kComponent, "the history stays in RAM from now on: %s (the stream goes on)",
+					  spillNote.c_str());
+		}
+		if (history.Store().LostBefore() > 0)
+			TRIGGLOW_LOG_WARN(kComponent, "part of the history couldn't be read back from the disk");
 	}
 
 	void FinishIngest(const std::string &error)
@@ -615,10 +686,23 @@ struct StreamRelay::Impl {
 						  host.c_str(), delaySeconds);
 			}
 
-			std::vector<OutPacket> due = sink.sched.Due(NowNs(), history, 512);
+			// With the spill, a packet whose bytes aren't back in RAM yet waits
+			// (the I/O thread reads them ahead; this is only the fallback).
+			bool waitingForDisk = false;
+			std::vector<OutPacket> due = sink.sched.Due(NowNs(), history, 512, [&](const Packet &p) {
+				if (history.RecordInRam(p))
+					return true;
+				waitingForDisk = true;
+				return false;
+			});
 			if (due.empty()) {
 				if (ingestEnded && sink.sched.Started() && sink.sched.CaughtUp(history))
 					break;
+				if (waitingForDisk) {
+					ioCv.notify_one();
+					cv.wait_for(lock, std::chrono::milliseconds(5));
+					continue;
+				}
 				const int64_t next = sink.sched.NextDueNs(history);
 				int64_t waitNs = 100 * 1000000LL;
 				if (next >= 0)
@@ -777,6 +861,37 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	Impl &d = *impl_;
 	d.stop.store(false);
 	d.history.Clear();
+	d.history.Store().SetSpill(nullptr, 0);
+	d.spill.reset();
+	d.spillNote.clear();
+	d.loggedSpill = SpillState::Off;
+	if (options.spillToDisk) {
+		// A file a crash (or power loss) left behind goes first.
+		const int stale = SpillFile::RemoveStale();
+		if (stale > 0)
+			TRIGGLOW_LOG_INFO(kComponent, "deleted %d spill file(s) a previous session left", stale);
+		const size_t blockBytes = d.history.Store().BlockBytes();
+		const uint64_t freeBytes = SpillFile::FreeDiskBytes();
+		uint64_t room = freeBytes > kDiskReserveBytes ? freeBytes - kDiskReserveBytes : 0;
+		if (options.spillLimitBytes > 0)
+			room = std::min(room, options.spillLimitBytes);
+		std::string why;
+		if (room < kMinSpillBytes)
+			why = "not enough free disk space";
+		else
+			d.spill = SpillFile::Create(blockBytes, why);
+		if (d.spill) {
+			d.history.Store().SetSpill(d.spill.get(), room / blockBytes);
+			d.loggedSpill = SpillState::Active;
+			TRIGGLOW_LOG_INFO(kComponent,
+					  "older history goes to an encrypted temp file (up to %llu MB, %llu MB free)",
+					  static_cast<unsigned long long>(room >> 20),
+					  static_cast<unsigned long long>(freeBytes >> 20));
+		} else {
+			d.spillNote = why;
+			TRIGGLOW_LOG_WARN(kComponent, "the history stays in RAM: %s", why.c_str());
+		}
+	}
 	d.streams.clear();
 	d.streamsReady = false;
 	d.ingestConnected = false;
@@ -798,6 +913,8 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	d.running = true;
 
 	d.ingest = std::thread([&d] { d.IngestMain(); });
+	if (d.spill)
+		d.io = std::thread([&d] { d.IoMain(); });
 	for (auto &sink : d.sinks) {
 		Impl::Sink *raw = sink.get();
 		raw->thread = std::thread([&d, raw] { d.SinkMain(*raw); });
@@ -891,17 +1008,23 @@ void StreamRelay::Stop()
 			sink->abort.store(true);
 	}
 	d.cv.notify_all();
+	d.ioCv.notify_all();
 	if (d.ingest.joinable())
 		d.ingest.join();
 	for (auto &sink : d.sinks) {
 		if (sink->thread.joinable())
 			sink->thread.join();
 	}
+	if (d.io.joinable())
+		d.io.join();
 	std::lock_guard<std::mutex> lock(d.m);
 	for (StreamInfo &info : d.streams)
 		avcodec_parameters_free(&info.par);
 	d.streams.clear();
 	d.history.Clear();
+	d.history.Store().SetSpill(nullptr, 0);
+	// Closing the file deletes it (and with it the only copy of the key).
+	d.spill.reset();
 	d.sinks.clear();
 	d.running = false;
 	TRIGGLOW_LOG_INFO(kComponent, "relay stopped");
@@ -939,6 +1062,9 @@ RelayStatus StreamRelay::GetStatus() const
 	status.historySeconds = d.history.SpanSeconds();
 	status.historyBytes = d.history.Bytes();
 	status.historyRamBytes = d.history.RamBytes();
+	status.historyDiskBytes = d.history.Store().DiskBytes();
+	status.spillActive = d.history.Store().Spill() == SpillState::Active;
+	status.spillNote = d.spillNote;
 	status.bitrateMbps = d.history.BytesPerSecond() * 8.0 / 1e6;
 	status.keyframeIntervalSeconds = d.keyframeInterval;
 	for (const StreamInfo &info : d.streams) {

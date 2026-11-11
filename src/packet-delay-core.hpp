@@ -46,6 +46,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace trigglow::relay {
@@ -74,12 +75,25 @@ public:
 	// returns its seq (seqs only grow; At() finds a packet by it).
 	uint64_t Push(Packet packet, const PayloadStore::Span *parts = nullptr, size_t partCount = 0);
 
-	// Appends the packet's record to `out`. False when it isn't available.
+	// Appends the packet's record to `out`. False when it isn't available
+	// (or, with the spill, not back in RAM yet).
 	bool CopyRecord(const Packet &packet, std::vector<uint8_t> &out) const
 	{
 		return store_.CopyOut(packet.recordOffset, packet.recordBytes, out);
 	}
+	bool RecordInRam(const Packet &packet) const { return store_.InRam(packet.recordOffset, packet.recordBytes); }
 	const PayloadStore &Store() const { return store_; }
+	PayloadStore &Store() { return store_; }
+
+	// Store offset of the first packet that arrived at or after `atNs` (the
+	// store's end when none did).
+	uint64_t OffsetAtArrival(int64_t atNs) const;
+	// The bytes of packet `seq` and of every packet that arrived up to
+	// `aheadNs` after it: what a sender at `seq` sends next.
+	PayloadStore::Range AheadRange(uint64_t seq, int64_t aheadNs) const;
+	// Drops the packets whose bytes the store lost (PayloadStore::LostBefore),
+	// up to the next keyframe. Senders behind the new front re-splice.
+	void DropLost();
 
 	// Drops whole GOPs from the front while the NEXT video keyframe is still
 	// older than now - retention, and never past `minKeepSeq` (the oldest
@@ -155,8 +169,12 @@ public:
 	SpliceInfo SetDelay(int64_t delayNs, int64_t nowNs, const PacketHistory &history);
 
 	// Packets due at `nowNs`, in order, with rewritten timestamps. Audio that
-	// would go back in time right after a splice is skipped.
-	std::vector<OutPacket> Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets = 256);
+	// would go back in time right after a splice is skipped. `ready` (when
+	// set) says whether a packet's bytes can be sent now: the first that
+	// can't stops the batch, and is due again next time.
+	using ReadyFn = std::function<bool(const Packet &)>;
+	std::vector<OutPacket> Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets = 256,
+				   const ReadyFn &ready = {});
 
 	// Monotonic time the next packet is due, or -1 when the sink is caught up
 	// with the history.

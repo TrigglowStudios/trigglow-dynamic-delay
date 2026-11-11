@@ -74,6 +74,11 @@ struct RelayStatus {
 	double historySeconds = 0.0;
 	uint64_t historyBytes = 0;    // Payload bytes the history covers.
 	uint64_t historyRamBytes = 0; // RAM it holds for them (blocks + packet metadata).
+	// The older history is in the encrypted temp file (RelayOptions::spillToDisk).
+	bool spillActive = false;
+	uint64_t historyDiskBytes = 0;
+	// Why it isn't (empty when it is, or when it wasn't asked for).
+	std::string spillNote;
 	double bitrateMbps = 0.0;
 	double keyframeIntervalSeconds = 0.0;
 	std::string videoCodec;
@@ -90,6 +95,13 @@ struct RelayOptions {
 	// When OBS stops streaming with the delay on, keep sending what viewers
 	// haven't seen yet (the last N seconds) before closing.
 	bool drainOnStop = true;
+	// Keep only the newest seconds and what each destination sends next in
+	// RAM; the rest goes to an encrypted temp file (spill-file.hpp). Falls
+	// back to RAM on its own when the disk fails, fills up or is too slow.
+	bool spillToDisk = true;
+	// At most this many bytes in that file (0: the free disk space minus a
+	// reserve). Past it the history stays in RAM.
+	uint64_t spillLimitBytes = 0;
 };
 
 class StreamRelay {
