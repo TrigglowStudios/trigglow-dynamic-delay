@@ -230,6 +230,16 @@ inline uint32_t ClampDelaySeconds(int64_t seconds)
 // two keyframe intervals of slack for the splice.
 int64_t RetentionNs(uint32_t delaySeconds, uint32_t minimumSeconds, double keyframeIntervalSeconds);
 
+// RetentionNs's `minimumSeconds`: how far a live raise is instant. With the
+// spill (payload-store.hpp) the older seconds cost disk, not RAM, so it is the
+// most a delay can be: every raise is instant (once the stream has run that
+// long). In RAM only, `ramSeconds`: the furthest the streamer can jump in one
+// step (the controller's highest preset or delay-on scene rule).
+inline uint32_t KeepSeconds(bool onDisk, uint32_t ramSeconds)
+{
+	return onDisk ? kMaxDelaySeconds : ClampDelaySeconds(ramSeconds);
+}
+
 // RAM the history needs for `seconds` at `bitsPerSecond`, in bytes.
 inline uint64_t EstimateBytes(double bitsPerSecond, double seconds)
 {

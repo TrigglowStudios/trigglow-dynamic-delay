@@ -71,7 +71,9 @@ struct StreamDelayStatus {
 	bool engaged = false;     // The current stream goes through the relay.
 	bool delayOn = false;     // Delay requested (armed before a stream, or applied).
 	uint32_t delaySeconds = 30;
-	uint32_t keepSeconds = 120;
+	// RAM only: the history also keeps the highest preset or delay-on scene
+	// rule (RamKeepSeconds()). The relay's status says what applies now.
+	uint32_t keepSeconds = 60;
 	bool drainOnStop = true;
 	StreamDelayState state = StreamDelayState::Idle;
 	// Why the current stream couldn't use stream mode (empty when it could).
@@ -112,8 +114,15 @@ public:
 	bool ModeEnabled() const { return modeEnabled_; }
 	void SetDelaySeconds(uint32_t seconds); // Applied live while the delay is on.
 	uint32_t DelaySeconds() const { return delaySeconds_; }
+	// "keep_seconds": the history's minimum in 1.0 alpha builds. Still read
+	// and written back unchanged (going back to such a build keeps the
+	// streamer's value), but the history no longer uses it: with the spill it
+	// always keeps 600 s on disk, in RAM only RamKeepSeconds().
 	void SetKeepSeconds(uint32_t seconds);
 	uint32_t KeepSeconds() const { return keepSeconds_; }
+	// RAM only: how far the history reaches back besides the delay, so a
+	// preset, a delay-on scene rule or a hotkey step up to it is instant.
+	uint32_t RamKeepSeconds() const;
 	void SetDrainOnStop(bool drain);
 	bool DrainOnStop() const { return drainOnStop_; }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output

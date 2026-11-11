@@ -79,6 +79,7 @@ bool StreamRelay::Start(const std::vector<Destination> &, const RelayOptions &, 
 	return false;
 }
 void StreamRelay::SetDelay(uint32_t) {}
+void StreamRelay::SetKeepSeconds(uint32_t) {}
 void StreamRelay::Dump() {}
 uint32_t StreamRelay::Delay() const
 {
@@ -390,6 +391,12 @@ struct StreamRelay::Impl {
 		return (ctx->impl->stop.load() || ctx->sink->abort.load()) ? 1 : 0;
 	}
 
+	// See KeepSeconds() (packet-delay-core.hpp).
+	uint32_t KeepSecondsLocked() const
+	{
+		return KeepSeconds(history.Store().Spill() == SpillState::Active, options.keepSeconds);
+	}
+
 	uint64_t MinSinkCursorLocked() const
 	{
 		uint64_t minSeq = UINT64_MAX;
@@ -501,7 +508,7 @@ struct StreamRelay::Impl {
 					keyframeInterval = history.KeyframeIntervalSeconds();
 					keyframeCheckNs = now;
 				}
-				history.Trim(now, RetentionNs(delaySeconds, options.keepSeconds, keyframeInterval),
+				history.Trim(now, RetentionNs(delaySeconds, KeepSecondsLocked(), keyframeInterval),
 					     MinSinkCursorLocked());
 			}
 			av_packet_unref(pkt);
@@ -957,8 +964,9 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	keyOut = "live";
 	TRIGGLOW_LOG_INFO(
 		kComponent,
-		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us", port,
-		waitedMs, destinations.size(), d.delaySeconds, options.keepSeconds);
+		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us%s", port,
+		waitedMs, destinations.size(), d.delaySeconds, KeepSeconds(d.spill != nullptr, options.keepSeconds),
+		d.spill ? " (older seconds on disk)" : " in RAM");
 	return true;
 }
 
@@ -974,6 +982,12 @@ void StreamRelay::SetDelay(uint32_t seconds)
 		++impl_->delayGen;
 	}
 	impl_->cv.notify_all();
+}
+
+void StreamRelay::SetKeepSeconds(uint32_t seconds)
+{
+	std::lock_guard<std::mutex> lock(impl_->m);
+	impl_->options.keepSeconds = ClampDelaySeconds(seconds);
 }
 
 void StreamRelay::Dump()
@@ -1065,6 +1079,7 @@ RelayStatus StreamRelay::GetStatus() const
 	status.historyDiskBytes = d.history.Store().DiskBytes();
 	status.spillActive = d.history.Store().Spill() == SpillState::Active;
 	status.spillNote = d.spillNote;
+	status.instantRaiseSeconds = std::max(d.delaySeconds, d.KeepSecondsLocked());
 	status.bitrateMbps = d.history.BytesPerSecond() * 8.0 / 1e6;
 	status.keyframeIntervalSeconds = d.keyframeInterval;
 	for (const StreamInfo &info : d.streams) {

@@ -554,11 +554,54 @@ void TestSpillHooks()
 	CHECK(!after.empty() && after.front().packet->keyframe);
 }
 
+// Retention: with the spill every live raise up to the maximum is instant;
+// in RAM only, up to the highest preset or scene rule (or the delay).
+void TestRetentionPolicy()
+{
+	g_currentTest = "RetentionPolicy";
+	CHECK(KeepSeconds(true, 30) == kMaxDelaySeconds);
+	CHECK(KeepSeconds(true, 0) == kMaxDelaySeconds);
+	CHECK(KeepSeconds(false, 30) == 30);
+	CHECK(KeepSeconds(false, 0) == 0);
+	CHECK(KeepSeconds(false, 5000) == kMaxDelaySeconds);
+	const int64_t s = 1000000000LL;
+	CHECK(RetentionNs(10, KeepSeconds(true, 60), 2.0) == 605 * s);
+	CHECK(RetentionNs(10, KeepSeconds(false, 60), 2.0) == 65 * s);
+	CHECK(RetentionNs(120, KeepSeconds(false, 60), 2.0) == 125 * s);
+	CHECK(RetentionNs(600, KeepSeconds(false, 60), 4.0) == 609 * s);
+	CHECK(RetentionNs(10, KeepSeconds(true, 60), 0.0) == 605 * s); // Unknown GOP: 2 s.
+
+	// 700 s of stream at delay 10, trimmed as the relay does, then a raise.
+	for (const bool onDisk : {true, false}) {
+		FakeStream st;
+		SinkScheduler sink;
+		OutLog log;
+		const uint32_t keep = KeepSeconds(onDisk, 60);
+		sink.SetDelay(10000 * kMs, 0, st.history);
+		for (int64_t t = 0; t <= 700000; t += 1000) {
+			st.RunUntil(t);
+			log.Add(sink.Due(t * kMs, st.history, 100000));
+			st.history.Trim(t * kMs, RetentionNs(10, keep, st.history.KeyframeIntervalSeconds()),
+					sink.CursorSeq());
+		}
+		CHECK(st.history.SpanSeconds() >= (onDisk ? 600.0 : 60.0));
+		CHECK(st.history.SpanSeconds() <= (onDisk ? 607.0 : 67.0));
+		const SpliceInfo to60 = SinkScheduler(sink).SetDelay(60000 * kMs, 700000 * kMs, st.history);
+		CHECK(to60.spliced && !to60.shortHistory);
+		const SpliceInfo to600 = sink.SetDelay(600000 * kMs, 700000 * kMs, st.history);
+		CHECK(to600.spliced);
+		CHECK(to600.shortHistory == !onDisk);
+		if (onDisk)
+			CHECK(to600.jumpSeconds > 589.0 && to600.jumpSeconds < 592.0);
+	}
+}
+
 int main()
 {
 	TestBFramesSpliceKeepsDisplayOrder();
 	TestHistoryRecords();
 	TestSpillHooks();
+	TestRetentionPolicy();
 	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();

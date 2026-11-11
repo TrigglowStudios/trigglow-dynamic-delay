@@ -79,6 +79,10 @@ struct RelayStatus {
 	uint64_t historyDiskBytes = 0;
 	// Why it isn't (empty when it is, or when it wasn't asked for).
 	std::string spillNote;
+	// The delay can be raised live up to this with no wait (once the stream
+	// has run that long): kMaxDelaySeconds with the spill, else the delay or
+	// RelayOptions::keepSeconds, whichever is higher.
+	uint32_t instantRaiseSeconds = 0;
 	double bitrateMbps = 0.0;
 	double keyframeIntervalSeconds = 0.0;
 	std::string videoCodec;
@@ -89,8 +93,10 @@ struct RelayStatus {
 
 struct RelayOptions {
 	uint32_t delaySeconds = 0;
-	// The history always reaches back at least this far, so the delay can be
-	// raised live up to it with no wait (packet-delay-core.hpp RetentionNs).
+	// RAM only (no spill, or it fell back): the history also reaches back
+	// this far, so the delay can be raised live up to it with no wait. With
+	// the spill it always keeps kMaxDelaySeconds (packet-delay-core.hpp
+	// KeepSeconds, RetentionNs).
 	uint32_t keepSeconds = 120;
 	// When OBS stops streaming with the delay on, keep sending what viewers
 	// haven't seen yet (the last N seconds) before closing.
@@ -120,6 +126,8 @@ public:
 
 	// Live delay change: every destination splices at once.
 	void SetDelay(uint32_t seconds);
+	// RelayOptions::keepSeconds, live (presets or scene rules changed).
+	void SetKeepSeconds(uint32_t seconds);
 	uint32_t Delay() const;
 
 	// Dump: what viewers haven't seen yet is never sent. Every destination
