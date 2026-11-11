@@ -177,6 +177,9 @@ private:
 	void UpdateOverlay();
 	void ClearOverlay();
 	void CheckObsSettings(obs_output_t *output);
+	void SwapFrontendService();
+	void RestoreFrontendService();
+	void VerifyOutputUsesRelay();
 	uint32_t EffectiveDelay() const { return delayOn_ ? delaySeconds_ : 0; }
 
 	void ApplySceneRule();
@@ -197,6 +200,9 @@ private:
 
 	relay::StreamRelay relay_;
 	obs_service_t *loopbackService_ = nullptr;
+	// The streamer's own service while the frontend's is swapped for the
+	// relay's (Advanced output mode, see OnStreamingStarting). Holds a ref.
+	obs_service_t *savedFrontendService_ = nullptr;
 	std::unique_ptr<QTimer> timer_;
 	bool initialized_ = false;
 	bool modeEnabled_ = true;

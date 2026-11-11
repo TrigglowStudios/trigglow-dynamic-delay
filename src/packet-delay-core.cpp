@@ -190,9 +190,13 @@ SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
 	if (haveVideoOut_ || haveAudioOut_)
 		info.jumpSeconds = static_cast<double>(lastSentArrivalNs_ - key->arrivalNs) / 1e9;
 
-	if (haveVideoOut_)
-		offsetMs_ = lastVideoDtsOut_ + frameMs_ - key->dtsMs;
-	else if (haveAudioOut_)
+	if (haveVideoOut_) {
+		// The keyframe follows the last frame sent by one frame interval, in
+		// decode order (dts) and in display order (pts): with B-frames the
+		// frames sent last can show up to a few frames after their dts, and a
+		// keyframe shown before them would play the stream backwards.
+		offsetMs_ = std::max(lastVideoDtsOut_ + frameMs_ - key->dtsMs, maxVideoPtsOut_ + frameMs_ - key->ptsMs);
+	} else if (haveAudioOut_)
 		offsetMs_ = lastAnyDtsOut_ + frameMs_ - key->dtsMs;
 	else
 		offsetMs_ = -key->dtsMs;
@@ -242,6 +246,7 @@ std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &hi
 					frameMs_ = (frameMs_ * 7 + step + 4) / 8;
 			}
 			lastVideoDtsOut_ = dts;
+			maxVideoPtsOut_ = haveVideoOut_ ? std::max(maxVideoPtsOut_, pts) : pts;
 			haveVideoOut_ = true;
 		} else {
 			if (dts < lastAnyDtsOut_)
@@ -279,6 +284,7 @@ void SinkScheduler::ResetTimeline()
 	haveVideoOut_ = false;
 	haveAudioOut_ = false;
 	lastVideoDtsOut_ = 0;
+	maxVideoPtsOut_ = 0;
 	lastAudioDtsOut_ = 0;
 	lastAnyDtsOut_ = 0;
 	offsetMs_ = 0;

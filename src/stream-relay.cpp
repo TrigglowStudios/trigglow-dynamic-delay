@@ -35,6 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #endif
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -135,6 +136,42 @@ int PickLoopbackPort()
 	return port;
 #else
 	return 0;
+#endif
+}
+
+// True once this process has a socket listening on 127.0.0.1:<port>: the
+// relay's FFmpeg listener is up and OBS can connect. Read from the system's TCP
+// table, so nothing connects to it (FFmpeg accepts a single client).
+bool LoopbackListening(int port)
+{
+#ifdef _WIN32
+	std::vector<unsigned char> buffer(16 * 1024);
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		ULONG size = static_cast<ULONG>(buffer.size());
+		const DWORD ret =
+			GetExtendedTcpTable(buffer.data(), &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0);
+		if (ret == ERROR_INSUFFICIENT_BUFFER) {
+			buffer.resize(size + 4096);
+			continue;
+		}
+		if (ret != NO_ERROR)
+			return false;
+		const auto *table = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID *>(buffer.data());
+		const DWORD self = GetCurrentProcessId();
+		for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+			const MIB_TCPROW_OWNER_PID &row = table->table[i];
+			// The LISTENER table holds listening sockets only; their dwState
+			// isn't reliable (0 on recent Windows 11 builds), so not checked.
+			if (row.dwOwningPid == self && ntohs(static_cast<u_short>(row.dwLocalPort)) == port &&
+			    row.dwLocalAddr == htonl(INADDR_LOOPBACK))
+				return true;
+		}
+		return false;
+	}
+	return false;
+#else
+	(void)port;
+	return false;
 #endif
 }
 
@@ -434,7 +471,13 @@ struct StreamRelay::Impl {
 		std::vector<int> map;
 		SinkInterruptCtx ictx{this, &sink};
 		int backoffSeconds = 2;
-		const std::string host = HostOf(sink.dest.server);
+		bool gaveUp = false;
+		// The destination's name (never the key) and host, so the log tells
+		// the destinations apart.
+		const std::string serverHost = HostOf(sink.dest.server);
+		const std::string host = sink.dest.name.empty() || sink.dest.name == serverHost
+						 ? serverHost
+						 : sink.dest.name + " (" + serverHost + ")";
 
 		std::unique_lock<std::mutex> lock(m);
 		while (!stop.load() && !sink.abort.load()) {
@@ -540,6 +583,19 @@ struct StreamRelay::Impl {
 
 			if (stop.load() || sink.abort.load())
 				break;
+			if (ingestEnded) {
+				// OBS has stopped: a destination that can't take the last
+				// seconds isn't retried, or the stream would never finish.
+				sink.status.state = SinkState::Failed;
+				sink.status.error = error;
+				gaveUp = true;
+				lock.unlock();
+				TRIGGLOW_LOG_WARN(kComponent, "%s: %s; OBS has stopped, so it isn't retried",
+						  host.c_str(), error.c_str());
+				Event(sink.dest.name + ": " + error);
+				lock.lock();
+				break;
+			}
 			// Failed to connect or to send: reconnect after a back-off, with a
 			// fresh timeline, at the delay.
 			lock.unlock();
@@ -552,16 +608,17 @@ struct StreamRelay::Impl {
 			sink.status.error = error;
 			++sink.status.reconnects;
 			sink.statNs = 0;
+			// OBS stopping ends the wait too: one last try for the last seconds.
 			cv.wait_for(lock, std::chrono::seconds(backoffSeconds),
-				    [&] { return stop.load() || sink.abort.load(); });
+				    [&] { return stop.load() || sink.abort.load() || ingestEnded; });
 			backoffSeconds = std::min(backoffSeconds * 2, 15);
 			sink.sched.ResetTimeline();
 			sink.sched.SetDelay(static_cast<int64_t>(delaySeconds) * kSecondNs, NowNs(), history);
 		}
 		sink.finished = true;
-		const bool drained = ingestEnded && !stop.load();
+		const bool drained = ingestEnded && !stop.load() && !gaveUp;
 		lock.unlock();
-		Disconnect(oc, true);
+		Disconnect(oc, !gaveUp);
 		{
 			std::lock_guard<std::mutex> statusLock(m);
 			if (sink.status.state != SinkState::Failed)
@@ -624,14 +681,46 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 		Impl::Sink *raw = sink.get();
 		raw->thread = std::thread([&d, raw] { d.SinkMain(*raw); });
 	}
-	// FFmpeg binds the port as soon as its thread runs; OBS connects right
-	// after this returns.
+	// OBS connects right after this returns, and fails the stream if nothing
+	// listens yet: wait until FFmpeg's listener is up (a few ms), or give up
+	// (FFmpeg couldn't listen) so the stream goes out without the relay.
+	const auto waitStart = std::chrono::steady_clock::now();
+	bool listening = false;
+#ifdef _WIN32
+	for (;;) {
+		if (LoopbackListening(port)) {
+			listening = true;
+			break;
+		}
+		bool ended = false;
+		{
+			std::lock_guard<std::mutex> lock(d.m);
+			ended = d.ingestEnded;
+		}
+		if (ended || std::chrono::steady_clock::now() - waitStart > std::chrono::seconds(3))
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+#else
 	std::this_thread::sleep_for(std::chrono::milliseconds(150));
+	listening = true;
+#endif
+	const long long waitedMs = static_cast<long long>(
+		std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart)
+			.count());
+	if (!listening) {
+		TRIGGLOW_LOG_ERROR(kComponent, "the relay couldn't listen on 127.0.0.1:%d (%lld ms)", port, waitedMs);
+		Stop();
+		errorOut = "the relay couldn't listen on this computer";
+		return false;
+	}
 
 	serverOut = "rtmp://127.0.0.1:" + std::to_string(port) + "/trigglow";
 	keyOut = "live";
-	TRIGGLOW_LOG_INFO(kComponent, "relay listening on 127.0.0.1:%d, %zu destination(s), delay %us, keeps %us", port,
-			  destinations.size(), d.delaySeconds, options.keepSeconds);
+	TRIGGLOW_LOG_INFO(
+		kComponent,
+		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us", port,
+		waitedMs, destinations.size(), d.delaySeconds, options.keepSeconds);
 	return true;
 }
 
@@ -639,6 +728,10 @@ void StreamRelay::SetDelay(uint32_t seconds)
 {
 	{
 		std::lock_guard<std::mutex> lock(impl_->m);
+		// The same delay again would re-splice every destination to the
+		// keyframe before it: up to a keyframe interval replayed for nothing.
+		if (impl_->delaySeconds == ClampDelaySeconds(seconds))
+			return;
 		impl_->delaySeconds = ClampDelaySeconds(seconds);
 		++impl_->delayGen;
 	}

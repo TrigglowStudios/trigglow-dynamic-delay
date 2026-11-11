@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -556,6 +558,13 @@ bool obs_module_load(void)
 	g_state->streamController = std::make_unique<trigglow::StreamDelayController>();
 	g_state->streamController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI).
+	if (const char *skip = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE"); skip && std::strcmp(skip, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: stream mode's account gate is skipped");
+		g_state->streamController->SetAuthorizationCheck(nullptr);
+	}
+#endif
 	g_state->streamController->SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
 		const QString label = QString::fromUtf8(Str("Overlay.Label"));
 		const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
