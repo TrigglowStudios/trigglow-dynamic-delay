@@ -15,11 +15,13 @@ output and on every platform. Details: `docs/STREAM_MODE.md`.
 
 **Why does stream mode use so little RAM?**
 It keeps what OBS's own encoder already produced for the stream, and nothing else: nothing is
-decoded or encoded again, the CPU only copies bytes. It keeps the last 600 s (your bitrate times
-600 s, about 450 MB at 6 Mbps), so the delay can be raised live up to the maximum with no wait, but
-only the newest seconds and what is about to be sent stay in RAM: the rest waits in an encrypted
-temp file on your disk, deleted when the stream ends. Measured at 6 Mbps: about 15 MB of RAM at any
-delay up to 600 s. If the disk can't be used, it stays in RAM (45 MB per minute at 6 Mbps). Scene
+decoded or encoded again, the CPU only copies bytes: your bitrate times the seconds kept (45 MB
+per minute at 6 Mbps). You choose where they wait (Options > Delay buffer). With Memory, the
+default on an SSD, they stay in RAM and nothing is written to disk. With Disk, the default on a
+hard drive, the plugin keeps the last 600 s (so the delay can be raised live up to the maximum with
+no wait) but only the newest seconds stay in RAM: the rest waits in an encrypted temp file on your
+disk, deleted when the stream ends; measured at 6 Mbps, about 15 MB of RAM at any delay up to
+600 s, and about 2.7 GB written per hour. Scene
 mode stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
 30–60 s.
 

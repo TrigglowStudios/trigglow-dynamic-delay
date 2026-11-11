@@ -44,6 +44,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <string>
 #include <vector>
 
+#include "drive-kind.hpp"
 #include "stream-relay.hpp"
 
 struct obs_service;
@@ -75,6 +76,14 @@ struct StreamDelayStatus {
 	// rule (RamKeepSeconds()). The relay's status says what applies now.
 	uint32_t keepSeconds = 60;
 	bool drainOnStop = true;
+	// Where the delay buffer lives: the streamer's choice, the drive type of
+	// the spill folder (Automatic follows it) and what that resolves to for
+	// the next stream (true: Disk, the encrypted spill).
+	relay::BufferStorage bufferStorage = relay::BufferStorage::Auto;
+	relay::DriveKind driveKind = relay::DriveKind::Unknown;
+	bool bufferOnDisk = false;
+	// What the current stream asked for (a change applies to the next one).
+	bool streamBufferOnDisk = false;
 	StreamDelayState state = StreamDelayState::Idle;
 	// Why the current stream couldn't use stream mode (empty when it could).
 	std::string ineligible;
@@ -125,6 +134,14 @@ public:
 	uint32_t RamKeepSeconds() const;
 	void SetDrainOnStop(bool drain);
 	bool DrainOnStop() const { return drainOnStop_; }
+	// "buffer_storage": where the delay buffer lives (drive-kind.hpp).
+	// Resolved when a stream starts; a change while live applies to the next
+	// stream.
+	void SetBufferStorage(relay::BufferStorage storage);
+	relay::BufferStorage BufferStorageChoice() const { return bufferStorage_; }
+	// The drive type of the spill folder, detected at Init() and again at each
+	// stream start.
+	relay::DriveKind DetectedDrive() const { return driveKind_; }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -219,6 +236,9 @@ private:
 	uint32_t delaySeconds_ = 30;
 	uint32_t keepSeconds_ = 120;
 	bool drainOnStop_ = true;
+	relay::BufferStorage bufferStorage_ = relay::BufferStorage::Auto;
+	relay::DriveKind driveKind_ = relay::DriveKind::Unknown;
+	bool streamOnDisk_ = false;
 	bool engaged_ = false;
 	bool draining_ = false;
 	std::string ineligible_;

@@ -14,17 +14,50 @@ buffer at a quality close to the source: ~190 MB to ~2.3 GB for 30-60 s (README 
 
 Stream mode keeps the packets OBS's own encoder produced for the stream and sends them later.
 Nothing is decoded or encoded again; the CPU copies bytes. The history is the stream's bitrate times
-the seconds kept (45 MB per minute at 6 Mbps), and most of it waits in an encrypted temp file on
-disk, so the RAM it takes stays about the same at any delay (see Memory and the disk).
+the seconds kept (45 MB per minute at 6 Mbps). The streamer chooses where it waits: in RAM, or
+mostly in an encrypted temp file on disk, where the RAM it takes stays about the same at any delay
+(see Memory and the disk).
 
 ## Memory and the disk
+
+**Where the delay buffer lives** is the streamer's choice (dock: Options > Delay buffer, saved as
+`buffer_storage` in `stream-mode-settings.json`), like a recorder's "memory / disk" buffer setting:
+
+- **Memory:** the whole history stays in RAM and nothing is written to disk: the bitrate times the
+  seconds kept (45 MB per minute at 6 Mbps). It reaches back the delay or the highest preset or
+  delay-on scene rule (see Changing the delay live), so raises past that wait for the missing seconds.
+- **Disk:** the spill below. RAM stays at 13-15 MB at any delay and every raise up to 600 s is
+  instant, but the whole stream is written to the disk while streaming (about 2.7 GB per hour at
+  6 Mbps), and read back for long delays.
+- **Automatic** (the default, also for settings saved before the choice existed): Memory when the
+  temp folder is on an SSD, Disk when it is on a spinning hard drive. An SSD gains little from the
+  spill at the usual delays (a 60 s history is 45 MB of RAM) and would take hours of continuous
+  writes for it; a hard drive doesn't wear from writes, and a machine with one is the likelier to
+  be short of RAM. A drive whose type can't be told (a network drive, a USB bridge that doesn't
+  pass it on, an error) counts as an SSD. The dock names what was detected: "Automatic (Memory, SSD
+  detected)".
+- The drive is checked when OBS loads (for the dock) and again at each stream start, and logged once
+  per stream (`delay buffer: memory (choice auto, temp folder drive ssd)`), never with the path. A
+  change while live applies to the next stream; the dock says so.
+- **Detection** (`drive-kind.*`, the drive that holds the spill folder): on Windows the volume's
+  disk(s) answer `IOCTL_STORAGE_QUERY_PROPERTY` for `StorageDeviceSeekPenaltyProperty` (a seek
+  penalty is a hard drive), with `StorageDeviceTrimProperty` as the second signal when that can't
+  be read (TRIM means SSD; no TRIM alone proves nothing). A volume over several disks is an HDD if
+  any is. Network shares and RAM disks aren't asked. No administrator rights are needed. On Linux,
+  `/sys/dev/block/<major:minor>/queue/rotational` of the folder's device (its disk for a
+  partition; for a file system with an anonymous device number, like btrfs, the mount's source
+  from `/proc/self/mountinfo`). On macOS, IOKit's "Medium Type" ("Solid State" / "Rotational") in
+  the device characteristics, searched up the registry from the folder's BSD disk (through APFS
+  containers to the physical drive).
+
+The rest of this section is how the history is stored, and how Disk works:
 
 - **Contiguous storage.** The packets' bytes go back to back into 1 MiB blocks
   (`PayloadStore`, `payload-store.*`), one record per packet: its flags, side data and payload,
   exactly what FFmpeg's demuxer returned, so the platform gets the same bytes. The scheduler's
   metadata is 48 bytes per packet. Before, every packet was its own FFmpeg allocation, which cost
   10-13% on top of the history (below: +490 MB of RAM for 446 MB of history, +106 MB for 93 MB).
-- **The spill.** Only the newest seconds (4 s plus two keyframe intervals: live and short delays
+- **The spill** (Disk). Only the newest seconds (4 s plus two keyframe intervals: live and short delays
   never touch the disk, and lowering the delay splices into RAM) and what each destination sends
   next (3 s ahead of it) stay in RAM. Older full blocks go to a temp file and their RAM is freed. A
   block a destination is about to send is read back on the relay's own I/O thread before it is due,
@@ -39,7 +72,7 @@ disk, so the RAM it takes stays about the same at any delay (see Memory and the 
   when OBS crashes: delete-on-close on Windows, unlinked as soon as it is created on Linux and macOS.
   The next stream deletes any a power loss left. Freed space is reused and the file is truncated as
   the history shrinks.
-- **Disk use.** The bitrate times 600 s while streaming in stream mode (about 450 MB at 6 Mbps, 600
+- **Disk use.** The bitrate times 600 s while streaming with Disk (about 450 MB at 6 Mbps, 600
   MB at 8 Mbps), written and, for delays longer than the RAM window, read back at the stream's
   bitrate. The spill always leaves 1 GiB free on that disk.
 - **When the disk can't be used** (no room, a write or read fails, a block takes more than 2 s, or
@@ -57,7 +90,7 @@ x264 stream (1280x720 30 fps, B-frames, 2 s keyframes, AAC 160 kbps), Windows 11
 | 10 s | 127 s, 93 MB / 607 s, 446 MB | +106 MB | +96 MB | +13 MB | 11 MB | 440 MB |
 | 120 s | 127 s, 93 MB / 607 s, 446 MB | +103 MB | +96 MB | +15 MB | 13 MB | 440 MB |
 | 600 s | 607 s, 446 MB / 607 s, 446 MB | +490 MB | +453 MB | +13 MB | 12 MB | 440 MB |
-| 600 s, RAM only (no spill) | 607 s, 446 MB | | | +454 MB | 449 MB | 0 |
+| 600 s, RAM only (Memory) | 607 s, 446 MB | | | +454 MB | 449 MB | 0 |
 
 "+N MB" is how much the process grew (private bytes) over itself before the stream. "Before" is the
 relay without these changes, with "Keep for instant raises" at its default (120 s); "Contiguous
@@ -107,11 +140,12 @@ jumps back: viewers see the last seconds again, never anything newer. Removing i
 The platform sees one continuous stream: no reconnect, no new header. The step is the keyframe
 interval (2 s recommended); the dock warns when it is on auto or above 4 s (see Settings checks).
 
-With the spill the history always reaches back 600 s (the most a delay can be) plus two keyframe
-intervals plus 1 s: it costs disk, not RAM, and every live raise is instant once the stream has run
-that long. In RAM only (the disk couldn't be used) it reaches back the delay or the highest preset
-or delay-on scene rule, whichever is higher, plus the same slack (`KeepSeconds()` and
-`RetentionNs()` in `packet-delay-core.hpp`). The dock's "Instant raises" line says which applies.
+With Disk (the spill) the history always reaches back 600 s (the most a delay can be) plus two
+keyframe intervals plus 1 s: it costs disk, not RAM, and every live raise is instant once the stream
+has run that long. With Memory, or when the disk couldn't be used, it reaches back the delay or the
+highest preset or delay-on scene rule, whichever is higher, plus the same slack (`KeepSeconds()` and
+`RetentionNs()` in `packet-delay-core.hpp`). The dock's "Instant raises: N s", next to "Delay
+buffer", says which applies.
 Asking for more than the history holds (at the start of a stream, or beyond the presets in RAM only)
 makes the sender hold until the oldest kept keyframe is old enough (`SpliceInfo::shortHistory`).
 
@@ -172,8 +206,9 @@ mode worse (`StreamDelayController::CheckObsSettings`):
 ## Controls
 
 - Dock: on/off, back to live, seconds (1-600, +/-5), dump, three presets, delay by scene,
-  how far a raise is instant (read only; it replaced the "Keep for instant raises" setting, whose
-  saved `keep_seconds` is still read and written back unchanged), drain, the badge, where the
+  the delay buffer (Automatic / Memory / Disk) with how far a raise is instant (read only; it
+  replaced the "Keep for instant raises" setting, whose saved `keep_seconds` is still read and
+  written back unchanged), drain, the badge, where the
   stream goes (read only: OBS's Settings > Stream). The stats show the RAM and the disk the history
   takes.
 - Hotkeys (OBS Settings > Hotkeys): Toggle, Enable, Disable (names unchanged), Back to live,
@@ -261,10 +296,23 @@ The free-account gate applies to Enable as in scene mode.
   - A spill capped at 70 MB fell back to RAM when full (logged), read the spilled blocks back and
     went on; the output stayed byte-identical with no gap. Killing the process mid-stream deleted
     its spill file at once.
+- The delay buffer choice (2026-11-11), Windows 11:
+  - Unit tests: `drive_kind_tests` (Automatic with SSD, HDD and unknown drives, the explicit
+    choices, saved values and settings from before the choice, the Windows signals and several
+    disks, Linux's `rotational` and `mountinfo` parsing, macOS's medium type).
+  - Detection on this machine (two NVMe SSDs, no hard drive): C: and E: SSD, the temp folder
+    (on C:) SSD; drive letters that don't exist Unknown.
+  - In a portable OBS 33.0.1: a settings file without `buffer_storage` loaded as Automatic and saved
+    it back as `auto`; a stream to a local RTMP listener with Automatic logged
+    `delay buffer: memory (choice auto, temp folder drive ssd)` and made no spill file, one with Disk
+    logged `disk (choice disk, ...)` and the spill file was there while streaming. The dock at
+    260-380 px in English, Spanish, Portuguese and Chinese: no clipping; "Instant raises" sits
+    next to "Delay buffer" or under it when there's no room, and Automatic's long label ends in
+    "..." when the combo is too narrow for it.
 - Not run yet: a real platform (Twitch RTMP, Kick RTMPS, YouTube HEVC over enhanced RTMP) with
-  its player watched, the dock UI by hand (also the new "Instant raises" line), the spill inside a
-  real OBS, the spill at runtime on macOS (not built here) and Linux (unit tests only), a slow
-  (USB, HDD) or nearly full disk in practice, and OBS reconnecting to the relay mid-stream (the
+  its player watched, the spill at runtime on macOS (not built here) and Linux (unit tests only),
+  drive detection at runtime on macOS and Linux and on a hard drive, a USB drive or a network temp
+  folder, a slow (USB, HDD) or nearly full disk in practice, and OBS reconnecting to the relay mid-stream (the
   relay listens once: if OBS's connection to it drops, the stream ends instead of resuming).
 - The relay and the OBS integration build on Windows, Linux and macOS. On Linux the relay itself ran
   end to end with `tests/relay_harness.cpp` (ffmpeg standing in for OBS and the platform) against

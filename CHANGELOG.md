@@ -13,20 +13,26 @@ sign-in are kept.
 **What's new:**
 - **Stream mode (Windows, macOS and Linux): the delay on your stream itself, at almost no cost.** The plugin now
   holds the stream OBS has already encoded and sends it out later, instead of keeping your
-  rendered picture in RAM. There's no second encode, and the older seconds wait in an encrypted
-  temp file on your disk (its key only in OBS's memory, the file deleted when the stream ends), so
-  the delay takes about 15 MB of RAM at any length up to 600 s (measured at 6 Mbps; about 450 MB
-  on disk). With it:
+  rendered picture in RAM. There's no second encode, and you choose where the held seconds wait:
+  in RAM, or in an encrypted temp file on your disk (its key only in OBS's memory, the file deleted
+  when the stream ends), where the delay takes about 15 MB of RAM at any length up to 600 s
+  (measured at 6 Mbps; about 450 MB on disk). With it:
   - **0 to 600 s of delay, changed while you're live.** Turn it on, off, up or down at any moment;
     your stream never reconnects. Turning it on, viewers see the last seconds again and never
-    anything newer. Raising it is instant once the stream has run that long.
+    anything newer. Raising it is instant once the stream has run that long (with Memory, up to
+    your highest preset or scene rule).
   - **Every scene is delayed**, so you can switch scenes while delayed.
   - **Your recording, Replay Buffer and virtual camera stay live.**
   - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
   - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
+  - **You choose where the delay buffer lives** (Options > Delay buffer): Memory (more RAM,
+    nothing written to disk) or Disk (little RAM, but the stream is written to an encrypted temp
+    file, about 2.7 GB per hour at 6 Mbps). Automatic, the default, picks Memory on an SSD and Disk
+    on a hard drive, and the dock says which it found. Next to it, how far you can raise the delay
+    instantly: up to 600 s with Disk, up to your highest preset or scene rule with Memory.
   - The dock shows where your stream goes and its state, the RAM and disk used and the bitrate.
-  - If the disk can't be used (full, failing or too slow), the delay goes on in RAM, keeping as
+  - If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM, keeping as
     much as your highest preset or scene rule; the stream isn't interrupted.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
   - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet

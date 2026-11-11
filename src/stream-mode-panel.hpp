@@ -128,6 +128,7 @@ private:
 	void RefreshWarnings(const StreamDelayStatus &status);
 	void RefreshPresetChips(uint32_t delaySeconds);
 	void RefreshModeLines(const StreamDelayStatus &status);
+	void RefreshBuffer(const StreamDelayStatus &status);
 	void AddRuleRow(const std::string &scene, int action, int seconds);
 	void RemoveRuleRow(QFrame *card);
 	void RulesChanged();
@@ -225,9 +226,13 @@ private:
 	QBoxLayout *presetRow_ = nullptr;
 	QSpinBox *presetSpins_[3] = {nullptr, nullptr, nullptr};
 
-	// How far a live raise is instant (read-only since the spill).
-	QLabel *keepValue_ = nullptr;
-	QLabel *keepHelp_ = nullptr;
+	// Delay buffer: where the history lives (Automatic / Memory / Disk), how
+	// far a live raise is instant (read-only, next to the eyebrow) and one
+	// hint line with the trade-off.
+	QWidget *bufferHead_ = nullptr; // FitRow: the eyebrow and bufferInstant_.
+	QComboBox *bufferCombo_ = nullptr;
+	QLabel *bufferInstant_ = nullptr;
+	QLabel *bufferHint_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
 	QLabel *drainText_ = nullptr;
 	QCheckBox *overlayCheck_ = nullptr;

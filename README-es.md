@@ -15,13 +15,15 @@ pasan la CI, pero aún no se han usado en un directo, y solo tienen el modo esce
 
 **Modo stream (nuevo en la 1.0.0, Windows, el modo por defecto).** El plugin guarda el stream que
 OBS ya ha codificado y lo envía a tu plataforma más tarde. No se decodifica ni se vuelve a
-codificar nada, así que casi no gasta CPU, y los segundos más antiguos esperan en un archivo
-temporal cifrado en tu disco: unos 15 MB de RAM con cualquier delay hasta 600 s (medido a 6 Mbps).
-Con él:
+codificar nada, así que casi no gasta CPU, y tú eliges dónde esperan los segundos retenidos: en RAM
+(lo predeterminado en un SSD, sin escribir nada en disco) o en un archivo temporal cifrado en tu
+disco (lo predeterminado en un disco duro, unos 15 MB de RAM con cualquier delay hasta 600 s, medido
+a 6 Mbps). Con él:
 
 - De 1 a 600 s de delay, que activas, quitas, subes o bajas en directo, sin reconectar. Al
   activarlo, los espectadores vuelven a ver los últimos segundos, nunca nada más nuevo. Subirlo es
-  al instante en cuanto el directo lleva ese tiempo.
+  al instante en cuanto el directo lleva ese tiempo (con Memoria, hasta tu preset o regla por
+  escena más alto).
 - Todas las escenas van con delay, así que puedes cambiar de escena con el delay activo.
 - La grabación, el Replay Buffer y la cámara virtual siguen en directo.
 - "Borrar lo que aún no se ha emitido": los segundos que aún esperan no se envían nunca, el stream
@@ -129,23 +131,33 @@ núcleos/16 hilos). En un equipo que no llega, el buffer baja a menos resolució
 la calidad mínima que elijas) y, como último paso, a la mitad de fps de captura, en vez de
 sobrecargar OBS o cortar el delay; mientras tanto el dock muestra un aviso ámbar.
 
-**Memoria en el modo stream.** El plugin guarda los últimos 600 s de tu directo (así cualquier
-subida es al instante), pero en RAM solo quedan los segundos más recientes y lo que está a punto de
-enviarse. El resto espera en un archivo temporal cifrado en la carpeta temporal del sistema (la
-clave solo existe en la memoria de OBS), que se borra al terminar el directo. La RAM que añade,
-medida a 6,2 Mbps con el relay por sí solo (detalles en `docs/STREAM_MODE-es.md`):
+**Memoria en el modo stream.** Tú eliges dónde vive el búfer del delay (dock: Opciones > Búfer del
+delay):
 
-| Delay | RAM | En disco |
-|---|---|---|
-| 10 s | 13 MB | 440 MB |
-| 120 s | 15 MB | 440 MB |
-| 600 s | 13 MB | 440 MB |
-| 600 s, si no se puede usar el disco | 454 MB | 0 |
+- **Memoria:** todo se queda en RAM y no se escribe nada en disco: tu bitrate por el delay, o por tu
+  preset o regla por escena más alto si es mayor (45 MB por minuto a 6 Mbps). Subir el delay es al
+  instante hasta ahí.
+- **Disco:** en RAM solo quedan los segundos más recientes y lo que está a punto de enviarse. El
+  plugin guarda los últimos 600 s (así cualquier subida es al instante) en un archivo temporal
+  cifrado en la carpeta temporal del sistema (la clave solo existe en la memoria de OBS), que se
+  borra al terminar el directo. Todo tu directo se escribe en disco mientras emites: unos 2,7 GB por
+  hora a 6 Mbps, 225-600 MB en disco a la vez (tu bitrate por 600 s).
+- **Automático** (lo predeterminado): Memoria si tu carpeta temporal está en un SSD, para ahorrarle
+  horas de escrituras constantes, y Disco en un disco duro. Si no se puede saber el tipo de unidad,
+  Memoria. El dock muestra lo que detectó, por ejemplo "Automático (Memoria, SSD detectado)", y
+  siempre puedes elegir la otra opción. Un cambio se aplica a tu próximo directo.
 
-En disco son tu bitrate por 600 s: unos 225 MB a 3 Mbps, 450 MB a 6 Mbps, 600 MB a 8 Mbps. Si no se
-puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue con el historial en RAM: tu
-bitrate por el delay, o por tu preset o regla por escena más alto si es mayor (45 MB por minuto a
-6 Mbps). El dock muestra la RAM y el disco en uso y el bitrate mientras emites.
+La RAM que añade, medida a 6,2 Mbps con el relay por sí solo (detalles en `docs/STREAM_MODE-es.md`):
+
+| Delay | Memoria | Disco: RAM | Disco: en disco |
+|---|---|---|---|
+| 10 s | unos 50 MB* | 13 MB | 440 MB |
+| 120 s | 96 MB | 15 MB | 440 MB |
+| 600 s | 454 MB | 13 MB | 440 MB |
+
+\* Con los presets por defecto (10, 30 y 60 s) Memoria guarda 60 s; calculado a partir del bitrate,
+no medido. Si Disco no puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue en
+RAM como con Memoria. El dock muestra la RAM y el disco en uso y el bitrate mientras emites.
 
 **Memoria en el modo escena.** El presupuesto de RAM del buffer es la mitad de la RAM del sistema,
 entre 1 GB y 24 GB (en macOS y Linux, donde todavía no se detecta la RAM, 2 GB fijos). Lo que ocupa de verdad depende

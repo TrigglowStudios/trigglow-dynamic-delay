@@ -230,6 +230,8 @@ elseif(OS_MACOS AND NOT TRIGGLOW_CORE_ONLY)
       "${_ffmpeg_root}/lib/libavutil.a"
       "-framework Security"
       "-framework CoreFoundation"
+      # The drive type behind the spill folder (src/drive-kind.*).
+      "-framework IOKit"
   )
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
   # The LGPL text and the exact build travel in the bundle's
@@ -362,6 +364,8 @@ else()
       src/payload-store.hpp
       src/spill-file.cpp
       src/spill-file.hpp
+      src/drive-kind.cpp
+      src/drive-kind.hpp
       src/stream-relay.cpp
       src/stream-relay.hpp
       src/stream-delay-controller.cpp

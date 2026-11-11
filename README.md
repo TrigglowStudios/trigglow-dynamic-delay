@@ -15,12 +15,13 @@ but haven't been run on a live stream yet, and they only have scene mode.**
 
 **Stream mode (new in 1.0.0, Windows, the default).** The plugin holds the stream OBS has already
 encoded and sends it to your platform later. Nothing is decoded or encoded again, so it costs
-almost no CPU, and the older seconds wait in an encrypted temp file on your disk: about 15 MB of
-RAM at any delay up to 600 s (measured at 6 Mbps). With it:
+almost no CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing
+written to disk) or in an encrypted temp file on your disk (the default on a hard drive, about 15 MB
+of RAM at any delay up to 600 s, measured at 6 Mbps). With it:
 
 - 1 to 600 s of delay, turned on, off, up or down while you're live, with no reconnect. Turning it
   on, viewers see the last seconds again, never anything newer. Raising it is instant once the
-  stream has run that long.
+  stream has run that long (with Memory, up to your highest preset or scene rule).
 - Every scene is delayed, so switching scenes while delayed is safe.
 - Recording, the Replay Buffer and the virtual camera stay live.
 - "Dump what viewers haven't seen": the seconds still waiting are never sent, the stream jumps to
@@ -124,23 +125,32 @@ a machine that can't keep up, the buffer drops to a lower resolution (never belo
 quality you choose) and, last, to half the capture frame rate, instead of overloading OBS or cutting
 the delay; the dock shows an amber notice while that happens.
 
-**Memory in stream mode.** The plugin keeps the last 600 s of your stream (so any raise is
-instant), but only the newest seconds and what is about to be sent stay in RAM. The rest waits in
-an encrypted temp file in your system's temp folder (the key exists only in OBS's memory), deleted
-when the stream ends. The RAM it adds, measured at 6.2 Mbps on the relay on its own (details in
-`docs/STREAM_MODE.md`):
+**Memory in stream mode.** You choose where the delay buffer lives (dock: Options > Delay buffer):
 
-| Delay | RAM | On disk |
-|---|---|---|
-| 10 s | 13 MB | 440 MB |
-| 120 s | 15 MB | 440 MB |
-| 600 s | 13 MB | 440 MB |
-| 600 s, if the disk can't be used | 454 MB | 0 |
+- **Memory:** everything stays in RAM and nothing is written to disk: your bitrate times your delay,
+  or your highest preset or scene rule if that's longer (45 MB per minute at 6 Mbps). Raising the
+  delay is instant up to that.
+- **Disk:** only the newest seconds and what is about to be sent stay in RAM. The plugin keeps the
+  last 600 s (so any raise is instant) in an encrypted temp file in your system's temp folder (the
+  key exists only in OBS's memory), deleted when the stream ends. Your whole stream is written to
+  disk while you stream: about 2.7 GB per hour at 6 Mbps, 225-600 MB on disk at a time (your
+  bitrate times 600 s).
+- **Automatic** (the default): Memory if your temp folder is on an SSD, to spare it hours of
+  constant writes, and Disk on a hard drive. If the drive type can't be told, Memory. The dock
+  shows what it found, for example "Automatic (Memory, SSD detected)", and you can always pick the
+  other one. A change applies to your next stream.
 
-On disk that's your bitrate times 600 s: about 225 MB at 3 Mbps, 450 MB at 6 Mbps, 600 MB at
-8 Mbps. If the disk can't be used (full, failing or too slow), the delay goes on with the history
-in RAM: your bitrate times the delay, or your highest preset or scene rule if that's longer (45 MB per
-minute at 6 Mbps). The dock shows the RAM and disk in use and the bitrate while you stream.
+The RAM it adds, measured at 6.2 Mbps on the relay on its own (details in `docs/STREAM_MODE.md`):
+
+| Delay | Memory | Disk: RAM | Disk: on disk |
+|---|---|---|---|
+| 10 s | about 50 MB* | 13 MB | 440 MB |
+| 120 s | 96 MB | 15 MB | 440 MB |
+| 600 s | 454 MB | 13 MB | 440 MB |
+
+\* With the default presets (10, 30 and 60 s) Memory keeps 60 s; worked out from the bitrate, not
+measured. If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM as with
+Memory. The dock shows the RAM and disk in use and the bitrate while you stream.
 
 **Memory in scene mode.** The buffer's RAM budget is half of your system RAM, between 1 GB and 24 GB (on macOS and
 Linux, where RAM isn't detected yet, a fixed 2 GB). What the buffer really takes depends on what's
