@@ -2,6 +2,19 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v0.7.3 — 2026-11-11 (Early Access)
+
+Una versión de imagen: el delay no cambia.
+
+**Antes de actualizar:** nada que hacer. Se instala como la v0.7.2; tus escenas, ajustes, atajos e
+inicio de sesión se mantienen.
+
+**Novedades:**
+- **El nuevo logo de Dynamic Delay en todos los sitios donde el plugin muestra uno:** la marca de la
+  insignia de delay que ven tus espectadores durante un delay, el icono del instalador y su logo
+  pequeño en las páginas interiores. Llevan la T de Trigglow dentro del cronómetro en lugar del
+  antiguo botón de play.
+
 ## v0.7.2 — 2026-11-02 (Early Access)
 
 Una versión de compilación: el delay no cambia en OBS, y el aviso de actualización vuelve a
