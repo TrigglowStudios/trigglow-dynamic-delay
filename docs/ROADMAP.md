@@ -2,7 +2,7 @@
 
 # Roadmap — Trigglow Dynamic Delay
 
-## v0.2.0 (MVP — this release)
+## v0.2.0 (MVP — shipped)
 - No-reconnect **buffer mode**: the streaming output is never touched, at any point, for any
   reason — the plugin delays video and audio by buffering them in system RAM and switching OBS's
   Program internally between the live scene, an optional loading scene, and a delayed wrapper
@@ -163,46 +163,93 @@ An optimization release: the delay buffer takes about half the RAM on Windows. T
 - **Tests**: 23 suites in CI (fake inter-frame codec stress and adversarial tests, the codec
   policy), plus the hardware codec over the real FFmpeg on local Windows builds.
 
+## v0.7.1 – v0.7.3 (shipped — 2026-10-20 to 2026-11-11)
+- **0.7.1**: OBS 33's plugin locations (`C:\ProgramData\obs-studio\plugins` on Windows), a check
+  of the minimum OBS version (31.1.0), Linux packages for Ubuntu, Fedora and Arch.
+- **0.7.2**: the plugin's core for Trigglow Studio (`-DTRIGGLOW_CORE_ONLY=ON`), the update check on
+  the repository's new address.
+- **0.7.3**: the global audio sources and the audio inside nested scenes or groups delayed too.
+
+Details in `CHANGELOG.md`.
+
+## v1.0.0 (2026-11-11) — out of beta
+The first stable release on Windows. macOS and Linux stay alpha (built and tested in CI, not run on
+a live stream yet).
+- **Stream mode** (Windows; alpha on macOS and Linux): the output-level delay that was listed under "Later" since 2026-09-08.
+  The plugin points OBS's stream output at a relay on `127.0.0.1` and sends the already-encoded
+  stream to the platform after the delay: no decode, no second encode, RAM = bitrate × seconds kept.
+  0–600 s changed live with no reconnect, every scene delayed, recording / Replay Buffer / virtual
+  camera live, drain on stop. Details: `docs/STREAM_MODE.md`.
+- **Dump what viewers haven't seen**, **delay by scene** (on with its own seconds, or off, per
+  scene), **three presets** with hotkeys, the **delay badge** in stream mode (up to 600 s) and
+  **settings checks** (keyframe interval, OBS's own Stream Delay). Stream mode only, except presets.
+- **Hotkeys**: Back to live, Delay +5 s / -5 s, Dump, Preset 1–3, next to the original three
+  (same names and bindings).
+- **obs-websocket control**: vendor `trigglow-dynamic-delay` with `GetStatus`, `EnableDelay`,
+  `DisableDelay`, `ToggleDelay`, `SkipToLive`, `SetDelay`, `AdjustDelay`, `DumpDelay`,
+  `ApplyPreset` and the `StatusChanged` event, for Trigglow's Stream Deck plugin.
+- **Sign-in on macOS and Linux** (the HTTP client planned as v0.6.1): libcurl with the WinHTTP
+  rules (HTTPS on 443 only, TLS 1.2+, no redirects, capped body), the sign-in in a user-only
+  (0600) file. With it, turning the delay on, Trigi and "Report a problem" work there too.
+- **Trigglow's new design** in the dock, a new overlay plate, the new Dynamic Delay logo, the
+  default "Adding delay" loading video, no more "Beta" tag.
+- **Translations**: Portuguese (Brazil) and Chinese (Simplified), next to English and Spanish.
+- **Scene mode changes the delay live and goes up to 600 s**: lowered, viewers skip forward at once;
+  raised, the picture holds (or the loading scene shows above 3 s) only for the extra seconds;
+  nothing refills from empty. The audio rings count in the RAM budget (`docs/SPEC.md` §3.3, §3.10).
+  Switching scenes while delayed stays stream mode's (§3.9); the dock says so.
+
 ## Next
-- **An HTTP client on macOS and Linux** (planned as v0.6.1, not published), so sign-in (and with it
-  Enable delay), Trigi and reports from OBS work there too, with the sign-in kept in the system's
-  keychain or secret store. Until then the plugin's account features are Windows-only.
-- **Validate the hardware storage codec on NVIDIA inside a real OBS**: NVENC shared with the
-  stream's encoder (and Enhanced Broadcasting) with zero frames skipped for encoding lag, NVDEC, the
-  VRAM it takes and the bytes per frame against the AMD figures. Quick Sync too, on Intel hardware.
-- **Then: zero copy on the GPU.** Encode straight from OBS's texture and decode into a D3D11
-  texture, so the CPU copies of each frame (readback, raw frames, the decoded pool) go away: by our
-  estimate another 50–120 MB less and less work on OBS's graphics thread. Riskier (sharing OBS's
-  D3D11 device with FFmpeg across threads), so after the HTTP client.
-- **Deduplicate captures by OBS's frame time** (`obs_get_video_frame_time()`) instead of a
-  wall-clock cell per frame interval: exactly one capture per OBS frame, with no dependence on the
-  cell's phase, so render jitter can't put two renders in one cell and lose a real frame.
-- **A smaller keep-alive render target.** While the buffer fills, keeping the live scene rendering
-  still renders it into a canvas-sized texture whose content is never used (14.7 MB at 1440p, cleared
-  every frame); a tiny target with the same projection would do.
-- **Output-level delay redesign** — the next big architectural step; see "Later" below for what it
-  involves and why it hasn't started.
-- Verify v0.6.0 and v0.7.0 live: 1440p60 output and the degradation inside a real OBS session (the
-  figures above come from offline benchmarks on an AMD CPU and GPU), and the A/V alignment with a
-  clock and a clap.
-- Saved delay presets (e.g. "Short delay 5s", "Long delay 30s"), selectable from the dock and from
-  additional hotkeys.
-- macOS/Linux **live verification** — both already build green in CI; this is about actually
-  running and confirming the plugin on those platforms, not new build-system work.
-- Revisit the assumed compression ratios (5x for MJPEG, 12x for the hardware codec since v0.7.0)
-  with the `ratio` and arena figures of the `pipeline check` line from more sessions and games. They
-  only decide how many seconds fit the budget, so raising them would buy duration, not resident
-  memory.
+- **Run stream mode live on real platforms** before calling it verified: Twitch (RTMP), Kick
+  (RTMPS), YouTube (HEVC over enhanced RTMP), with delay changes, a dump and an OBS stop mid-delay,
+  watching the platform's player. So far it is unit-tested, checked with the local relay harness and
+  run in a real OBS 33 on Windows against a local RTMP server (`docs/STREAM_MODE.md`,
+  "Verification status").
+- **Enhanced Broadcasting, SRT, RIST and WHIP in stream mode.** Today those streams fall back to
+- **Scene mode following scene switches: one shared ring for every scene** (evaluated 2026-11-11,
+  `docs/SPEC.md` §3.9). A delay filter on each top-level scene, only the Program scene (and a running
+  transition's sources) capturing into and drawing from one shared ring, audio filters writing
+  silence while their source isn't active. Needed where stream mode can't run (Enhanced
+  Broadcasting, SRT, WHIP).
+  scene mode: Enhanced Broadcasting is several tracks on one multitrack output, and SRT, RIST and
+  WHIP aren't RTMP, so the relay would need another sender for each.
+- **Code signing** (CA-issued, Windows and macOS): the real fix for the SmartScreen warning and
+  the Defender false positive in
+  [#10](https://github.com/TrigglowStudios/trigglow-dynamic-delay/issues/10). The application to
+  [SignPath Foundation](https://signpath.org/apply)'s free program for open-source projects is in
+  progress. Until then the Windows installer is signed with a self-signed certificate
+  (`.github/workflows/build-project.yaml`, "Sign Windows Installer (self-signed)"), which only
+  proves CI produced it: it removes neither the "Unknown publisher" warning nor the false positive.
+  Keep that step as a fallback once a real certificate lands.
+- **Trigglow's Stream Deck plugin with Dynamic Delay keys** (toggle, back to live, presets, +/-,
+  the delay's state on the key) over the obs-websocket vendor; the native-hotkey path stays as the
+  dependency-free option.
+- **macOS/Linux live verification** of stream mode, scene mode and the new sign-in: they build
+  green in CI (the relay also ran end to end on Linux with the local harness);
+  this is about running and confirming them on those platforms.
+- Scene mode:
+  - **Validate the hardware storage codec on NVIDIA inside a real OBS**: NVENC shared with the
+    stream's encoder (and Enhanced Broadcasting) with zero frames skipped for encoding lag, NVDEC,
+    the VRAM it takes and the bytes per frame against the AMD figures. Quick Sync too, on Intel
+    hardware.
+  - **Zero copy on the GPU.** Encode straight from OBS's texture and decode into a D3D11 texture,
+    so the CPU copies of each frame go away: by our estimate another 50–120 MB less and less work
+    on OBS's graphics thread. Riskier (sharing OBS's D3D11 device with FFmpeg across threads).
+  - **Deduplicate captures by OBS's frame time** (`obs_get_video_frame_time()`) instead of a
+    wall-clock cell per frame interval, so render jitter can't put two renders in one cell and lose
+    a real frame.
+  - **A smaller keep-alive render target** while the buffer fills (today a canvas-sized texture
+    whose content is never used: 14.7 MB at 1440p).
+  - Verify 1440p60 output and the degradation inside a real OBS session (the figures come from
+    offline benchmarks on an AMD CPU and GPU), and the A/V alignment with a clock and a clap.
+  - Revisit the assumed compression ratios (5x for MJPEG, 12x for the hardware codec) with the
+    `ratio` and arena figures of the `pipeline check` line from more sessions and games.
 
-## True-live Replay Buffer (paused — scoped, not started, 2026-09-08)
-Planned as v0.7.0 when it was scoped; v0.7.0 became the RAM release above, and this keeps no version
-number until it's picked up again.
-
-Goal: a "true-live" Replay Buffer (dedicated to Trigglow, saved via its own hotkey — OBS's native
-"Save Replay" hotkey can't be redirected to a custom output, so this was never going to reuse it)
-that keeps working while buffer mode is Active, instead of capturing the delayed wrapper scene like
-the streaming output does. Investigated 2026-09-08, deliberately paused before writing any code —
-see below.
+## True-live Replay Buffer (solved by stream mode; scene mode unchanged)
+Stream mode never touches OBS's program, so the Replay Buffer, the recording and the virtual camera
+keep the live picture while the stream is delayed. What follows is the 2026-09-08 study for **scene
+mode**, still paused: there the delay filters sit on the live scene's own sources, so any other
+output sees the delayed picture while the delay is on.
 
 - **First-pass idea, and why it's wrong.** This entry originally proposed the
   `exeldro/obs-source-record` "Branch Output" pattern verbatim: a dedicated `obs_view` +
@@ -229,59 +276,22 @@ see below.
   depends on — not a self-contained new feature next to them.
 - **Why paused rather than attempted now.** `docs/SPEC.md`'s own history (§3.3's v0.3.1/v0.3.2
   entries, §7's unresolved GPU crash) shows this exact pair of files has repeatedly surfaced subtle,
-  only-found-live bugs even from focused, delay-specific changes. Touching their internals for a
-  second, unrelated capture path risks the core "never cuts, ever" guarantee for a feature that's
-  additive, not essential. Picking this back up should start from "how do we validate the existing
-  delay path is unaffected," not just "add the second tap."
-
-## Later
-- **Output-level delay redesign** (studied 2026-09-08, not started). `obsdelay.com` buffers the
-  already-encoded bitstream and re-sends it through its own multi-destination RTMP sender, so
-  Program, scene switching, the Replay Buffer, and recording are never touched at all — with a
-  smaller memory footprint than our frame ring, since the stream's own bitstream is smaller still
-  than the buffer's MJPEG (or, since v0.7.0, high-quality HEVC) frames. Architecturally the cleanest
-  solution to the true-live Replay Buffer's goal AND to seamless multi-scene switching (see "Out of
-  scope for now" below) at once, but it means replacing OBS's native RTMP output with a custom one
-  (reconnection, keyframe handling, multi-destination sending) — multiple sessions of work and
-  meaningfully higher risk. Only worth prioritizing if the Replay Buffer's narrower fix turns out
-  not to cover real usage once it ships.
-- **CA-issued signing for Windows/macOS** (real fix for the SmartScreen/Defender false positive
-  in [#10](https://github.com/TrigglowStudios/trigglow-dynamic-delay/issues/10)) — application to
-  [SignPath Foundation](https://signpath.org/apply)'s free code-signing program for qualifying
-  open-source projects is in progress. Only a CA-vetted identity actually feeds SmartScreen's and
-  Defender's reputation systems.
-  - **Stopgap in place as of v0.3.3+**: the Windows installer is now signed with a *self-signed*
-    certificate (`.github/workflows/build-project.yaml`'s "Sign Windows Installer (self-signed)"
-    step, gated on the `WINDOWS_SELFSIGN_PFX_BASE64`/`WINDOWS_SELFSIGN_PFX_PASSWORD` repo secrets).
-    This only proves the installer wasn't tampered with after this project's own CI produced it —
-    it does **not** remove the "Unknown publisher" SmartScreen warning and does **not** stop
-    Defender's `Wacatac.B!ml` false positive, since neither trusts a self-issued identity. Keep
-    this step even after a real certificate lands, as a fallback for any build path that runs
-    without the paid/free CA cert configured.
-- A dedicated Trigglow Stream Deck plugin, in addition to the native-hotkey path (which always
-  remains available as a dependency-free option) — mainly to show ON/OFF/Filling status with color
-  directly on the Stream Deck button itself.
+  only-found-live bugs even from focused, delay-specific changes. With stream mode covering the
+  need, this only matters for the streams stream mode can't relay.
 
 ## Out of scope for now
-- Per-scene delay — a *different* delay duration configured per individual scene.
-- **Following the streamer's scene switches while delayed, without a refill gap** (investigated and
-  rejected, 2026-09-08). A first attempt made the wrapper scene retarget to whatever scene Program
-  switched to (dock-driven, then auto-following `OBS_FRONTEND_EVENT_SCENE_CHANGED`) — technically
-  correct, but every switch necessarily re-enters `Filling` first, since the newly-selected scene's
-  ring buffer starts empty: our video/audio filters only ever capture ONE source's frames at a time,
-  so "the buffer already has history for the scene you just switched to" isn't possible without
-  continuously pre-buffering every scene the user might switch to (multiplying RAM/GPU cost by scene
-  count for no benefit the rest of the time). That refill is directly at odds with this plugin's core
-  promise — "never cuts, ever" — so it was reverted rather than shipped as a compromise. Checked
-  against the reference plugins for a way around this: `exeldro/obs-dynamic-delay`'s per-source
-  filter has the identical limitation (its own issue tracker has a standing feature request for
-  buffering an invisible source's parent, i.e. exactly this gap) and `ne0lines/comp-delay-for-obs`
-  uses the same source/transition/delay 3-scene architecture we do, with no indication it solves
-  this either. Only `obsdelay.com` avoids it, and only because it never delays a specific scene's
-  frames at all — it buffers the stream's own already-composited, already-encoded bitstream
-  downstream of Program, so a scene switch is just part of that one continuous signal, never a
-  "different buffer with no history." That's the "Output-level delay redesign" already listed under
-  Later — worth revisiting only as part of that larger redesign, not as a standalone addition to the
-  current per-scene-filter architecture.
+- **Following the streamer's scene switches while delayed in scene mode, without a refill gap**
+  (investigated and rejected, 2026-09-08). Scene mode's filters only ever buffer ONE scene's
+  frames, so a switch to another scene would have to fill again from empty, which breaks the
+  "never cuts" promise; buffering every scene in advance would multiply the RAM and GPU cost by the
+  scene count. Stream mode solves it (it delays the composited, encoded stream, so a scene switch
+  is part of one continuous signal) and delay by scene covers "a different delay per scene" there.
+- **Delaying the whole program in scene mode through a private view or canvas** (evaluated
+  2026-11-11 for v1.0.0, `docs/SPEC.md` §3.9). Not safe: OBS's frontend swaps output channel 0
+  directly for quick transitions, transition overrides and the T-bar, with no event first
+  (undelayed frames on every switch); overwriting the main texture in a rendered callback misses
+  Enhanced Broadcasting's rescaled tracks; and libobs mixes the audio from the Program tree as it
+  is now, so per-source audio filters would play the delayed audio of the scene switched to,
+  leaking what a "be right back" scene hid. The shared ring under Next is the way forward.
 - External web panel as the main way to control it (product decision: everything lives natively
   in OBS).

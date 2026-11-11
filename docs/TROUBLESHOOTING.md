@@ -62,7 +62,83 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
 - **Two copies:** a package and the `.tar.xz` install at the same time. Keep one: remove the package,
   or run `./install.sh --uninstall`.
 
-## The "Enable delay" button is greyed out
+## Stream mode (v1.0.0, Windows)
+
+### The dock says this stream can't use stream mode
+When a stream starts, the plugin checks it can relay it. If not, the stream goes out exactly as OBS
+sends it, the dock says why, and scene mode (under "Scene mode (compatibility)") handles the delay
+for that stream. The log has `this stream can't use stream mode (<reason>: output …, protocol …)`.
+
+| Dock says | Why | What to do |
+|---|---|---|
+| "This stream uses Enhanced Broadcasting…" | Enhanced Broadcasting sends several tracks on one multitrack output | Turn Enhanced Broadcasting off in `Settings → Stream`, or use scene mode |
+| "Your service doesn't stream over RTMP or RTMPS (SRT, WHIP...)" | SRT, RIST and WHIP aren't relayed yet | Use an RTMP or RTMPS server if your platform has one, or scene mode |
+| "This stream doesn't use OBS's RTMP output" | another output plugin streams | Scene mode |
+| "Your stream server isn't an rtmp:// or rtmps:// address" | the server in `Settings → Stream` can't be read as one | Check the server address |
+| "Stream mode couldn't start for this stream" | the relay couldn't start (the log has `couldn't start the relay (…); this stream goes out without it`) | Stop and start the stream again; if it repeats, report a problem with the log |
+| "Stream mode isn't available on this system yet" | macOS or Linux (no relay there yet) | Scene mode |
+
+### The delay moves in big steps, or a change takes seconds to apply
+The delay can only change at a keyframe, so it moves in steps of the keyframe interval. With
+"auto" (0) encoders use 4–10 s; the dock warns ("Keyframe interval is on auto…" or "Keyframe
+interval is 8 s…"). Set **Keyframe Interval** to 2 s in `Settings → Output` (Advanced output
+mode). The check runs when the stream starts, so the warning updates on the next stream.
+
+### Raising the delay doesn't take effect at once
+Up to **Keep for instant raises** (120 s by default) the plugin already holds the seconds it needs.
+Above that, the history doesn't reach back far enough yet: the sender holds until the oldest kept
+keyframe is old enough, so viewers' picture pauses for the difference. Raise "Keep for instant
+raises" before going live if you plan big raises (it costs the bitrate times those seconds of RAM).
+
+### "OBS's own Stream Delay … is on"
+`Settings → Advanced → Stream Delay` adds its fixed delay on top of Dynamic Delay's, and holds
+OBS's output back before it reaches the relay. Turn it off and use this one.
+
+### The dock shows "Reconnecting" or "Failed"
+- The relay connects to your OBS service and retries on its own (after 2, 4, 8 and 15 s, at the
+  delay). **Last problem:** in the dock and the log (`<host>: <error>; retrying in N s`) say why.
+- Check the server and the stream key in `Settings → Stream`: stream mode sends to exactly that.
+
+### The log says "the upload fell behind; jumped back to the … delay"
+Your upload couldn't keep up with the stream for more than 4 s. Instead of letting the delay grow,
+the sender jumped to the delay again at the next keyframe: viewers skip a few seconds. Lower the
+bitrate or check your connection.
+
+### OBS's dropped-frames counter stays at 0
+Expected: OBS sends the stream to the relay on your computer, so its own congestion counter only
+sees that local link. Watch the connection's state and rate in the dock instead.
+
+### I stopped streaming but the platform still shows me live
+With **When I stop streaming, send the seconds viewers haven't seen** on (the default), the plugin
+keeps sending the last seconds of the delay ("Stream stopped: sending the last 30 s"), then stops.
+**Stop sending now** cuts it; starting a new stream or closing OBS cuts it too.
+
+### Turning the delay on before streaming made the stream start late
+That's what "Delay armed: your next stream starts 30 s late" means: with the delay on, the first
+packet goes out after the delay, so the platform shows you live that much later.
+
+### Dump didn't do anything
+It only works while streaming in stream mode with the delay on (`DumpDelay` answers
+`dumped: false` otherwise). After a dump the dock says "Dumped: the delay comes back in N s".
+
+### A scene rule or preset didn't apply
+Scene rules only run in stream mode, when OBS's program switches scene and when a stream starts;
+the dock shows the last one applied. Turning the delay on, by a rule or a preset, needs the free
+account like the button. In scene mode a preset only sets the seconds (up to 60) and enables.
+
+### The delay badge shows up in my recording
+In stream mode the badge is drawn over OBS's program, which the recording also takes, so while the
+delay is on the recording shows it too. Untick **Show the delay badge to viewers** if you don't
+want it in either.
+
+### Reporting a stream mode problem
+The log lines start with `[obs-trigglow-dynamic-delay]` and the component `stream-mode` or
+`stream-relay`: `relay listening on 127.0.0.1:<port>, …, delay Ns, keeps Ns` when a
+stream starts, `<host>: delay now Ns (replays/skips N s)` on each change, the settings checks, and
+the connection's errors. The platform is named by its host only; your stream key isn't written to
+the log.
+
+## Scene mode: the "Enable delay" button is greyed out
 - `Enable delay` stays disabled until you've signed in with your free Trigglow account and picked a
   **live scene** in the dock. While it's disabled, a checklist under it shows which of the two is
   missing. The plugin's own helper scene ("Trigglow Delay Buffer (auto)") is never offered as a
@@ -70,7 +146,7 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
 - While the delay is preparing or on, `Enable delay` is replaced by `Disable delay`: there is only
   ever one button.
 
-## I can't change the delay seconds, the quality or the scenes
+## Scene mode: I can't change the delay seconds, the quality or the scenes
 - **This is on purpose.** While the delay is preparing (`Preparing delay`) or on (`Delay on`), the
   live and loading scene pickers, the delay seconds and the minimum quality are locked: they show a
   lock instead of their arrows, and the line under them reads "Turn the delay off to change it."
@@ -96,9 +172,11 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
   the short message the dock can show.
 
 ## Signing in from the dock
-- **Sign-in works only on Windows for now (v0.6.0 and v0.7.0).** On macOS and Linux the plugin has
-  no HTTP client yet (planned next, see `docs/ROADMAP.md`), so sign-in, and with it `Enable delay`,
-  Trigi and reports from OBS, aren't available there.
+- **Sign-in works on Windows, and since v1.0.0 on macOS and Linux too** (over the system's
+  libcurl). The macOS and Linux path is built by CI but hasn't been tried on a real Mac or Linux
+  machine yet: if it fails there, the dock shows one of the messages below and the OBS log has the
+  details; please report it. On Linux the packages pull in libcurl; the `.tar.xz` needs
+  `libcurl.so.4` installed (`ldd` on the plugin shows it).
 - **How it goes.** Press **Sign in**: your browser opens trigglow.com (sign in or create a free
   account there) and the dock shows "The page must show the code KD7F-29QM." (your code is
   different). Check that the page shows the same code and press **Confirm**; the dock picks it up by
@@ -133,6 +211,10 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
   Windows user, apart from the plugin's settings. Another Windows user, or a copy of the files on
   another computer, can't use it: if it can't be decrypted, the plugin drops it and asks you to sign
   in. Your email isn't stored, and the sign-in is never attached to a report.
+- On macOS and Linux (v1.0.0) it's in `trigglow-auth.dat` in the plugin's config folder, a file only
+  your user can read and write (mode 0600), not encrypted, the way OBS keeps your stream key in
+  `service.json`. It only works for the plugin's own calls; Sign out or trigglow.com's connected
+  apps revoke it.
 - **Sign out** in the dock revokes it on trigglow.com and deletes it from this computer (the local
   copy is deleted even without a connection).
 - **From trigglow.com**, for example if you no longer have that computer: Settings → Active sessions
@@ -154,9 +236,9 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
   the dock asks you to sign in, do it once.
 
 ## Asking Trigi (Report a problem)
-- **Trigi doesn't show up and the dialog opens on the ticket form.** Trigi needs Windows, a
-  signed-in account and a plugin version it supports. Signed out, the dialog offers **Sign in to ask
-  Trigi** and **Send a report without Trigi**; on macOS and Linux, use the web form. If Trigi is off
+- **Trigi doesn't show up and the dialog opens on the ticket form.** Trigi needs a signed-in
+  account and a plugin version it supports (on macOS and Linux, v1.0.0 or later). Signed out, the
+  dialog offers **Sign in to ask Trigi** and **Send a report without Trigi**. If Trigi is off
   for the moment, the form says "Trigi isn't available right now. Your message goes straight to the
   support team." and your message reaches a person.
 - **What each message means:**
@@ -183,7 +265,7 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
   pages (support on trigglow.com, the update on GitHub).
 
 ## Sending a report
-- **Signed in (Windows)**: the ticket is created from your account, so you only write what happened
+- **Signed in**: the ticket is created from your account, so you only write what happened
   (the subject is optional). To send the team OBS's log, open **See what is sent**, check it, and
   then tick **Attach OBS's log** (it starts unticked and can't be ticked before you've seen it):
   paths with your Windows user name, URLs, keys, emails and IPs are hidden, but names of scenes,
@@ -201,9 +283,10 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
   (check it first: names of scenes, sources, audio devices and windows may remain).
 - **"Too many reports in a row. Try again in a few minutes."**: wait and send it again.
 - **"Your Trigglow session has expired. Sign in again from the dock."**: sign in again and send it.
-- **macOS and Linux**: the form is shown disabled (v0.6.0 and v0.7.0). Use
-  [trigglow.com/support](https://www.trigglow.com/support) and attach OBS's log yourself (check it
-  first: the plugin can't hide personal data from it there).
+- **macOS and Linux**: since v1.0.0 Trigi and the form work there too, but the plugin can't find
+  and attach OBS's log on those systems yet. If the team needs it, attach it yourself to the ticket
+  on [trigglow.com/support](https://www.trigglow.com/support) (check it first: the plugin can't
+  hide personal data from it there). Before v1.0.0 the form was shown disabled.
 
 ## "Encoding overloaded" (or lagged frames) as soon as the delay is on
 
@@ -545,7 +628,7 @@ drops frames (a repeated frame on screen) instead of growing.
   fills again first).
 - Don't delete or rename the plugin's scene and filters; to stop the delay, use the dock.
 
-## I switched Program to my live scene and the stream went out without delay (known issue)
+## I switched Program to my live scene and the stream went out without delay (scene mode, known issue)
 - While the delay is on, Program has to stay on the scene the plugin chose: the loading scene while
   it fills, then its helper scene "Trigglow Delay Buffer (auto)", which holds your live scene with
   the delay filter. If you click your live scene in OBS's scene list (or a Stream Deck/obs-websocket
@@ -553,6 +636,7 @@ drops frames (a repeated frame on screen) instead of growing.
   delay**. This was already the case before v0.6.0.
 - Leave Program on the scene the plugin chose while the delay runs. To change scenes, turn the delay
   off from the dock first, switch, and turn it on again (the buffer fills again).
+- Stream mode doesn't have this problem: it delays every scene, so you can switch freely.
 
 ## The buffer never seems to fill / `Preparing delay` never reaches `Delay on`
 - Check the OBS log for `[obs-trigglow-dynamic-delay]`-prefixed warnings around the time you pressed
@@ -577,10 +661,13 @@ drops frames (a repeated frame on screen) instead of growing.
 
 ## The hotkey doesn't do anything
 - Confirm you assigned it in `Settings → Hotkeys` (searching for "Trigglow") — the plugin registers
-  3 hotkeys (`Trigglow: Toggle Dynamic Delay`, `Trigglow: Enable Dynamic Delay`,
-  `Trigglow: Disable Dynamic Delay`; in Spanish, `Trigglow: Activar/desactivar Dynamic Delay`,
-  `Trigglow: Activar Dynamic Delay` and `Trigglow: Desactivar Dynamic Delay`) with no key assigned
-  by default.
+  10 hotkeys, none with a key by default: `Trigglow: Toggle Dynamic Delay`, `Enable`, `Disable`,
+  `Back to live (delay off)`, `Delay +5 s`, `Delay -5 s`, `Dump what viewers haven't seen` and
+  `Delay preset 1` to `3` (translated when OBS is in another language; in Spanish,
+  `Trigglow: Activar/desactivar Dynamic Delay`…).
+- The hotkeys go to stream mode when it handles the current or next stream, to scene mode
+  otherwise. In scene mode `Dump` does nothing; `Delay +5 s` / `-5 s` change the delay live in both modes
+  (1–600).
 - Try the dock button first to rule out an issue with the plugin's own configuration (e.g. no live
   scene chosen, which also blocks the hotkey's Enable/Toggle from doing anything), as opposed to the
   hotkey/Stream Deck binding itself.
@@ -588,6 +675,9 @@ drops frames (a repeated frame on screen) instead of growing.
 ## The Stream Deck button doesn't do anything
 - Verify that the combination configured in Stream Deck exactly matches the one assigned in
   OBS.
+- With Trigglow's Stream Deck plugin (obs-websocket): check that obs-websocket is on in OBS
+  (`Tools → WebSocket Server Settings`), that the host, port and password in the Stream Deck plugin
+  match, and that the OBS log says `obs-websocket vendor "trigglow-dynamic-delay" registered`.
 - If the button switches scenes or toggles filters by name instead of using the hotkey, see "After
   updating, a Stream Deck or obs-websocket action no longer works" above.
 - See `docs/STREAM_DECK.md` for the full step-by-step flow.
@@ -596,8 +686,8 @@ drops frames (a repeated frame on screen) instead of growing.
 - Check `docs/BUILD_VALIDATION.md` — it documents what's been verified (real CI builds against the
   real OBS SDK and Qt6 on Windows/macOS/Ubuntu, plus live testing inside a real OBS instance on
   Windows) and what hasn't (live testing on macOS/Linux, and a confirmed fix for the GPU
-  Device-Remove/Reset risk described in `docs/SPEC.md` §7). The unit tests (23 suites, no OBS
-  needed) build with `-DTRIGGLOW_BUILD_TESTS=ON` or on their own with `cmake -S tests -B
+  Device-Remove/Reset risk described in `docs/SPEC.md` §7). The unit tests (no OBS needed, stream
+  mode's `packet_delay_core_tests` among them) build with `-DTRIGGLOW_BUILD_TESTS=ON` or on their own with `cmake -S tests -B
   build_tests`, and CI runs them on every platform; a 24th, `hw_storage_codec_tests`, is added on
   Windows when the plugin's FFmpeg is already in `.deps` (a local build of the plugin).
 - A compile error on your own machine is valuable information — it's likely a difference between
@@ -605,7 +695,10 @@ drops frames (a repeated frame on screen) instead of growing.
   with the full error log.
 
 ## I don't know if the problem is the plugin or my streaming configuration
-- Disable the plugin (temporarily remove it from the plugins folder) and confirm that streaming
-  works fine without it. If the problem persists without the plugin, it's not the plugin's fault —
-  and this is a particularly clean test for this plugin specifically, since it never touches the
-  streaming output at all; if you have streaming trouble, it did not cause it.
+- First untick **Use stream mode** in the dock (it applies from the next stream): OBS then streams
+  to your platform directly again, as without the plugin. If the problem goes away, it's in stream
+  mode: report it with the OBS log.
+- Then disable the plugin (temporarily remove it from the plugins folder) and confirm that
+  streaming works fine without it. If the problem persists without the plugin, it's not the
+  plugin's fault. Scene mode never touches the streaming output at all, so with stream mode off,
+  the plugin can't cause connection trouble.

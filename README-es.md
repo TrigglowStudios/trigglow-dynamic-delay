@@ -2,96 +2,99 @@
 
 # Trigglow Dynamic Delay for OBS
 
-Plugin nativo de OBS Studio que retrasa el **vídeo y el audio de tu stream juntos**, un número
-configurable de segundos, desde un botón, una hotkey nativa de OBS o un Stream Deck — **sin que el
-output de streaming se toque nunca.** Sin reconexión, sin corte, en ningún momento, por ningún
-motivo. Sin app externa, sin panel web, sin proceso aparte: todo vive dentro del propio proceso de
-OBS. **Estado: v1.0.0 — estable en Windows; las versiones de macOS y Linux siguen en alpha (aún no probadas en directo).**
+Plugin nativo de OBS Studio que retrasa lo que ven tus espectadores un número configurable de
+segundos, **vídeo y audio juntos**, desde el dock, un atajo nativo de OBS, obs-websocket o un
+Stream Deck, **sin que tu directo se reconecte nunca.** Sin app externa, sin panel web, sin proceso
+aparte: todo vive dentro del propio proceso de OBS, y tu stream va directamente de tu ordenador a tu
+plataforma.
 
-A partir de v0.3.0, el ring buffer de RAM se comprime de verdad con MJPEG en Windows y Linux
-(FFmpeg vendorizado), con un fallback automático y seguro a almacenamiento sin comprimir si el codec
-no está disponible — esto nunca baja la calidad mínima elegida. Los slots del ring también reservan
-ahora RAM a un tamaño presupuestado en vez del techo bruto completo, creciendo solo cuando un frame
-concreto necesita más espacio. Medido en una sesión real de 30s@1080p60: el uso de RAM del buffer
-pasó de ~6.3GB a ~2.9GB. El ratio de compresión exacto depende mucho del contenido y todavía no se
-ha medido contra gameplay real (macOS todavía no forma parte de esto — sigue funcionando exactamente
-igual que antes, sin comprimir). Ver `docs/SPEC.md` para el detalle técnico completo.
+**Estado: 1.0.0. Estable en Windows. Las versiones de macOS y Linux están en alpha: compilan y
+pasan la CI, pero aún no se han usado en un directo, y solo tienen el modo escena.**
 
-La v0.3.1 arregla que los selectores de escena del dock aparecieran en blanco al abrir OBS por
-primera vez o reinstalar el plugin (los ajustes guardados estaban bien, la interfaz simplemente
-todavía no los restauraba — ver `docs/SPEC.md` §3.3), y le da al instalador de Windows branding real
-de Trigglow en vez de los gráficos genéricos de Inno Setup.
+## Dos formas de poner delay
 
-La v0.3.2 arregla que el audio se notara claramente por detrás del vídeo en delays largos o de alta
-calidad (30s+, 1080p): el vídeo acorta en silencio su propia duración real de buffer cuando el
-presupuesto de RAM no da para el pedido completo, pero el audio seguía guardando siempre los
-segundos completos — ambos se desincronizaban exactamente por esa diferencia. El audio ahora se
-ajusta a lo que el vídeo realmente puede entregar (ver `docs/SPEC.md` §3.3).
+**Modo stream (nuevo en la 1.0.0, Windows, el modo por defecto).** El plugin guarda el stream que
+OBS ya ha codificado y lo envía a tu plataforma más tarde. No se decodifica ni se vuelve a
+codificar nada, así que casi no gasta CPU, y su RAM es tu bitrate por los segundos guardados: unos
+45 MB por minuto a 6 Mbps, 90 MB con los 120 s que guarda por defecto. Con él:
 
-La v0.3.3 añade una puerta de cuenta gratuita antes de Enable (ver `docs/ACCOUNT_GATE.md`) — sigue
-siendo 100% gratis, solo un inicio de sesión único.
+- De 1 a 600 s de delay, que activas, quitas, subes o bajas en directo, sin reconectar. Al
+  activarlo, los espectadores vuelven a ver los últimos segundos, nunca nada más nuevo.
+- Todas las escenas van con delay, así que puedes cambiar de escena con el delay activo.
+- La grabación, el Replay Buffer y la cámara virtual siguen en directo.
+- "Borrar lo que aún no se ha emitido": los segundos que aún esperan no se envían nunca, el stream
+  salta al directo y el delay vuelve solo.
+- Delay por escena (activado en tu escena de juego, quitado en la de charla), tres presets, la
+  insignia de delay para los espectadores y comprobaciones de los ajustes de OBS que lo empeoran
+  (el intervalo de fotogramas clave, el Retardo de la transmisión propio de OBS).
+- Al parar el directo, se siguen enviando los segundos que los espectadores aún no han visto
+  (opcional).
 
-La v0.4.0 añade un botón **"Reportar un problema"** en el dock (crea un ticket de soporte real con
-el log actual de OBS adjuntado automáticamente), un **chequeo de actualizaciones dentro del
-plugin** contra las releases de GitHub de este repositorio, y **localización real** (el dock, los
-diálogos, los nombres de filtro/hotkey y los mensajes de estado ahora siguen el idioma configurado
-en OBS en vez de estar fijos en español). También reajusta la suposición de compresión del ring de
-RAM usando la primera medición real de ratios de compresión sobre gameplay en vivo (~11-15x, no el
-3x asumido de forma conservadora desde v0.3.0) — la memoria total medida del proceso de OBS a
-30s/1080p60 bajó de ~2.8GB a ~2.1GB — y rediseña la disposición del dock. Ver `CHANGELOG-es.md`
-para todo lo anterior.
+Funciona con la salida RTMP o RTMPS propia de OBS y cualquier servicio que la use (Twitch, YouTube,
+Kick, TikTok, servidores personalizados). Enhanced Broadcasting, SRT, RIST y WHIP pasan al modo
+escena. Detalles: `docs/STREAM_MODE-es.md`.
 
-La v0.5.0 añade un **overlay "Delay Ns"** opcional (con selector de cuatro esquinas), un solo botón
-Activar/Desactivar y un dock responsivo, y corrige que el delay de vídeo se desviara del tiempo real
-(ahora sigue el reloj igual que el audio), que se ignorara la escena en directo elegida al reutilizar
-la escena envoltorio, y que el instalador de Windows no incluyera el idioma español. Ver
-`CHANGELOG-es.md`.
+**Modo escena (todas las plataformas; "Modo escena (compatibilidad)" en el dock).** El plugin
+guarda en RAM tu escena en directo ya renderizada (comprimida con el HEVC por hardware de tu GPU en
+Windows o en MJPEG, sin comprimir en macOS) y la reproduce de 1 a 600 s más tarde en una escena
+auxiliar (los segundos cambian en directo); el output de streaming no se toca nunca. Gasta más RAM y CPU (tabla de abajo), pero
+funciona con cualquier salida, y es lo que usan los directos que el modo stream no puede reenviar. Detalles: `docs/SPEC-es.md`.
 
-La v0.6.0 corrige que OBS mostrara **"Encoding overloaded" (sobrecarga al codificar)** en cuanto se
-activaba el delay con un lienzo mayor que la salida (p. ej. lienzo 2560x1440, salida 1920x1080): el
-buffer nunca se guarda por encima de la resolución de salida de OBS, y la compresión y la
-descompresión se ejecutan en hilos propios del plugin en vez de en el hilo gráfico de OBS — a
-1440p60 el trabajo del plugin ahí baja de ~14/17 ms a ~1,2–1,7/1,6–2,1 ms por frame (p50/p95,
-benchmark fuera de OBS), así que **la salida 1440p a 60 fps está soportada**. Si tu equipo no llega,
-el plugin baja la calidad del buffer paso a paso (nunca por debajo de tu calidad mínima, nunca
-cortando el delay) y lo dice en el dock. Además usa menos RAM (~0,6–0,8 GB en vez de ~1,9 GB para
-30 s a 1440p60), mantiene audio y vídeo exactamente con el mismo delay, apaga de verdad los filtros
-de delay que quedaban encendidos al cerrar OBS estando Activo, y trae un dock, un diálogo de reporte
-y un overlay del directo rediseñados y alineados con trigglow.com. Los objetos que gestiona el plugin
-pasan de "(no tocar)" a "(auto)": actualiza cualquier acción de Stream Deck u obs-websocket que use
-los nombres antiguos; el overlay del directo va firmado "By Trigglow". La calidad mínima llega
-ahora hasta 1440p (2K) y 2160p (4K). (Se preparó un hotfix v0.5.1 que nunca se publicó; forma parte
-de la v0.6.0.)
-Ver `CHANGELOG-es.md` y `docs/TROUBLESHOOTING-es.md`.
+## Cómo funciona
 
-La v0.6.0 también trae a **Trigi**, el asistente de soporte con IA de Trigglow, a "Reportar un
-problema" (Windows, con sesión iniciada): pregunta por Dynamic Delay en el diálogo y convierte la
-conversación en un ticket si no lo resuelve. El log de OBS nunca se envía a la IA, y los datos
-técnicos de OBS son opcionales, con vista previa. **El inicio de sesión es nuevo y más seguro** (un
-código que comparar en trigglow.com, un inicio de sesión propio del plugin cifrado para tu usuario
-de Windows, que Cerrar sesión revoca), los reportes van a tu cuenta con el log de OBS redactado y
-solo si quieres, y las conexiones de red del plugin se endurecen. **Actualizar es obligatorio: en
-cuanto se publique la v0.6.0, la v0.5.x y anteriores ya no podrán iniciar sesión, y las sesiones
-que ya tienen dejarán de funcionar tras un periodo de transición.** El inicio de sesión, Trigi y los
-reportes desde OBS solo funcionan en Windows (también en la v0.7.0); macOS y Linux los tendrán con
-el cliente HTTP previsto a continuación (`docs/ROADMAP-es.md`). Ver `docs/FAQ-es.md`.
+```
+Modo stream
 
-La v0.7.0 es una versión de optimización: **en Windows el buffer del delay ocupa más o menos la
-mitad de RAM.** Los frames que esperan el delay se guardan con el encoder de vídeo por hardware de
-tu GPU (HEVC con NVENC, AMF o Quick Sync, o H.264 si la GPU no tiene HEVC) y también se decodifican
-en la GPU, en vez de comprimirse uno a uno como imágenes MJPEG. A 1440p60 el buffer pasa de ~675 MB
-a ~325 MB con 30 s, y de ~1,2 GB a ~520 MB con 60 s (medido fuera de OBS con una GPU AMD; NVENC de
-NVIDIA aún no está medido). La imagen con delay se parece más a la original y el plugin usa menos
-CPU. Para no provocar "Encoding overloaded" cuando el buffer comparte el motor de vídeo con el
-encoder de OBS, baja su resolución si ese motor se satura y vuelve a MJPEG al momento si OBS empieza
-a saltarse frames, sin tocar el delay. Sin encoder de hardware guarda en MJPEG como hasta ahora. Sin
-controles ni avisos nuevos; un ajuste oculto, `buffer_codec`, fuerza MJPEG para soporte. Linux y
-macOS no cambian. Ver `CHANGELOG-es.md` y la tabla de RAM de `docs/FAQ-es.md`.
+  escenas de OBS -> encoder de OBS -> salida RTMP de OBS --rtmp://127.0.0.1:<puerto>--> relay (en OBS)
+                                            |                                               |
+                     grabación, Replay Buffer, cámara virtual               historial de paquetes en RAM
+                     (en directo, sin tocar)                                (sin decodificar ni codificar)
+                                                                                            |
+                                                              el emisor envía el paquete p en
+                                                              llegada(p) + delay, por RTMP/RTMPS
+                                                              -> tu servicio de OBS (Twitch, YouTube...)
 
-Antes de nada, lee `docs/SPEC.md` (especificación técnica completa de cómo funciona realmente el
-modo buffer, y por qué el enfoque obvio de "simplemente cambiar el delay nativo de OBS en directo"
-se probó y se descartó) y `docs/BUILD_VALIDATION.md` (qué se verificó realmente y qué no, en esta
-primera entrega).
+Modo escena (todas las plataformas)
+
+  escena en directo -> filtros de delay de vídeo/audio -> ring en RAM (HEVC o MJPEG) -> escena auxiliar
+                    -> Programa de OBS -> encoders de OBS -> tu servicio (el output no se toca)
+```
+
+- **`StreamDelayController`** (`src/stream-delay-controller.*`) escucha los eventos del frontend de
+  OBS. Cuando un directo va a empezar y es apto (el `rtmp_output` de OBS, RTMP o RTMPS, sin Enhanced
+  Broadcasting), lee el servidor y la clave de tu servicio, arranca el relay y apunta **esa salida**
+  al relay con un servicio privado. Tus ajustes de emisión guardados no cambian nunca.
+- **`StreamRelay`** (`src/stream-relay.*`, avformat de FFmpeg, solo Windows) escucha solo en
+  `127.0.0.1`, guarda los paquetes FLV según llegan, sin decodificarlos, y lleva el emisor
+  hacia tu servicio de OBS, con su conexión, sus reintentos y su estado.
+- **`PacketHistory` / `SinkScheduler`** (`src/packet-delay-core.*`, puros y con tests) deciden qué
+  envía el emisor: un cambio de delay empalma en el keyframe adecuado más cercano y reescribe los
+  timestamps, así que la plataforma ve un único stream continuo.
+- **`BufferModeController`** (`src/buffer-mode-controller.*`) lleva el modo escena: los filtros de
+  delay, el ring buffer, la escena auxiliar, la cuenta atrás de llenado y la escalera de
+  degradación.
+- **`DelayRouter`** (`src/delay-router.*`) es la única entrada para los atajos y obs-websocket: cada
+  orden va al modo stream cuando este lleva los controles, y al modo escena si no.
+- El **dock** (`src/settings-ui.*`, `src/stream-mode-panel.*`) muestra los dos, con el modo stream
+  arriba y el modo escena plegado debajo.
+- **Inicio de sesión** (`src/auth-*`, `src/api-client.*`, `src/win-http.*`, `src/token-store.*`): la
+  cuenta gratuita que necesitas para activar el delay, por WinHTTP en Windows y libcurl en macOS y
+  Linux.
+
+El mapa completo de archivos está en [Estructura del proyecto](#estructura-del-proyecto).
+
+## Versiones anteriores
+
+La 1.0.0 es la primera versión estable; todo lo anterior era Early Access. En resumen: la 0.3
+comprimió el buffer de RAM (MJPEG), la 0.3.3 añadió la puerta de cuenta gratuita, la 0.4 trajo
+"Reportar un problema", el aviso de actualizaciones y las traducciones, la 0.5 la insignia de delay,
+la 0.6 el soporte de 1440p60, la escalera de calidad adaptativa, Trigi y el nuevo inicio de sesión,
+y la 0.7 el HEVC por hardware de la GPU para el buffer en Windows (más o menos la mitad de RAM) y
+las ubicaciones de plugins de OBS 33. Todos los cambios, con cifras: `CHANGELOG-es.md`.
+
+Antes de cambiar el modo escena, lee `docs/SPEC-es.md` (cómo funciona el modo buffer, y por qué se
+probó y se descartó cambiar en directo el delay propio de OBS) y `docs/BUILD_VALIDATION.md` (qué se
+verificó y qué no). Para el modo stream, `docs/STREAM_MODE-es.md`.
 
 ## Requisitos de uso
 
@@ -105,6 +108,7 @@ ha probado en directo. El mínimo se define en un único sitio, el `obsCompat` d
 
 | Plugin | OBS mínimo | Probado hasta | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.0.0 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.2 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.0 | 31.1.0 | 32.2.2 | Instalador, `.zip` ("Legacy" en OBS 33) | `.pkg` | `.deb`, solo Ubuntu 24.04 con OBS 32.2 |
@@ -123,8 +127,20 @@ núcleos/16 hilos). En un equipo que no llega, el buffer baja a menos resolució
 la calidad mínima que elijas) y, como último paso, a la mitad de fps de captura, en vez de
 sobrecargar OBS o cortar el delay; mientras tanto el dock muestra un aviso ámbar.
 
-**Memoria.** El presupuesto de RAM del buffer es la mitad de la RAM del sistema, entre 1 GB y 24 GB
-(en macOS y Linux, donde todavía no se detecta la RAM, 2 GB fijos). Lo que ocupa de verdad depende
+**Memoria en el modo stream.** El bitrate de tu stream por los segundos guardados ("Guardar para
+subidas al instante", 120 s por defecto, o el delay si es mayor), más dos intervalos de fotogramas
+clave. Nada más crece con el delay:
+
+| Bitrate | 30 s | 60 s | 120 s (lo guardado por defecto) | 600 s |
+|---|---|---|---|---|
+| 3 Mbps | 11 MB | 22 MB | 45 MB | 225 MB |
+| 6 Mbps | 22 MB | 45 MB | 90 MB | 450 MB |
+| 8 Mbps | 30 MB | 60 MB | 120 MB | 600 MB |
+
+El dock muestra la RAM en uso y el bitrate mientras emites.
+
+**Memoria en el modo escena.** El presupuesto de RAM del buffer es la mitad de la RAM del sistema,
+entre 1 GB y 24 GB (en macOS y Linux, donde todavía no se detecta la RAM, 2 GB fijos). Lo que ocupa de verdad depende
 de lo que haya en pantalla y de cómo se guarde. Medido fuera de OBS con contenido tipo gameplay a
 60 fps (solo el buffer; el audio suma unos 11 MB por fuente con sonido para 30 s):
 
@@ -140,10 +156,15 @@ segundos que pides no caben a tu calidad mínima, se guardan menos segundos (el 
 de activarlo). La compresión necesita FFmpeg, que va incluido en Windows y Linux; en macOS el buffer
 se guarda sin comprimir. Detalles en `docs/FAQ-es.md`.
 
-**Una cuenta gratuita de trigglow.com, en Windows.** `Activar delay` necesita que inicies sesión
-una vez desde el dock (en tu navegador; el plugin sigue siendo 100% gratis). Por ahora el inicio de
-sesión solo funciona en Windows (v0.6.0 y v0.7.0): macOS y Linux todavía no tienen el cliente HTTP
-del plugin, previsto a continuación (ver `docs/ROADMAP-es.md`). Ver `docs/ACCOUNT_GATE.md`.
+**Una cuenta gratuita de trigglow.com.** Activar el delay necesita que inicies sesión una vez desde
+el dock (en tu navegador; el plugin sigue siendo 100% gratis), en los dos modos. Desde la 1.0.0 el
+inicio de sesión funciona también en macOS y Linux (con la libcurl del sistema); antes era solo de
+Windows. Ver `docs/ACCOUNT_GATE-es.md`.
+
+**Para el modo stream:** Windows, macOS o Linux (en alpha en macOS y Linux), la salida RTMP o RTMPS propia de OBS (los ajustes de "Emisión" de
+siempre, con cualquier servicio RTMP o un servidor rtmp:// o rtmps:// personalizado) y Enhanced
+Broadcasting desactivado. Se recomienda un intervalo de fotogramas clave de 2 s
+(`Ajustes → Salida`): el delay se mueve en pasos de ese tamaño.
 
 ## Uso de la red y privacidad
 
@@ -154,8 +175,12 @@ del plugin, previsto a continuación (ver `docs/ROADMAP-es.md`). Ver `docs/ACCOU
   `api.trigglow.com`. El plugin solo abre sus propias páginas fijas de www.trigglow.com y este
   repositorio en GitHub, en tu navegador.
 - **Cómo**: solo HTTPS, sin seguir redirecciones, el inicio de sesión solo se envía a
-  `api.trigglow.com`, se guarda cifrado para tu usuario de Windows y nunca se escribe en el log de
-  OBS, igual que los códigos de inicio de sesión, los IDs y lo que escribes a Trigi.
+  `api.trigglow.com`, se guarda cifrado para tu usuario de Windows (en macOS y Linux, en un archivo
+  que solo puede leer tu usuario, modo 0600) y nunca se escribe en el log de OBS, igual que los
+  códigos de inicio de sesión, los IDs y lo que escribes a Trigi.
+- **El modo stream** envía tu stream directamente de tu ordenador al servicio que tengas en OBS: el
+  relay solo escucha en `127.0.0.1`, lee tu servidor y tu clave de OBS al empezar el directo sin
+  guardarlos en ningún otro sitio, y no hay ningún servidor de Trigglow por medio.
 - **Trigi** recibe lo que escribes y, solo si lo marcas, un pequeño conjunto de cifras y estados
   técnicos de OBS (nunca nombres, rutas, URLs ni claves), que ves antes de enviarlo. **El log de
   OBS nunca se envía a la IA**; solo se adjunta a un ticket si marcas su casilla, cosa que puedes
@@ -175,11 +200,12 @@ sin modificar su sistema de build (`cmake/`, `CMakePresets.json`, `.github/`) sa
 |---|---|
 | Windows | Visual Studio 17 2022, CMake ≥ 3.30.5 |
 | macOS | Xcode 16.0, CMake ≥ 3.30.5 |
-| Linux (Ubuntu 24.04) | CMake ≥ 3.28.3, Ninja, GCC 13, `nasm`, `jq`, Qt 6.4: `.github/scripts/linux/install-build-deps.sh` |
+| Linux (Ubuntu 24.04) | CMake ≥ 3.28.3, Ninja, GCC 13, `nasm`, `jq`, Qt 6.4, libcurl (`libcurl4-openssl-dev`): `.github/scripts/linux/install-build-deps.sh` |
 
-**Windows es la plataforma prioritaria para v0.7.0** (así lo pidió el producto); macOS/Linux
-compilan en verde en CI con el propio sistema de build de la plantilla, pero no se han probado en
-directo en esta entrega.
+macOS enlaza la libcurl del sistema (la 7.79 de macOS 12 está contemplada). **Windows es la
+plataforma prioritaria para la 1.0.0**: macOS y Linux compilan en verde en CI con el propio sistema
+de build de la plantilla, pero no se han probado en directo en esta entrega, y el inicio de sesión
+con libcurl lo ha compilado la CI pero aún no se ha ejecutado en un Mac o un Linux reales.
 
 ## Compilar (Windows)
 
@@ -206,14 +232,14 @@ fijadas en el primer configure, igual que el CI en un contenedor `ubuntu:24.04`:
 
 ```bash
 sudo .github/scripts/linux/install-build-deps.sh   # paquetes de Ubuntu 24.04
-.github/scripts/linux/build-ffmpeg.sh              # FFmpeg de buildspec.json, LGPL, solo MJPEG
+.github/scripts/build-ffmpeg.sh                   # FFmpeg de buildspec.json, LGPL, MJPEG y relay
 .github/scripts/linux/build.sh RelWithDebInfo      # deja el resultado en release/stage/usr
 .github/scripts/linux/package.sh                   # .deb, .rpm, .pkg.tar.zst, .tar.xz
 ```
 
 ## Instalar el plugin
 
-**Windows: usa el instalador.** Descarga `obs-trigglow-dynamic-delay-0.7.2-windows-x64-setup.exe`
+**Windows: usa el instalador.** Descarga `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe`
 desde la [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest) y
 ejecútalo — instala el plugin en la carpeta de plugins de OBS para todos los usuarios y saca de la
 carpeta de OBS una instalación de la v0.7.0 o anterior. Todavía no
@@ -222,7 +248,7 @@ completa con capturas de cada paso, incluido el aviso de SmartScreen: `docs/INST
 Instálalo antes de salir en directo, no a mitad de un stream — necesita OBS cerrado para
 sobrescribir sus archivos.
 
-**Linux: usa el paquete de tu distribución.** `obs-trigglow-dynamic-delay-0.7.2-x86_64-linux-gnu.deb`
+**Linux: usa el paquete de tu distribución.** `obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb`
 (Debian, Ubuntu, Mint, Pop!_OS: `sudo apt install ./<archivo>.deb`), `.rpm` (Fedora, openSUSE:
 `sudo dnf install ./<archivo>.rpm`) o `.pkg.tar.zst` (Arch, Manjaro, EndeavourOS:
 `sudo pacman -U <archivo>.pkg.tar.zst`), que instalan lo que necesitan. En cualquier otra
@@ -249,59 +275,144 @@ conocen la segunda. En Windows cada copia lleva sus propias DLL de FFmpeg al lad
 
 ## Usar el plugin
 
-1. Abre OBS. Si el dock **"Trigglow Dynamic Delay"** no aparece, ve a `View → Docks` y actívalo.
-2. En el dock, elige tu **escena en directo** (obligatoria — la escena con tu contenido real) y,
+Abre OBS. Si el dock **"Trigglow Dynamic Delay"** no aparece, abre el menú `Paneles` (View → Docks) y actívalo. Inicia
+sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
+
+### Modo stream
+
+1. Deja marcado **Usar el modo stream** (viene así por defecto). Pon el **Delay** en segundos
+   (1-600) y, si quieres, los tres **presets** (10, 30 y 60 s por defecto).
+2. Empieza a emitir como siempre. Con el delay quitado estás en directo; pulsa **Activar delay**
+   cuando quieras y los espectadores ven el stream esos segundos tarde. Si lo activas antes de
+   empezar a emitir, el directo empieza esos segundos tarde en la plataforma ("Delay preparado").
+3. Cambia los segundos en directo: al subirlos se rebobina (los espectadores vuelven a ver los
+   últimos segundos) y al bajarlos se salta hacia delante. **Volver al directo** quita el delay.
+   Hasta lo que marque **Guardar para subidas al instante** (120 s por defecto), una subida no
+   tiene que esperar.
+4. **Borrar lo que aún no se ha emitido** cuando se te cuela algo en pantalla: los segundos que aún
+   esperan en el delay no se envían nunca, el stream salta al directo y el delay vuelve solo
+   pasados sus segundos.
+5. Opcional: **Delay por escena** (activa el delay con sus propios segundos, o lo quita, al cambiar a una escena),
+   **Mostrar la insignia de delay a los espectadores** y su esquina, y **Al parar el directo,
+   enviar los segundos que los espectadores aún no han visto** (activado por defecto; **Dejar de
+   enviar ya** lo corta).
+
+El dock muestra el estado ("En directo, sin delay", "Delay activo: tus espectadores ven el directo
+30 s tarde"...), el estado de la conexión, la RAM guardada y el bitrate, y
+los ajustes de OBS que conviene cambiar. El delay se mueve en pasos de tu intervalo de fotogramas
+clave: ponlo en 2 s en `Ajustes → Salida`. Si un directo no puede usar el modo stream (Enhanced
+Broadcasting, SRT, WHIP...), el dock dice por qué y el modo escena funciona como siempre.
+
+### Modo escena (todas las plataformas)
+
+En **Modo escena (compatibilidad)** del dock (es el único modo en macOS y Linux):
+
+1. Elige tu **escena en directo** (obligatoria — la escena con tu contenido real) y,
    opcionalmente, una **escena de carga** para mostrar mientras se llena el buffer en vez de
    quedarte en la escena en directo sin delay (si no eliges ninguna, sale un vídeo de Trigglow
-   "Poniendo delay": "Trigglow (por defecto)" en el selector). Configura el **Delay (segundos)** (1–60) y la
-   **calidad mínima** (480p, 720p, 1080p, 1440p (2K) o 2160p (4K)) por debajo de la cual el vídeo
-   delayed no baja para ahorrar RAM (tampoco se guarda nunca por encima de la resolución de salida
-   de OBS: con una salida de 720p el buffer es 720p aunque el mínimo sea 1080p). El dock muestra una
-   estimación en vivo de si los segundos elegidos caben realmente en la RAM a esa calidad *antes* de
-   pulsar Enable — si no caben, avisa de que el tiempo real de buffer se acortará en vez de bajar
-   más la calidad, pero nunca bloquea tu elección. Estos campos se bloquean mientras el delay se
-   prepara o está activo ("Desactiva el delay para cambiarlo.").
-3. Ve a `Ajustes → Atajos de teclado`, busca "Trigglow" y asigna una tecla a **Trigglow:
-   Activar/desactivar Dynamic Delay** (y opcionalmente a "Activar" y "Desactivar" por separado; con
-   OBS en inglés se llaman "Trigglow: Toggle/Enable/Disable Dynamic Delay").
-4. Pulsa Activar delay (desde el botón del dock, la hotkey o Stream Deck). El dock muestra
+   "Poniendo delay": "Trigglow (por defecto)" en el selector). Configura el **Delay (segundos)**
+   (1–60) y la **calidad mínima** (480p, 720p, 1080p, 1440p (2K) o 2160p (4K)) por debajo de la
+   cual el vídeo delayed no baja para ahorrar RAM (tampoco se guarda nunca por encima de la
+   resolución de salida de OBS: con una salida de 720p el buffer es 720p aunque el mínimo sea
+   1080p). El dock muestra una estimación en vivo de si los segundos elegidos caben realmente en la
+   RAM a esa calidad *antes* de pulsar Activar delay — si no caben, avisa de que el tiempo real de
+   buffer se acortará en vez de bajar más la calidad, pero nunca bloquea tu elección. Estos campos
+   se bloquean mientras el delay se prepara o está activo ("Desactiva el delay para cambiarlo.").
+2. Pulsa Activar delay (desde el botón del dock, un atajo o Stream Deck). El dock muestra
    **Preparando delay** con una barra de progreso y una cuenta atrás en vivo mientras se llena el
    buffer hasta el delay pedido; en cuanto se llena, pasa automáticamente a **Delay activo** y el
-   Programa empieza a mostrar el vídeo y el audio delayed, en sincronía. **El output de streaming en sí no se toca en ningún momento**: los espectadores en
-   Twitch/YouTube/Kick/donde sea nunca ven un corte ni una reconexión, ya pulses el botón antes o
-   durante un directo.
+   Programa empieza a mostrar el vídeo y el audio delayed, en sincronía. **El output de streaming
+   en sí no se toca en ningún momento**: los espectadores nunca ven un corte ni una reconexión, ya
+   pulses el botón antes o durante un directo.
 
 Pulsar Desactivar delay libera el buffer de RAM al instante y vuelve a la escena que estaba antes de
 activarlo.
 
-El plugin gestiona por su cuenta unos pocos objetos de tu colección de escenas: la escena **Trigglow
-Delay Buffer (auto)**, los filtros **Trigglow Buffer Mode Delay (auto)** y `Trigglow Audio Delay
-(auto) - <fuente>`, y la imagen del overlay **Trigglow Delay Badge (auto)**. El overlay lo puedes
-mover o escalar en OBS y se queda donde lo pongas; los demás no los renombres ni los borres.
+El modo escena gestiona por su cuenta unos pocos objetos de tu colección de escenas: la escena
+**Trigglow Delay Buffer (auto)**, los filtros **Trigglow Buffer Mode Delay (auto)** y `Trigglow
+Audio Delay (auto) - <fuente>`, la imagen del overlay **Trigglow Delay Badge (auto)** y, si no
+eliges escena de carga, la escena **Trigglow Delay Loading (auto)**. El overlay lo puedes mover o
+escalar en OBS y se queda donde lo pongas; los demás no los renombres ni los borres. El modo stream
+no añade nada a tu colección de escenas (su insignia es una fuente privada en un canal de salida de
+OBS).
+
+### Atajos
+
+En `Ajustes → Atajos`, busca "Trigglow". Funcionan en los dos modos (en el modo stream cuando este
+lleva el directo actual o el siguiente, y en el modo escena si no):
+
+| Atajo | Modo stream | Modo escena |
+|---|---|---|
+| Trigglow: Activar/desactivar Dynamic Delay | activa o quita el delay | Activar delay / Desactivar delay |
+| Trigglow: Activar Dynamic Delay | activa el delay | Activar delay |
+| Trigglow: Desactivar Dynamic Delay | quita el delay | Desactivar delay |
+| Trigglow: Volver al directo (quitar delay) *(nuevo)* | quita el delay | Desactivar delay |
+| Trigglow: Delay +5 s / Delay -5 s *(nuevos)* | cambia el delay en directo | cambia los segundos del siguiente Activar delay (1-60) |
+| Trigglow: Borrar lo que aún no se ha emitido *(nuevo)* | borra | nada |
+| Trigglow: Preset de delay 1 / 2 / 3 *(nuevos)* | los segundos del preset, con el delay activado | los segundos del preset (hasta 60), Activar delay |
+
+Los tres atajos originales mantienen su nombre interno, así que las teclas que ya tenías asignadas
+se conservan. Con OBS en inglés se llaman "Trigglow: Toggle Dynamic Delay", "Trigglow: Enable
+Dynamic Delay" y "Trigglow: Disable Dynamic Delay".
+
+### obs-websocket
+
+El plugin registra un vendor de obs-websocket 5, **`trigglow-dynamic-delay`**, cuando obs-websocket
+está cargado (viene con OBS). Envía `CallVendorRequest` con `vendorName: "trigglow-dynamic-delay"`
+y uno de estos `requestType`:
+
+| Petición | Datos | Qué hace |
+|---|---|---|
+| `GetStatus` | — | solo devuelve el estado |
+| `EnableDelay` / `DisableDelay` / `ToggleDelay` | — | lo mismo que los atajos |
+| `SkipToLive` | — | vuelve al directo (quita el delay) |
+| `SetDelay` | `{"seconds": N}` | fija los segundos (modo stream 1-600, modo escena 1-60); 0 o menos se ignora |
+| `AdjustDelay` | `{"delta": N}` | suma N segundos (en negativo, los baja) |
+| `DumpDelay` | — | borra lo que aún no se ha emitido (modo stream); `dumped` dice si había algo que descartar |
+| `ApplyPreset` | `{"index": 0-2}` | preset 1-3 |
+
+Cada respuesta lleva `ok` y el estado: `mode` (`stream` o `scene`), `state` (modo stream: `idle`,
+`live`, `delayed`, `draining`; modo escena: `inactive`, `filling`, `active`, `error`), `delayOn`,
+`delaySeconds`, `appliedSeconds` (lo que reciben ahora los espectadores, 0 en directo),
+`behindSeconds` y `ramMegabytes` (modo stream). El evento del vendor **`StatusChanged`** lleva los
+mismos campos salvo `behindSeconds` y `ramMegabytes`, y se envía cuando cambia alguno de ellos.
 
 ## Mapear un botón de Stream Deck
 
-No hace falta ningún plugin de Stream Deck propio:
+Dos formas:
 
-1. En el software de Stream Deck, añade la acción **"System" → "Hotkey"** (el nombre exacto puede
-   variar ligeramente según tu versión de Stream Deck).
-2. Configúrala para que envíe la combinación de teclas que le asignaste a "Toggle Dynamic Delay" en
-   el paso anterior.
-3. Pon el foco en la ventana de OBS al pulsar el botón (Stream Deck envía la pulsación de teclado al
-   sistema; OBS necesita tener el foco, o al menos estar corriendo y escuchando el atajo global,
-   según cómo tengas configurado OBS/tu SO).
-4. Pulsarlo estando ya en directo es igual de seguro que pulsarlo antes de salir en directo: OBS
-   pasa por **Preparando delay** (con la cuenta atrás en vivo del dock) hasta **Delay activo** en
-   cuanto el buffer se llena — no hay reconexión ni corte visible en el stream en ningún momento de
-   esa transición.
+- **El plugin de Stream Deck de Trigglow** habla con OBS por obs-websocket (el vendor de arriba) y
+  muestra el estado del delay en sus teclas. Sus teclas de Dynamic Delay (activar/desactivar,
+  volver al directo, presets, +/-) se están añadiendo a ese plugin; ver `docs/STREAM_DECK-es.md`.
+- **Cualquier Stream Deck, sin plugin:** añade la acción **"System" → "Hotkey"** y haz que envíe la
+  combinación de teclas que asignaste a uno de los atajos de arriba. OBS tiene que estar abierto y
+  escuchando el atajo global (con algunas configuraciones, también con el foco).
 
-Guía más detallada, con capturas de ejemplo y solución de problemas: `docs/STREAM_DECK.md`.
+Pulsarlo en directo es seguro en los dos modos: sin reconexión ni corte visible. Más detalle y
+solución de problemas: `docs/STREAM_DECK-es.md`.
 
 ## Estructura del proyecto
 
 ```
 src/
-  plugin-main.cpp                 → obs_module_load/unload, wiring de todos los componentes
+  plugin-main.cpp                 → obs_module_load/unload, wiring de todos los componentes, los
+                                     archivos de ajustes (buffer-mode-settings.json,
+                                     stream-mode-settings.json)
+  stream-delay-controller.{hpp,cpp} → modo stream de la v1.0.0, lado de OBS: si el directo es apto,
+                                     apuntar la salida de emisión al relay, activar o quitar el
+                                     delay y sus segundos, borrar, presets, reglas por escena, la
+                                     insignia, las comprobaciones de ajustes
+  stream-relay.{hpp,cpp}           → el relay (avformat de FFmpeg, Windows): escucha RTMP en
+                                     127.0.0.1, el emisor hacia tu servicio de OBS, reintentos, envío al parar
+  packet-delay-core.{hpp,cpp}      → puro: PacketHistory y SinkScheduler (empalmes, reescritura de
+                                     timestamps, recorte, suelo del borrado), con tests
+  stream-mode-panel.{hpp,cpp}      → la sección del modo stream en el dock
+  delay-router.{hpp,cpp}           → atajos y obs-websocket hacia el modo stream o el modo escena
+  websocket-vendor.{hpp,cpp}       → el vendor de obs-websocket trigglow-dynamic-delay (peticiones,
+                                     evento StatusChanged)
+  core-host.{hpp,cpp}, core-main.cpp → el build solo de núcleo (TRIGGLOW_CORE_ONLY): el modo escena
+                                     controlado desde los ajustes de una fuente, para hosts sin el
+                                     frontend de OBS
   buffer-mode-controller.{hpp,cpp} → la máquina de estados (Inactive/Filling/Active/Error) que
                                      orquesta el modo buffer — la única dueña del estado
   obs-frontend-bridge.{hpp,cpp}    → única capa que toca obs-frontend-api.h + el cableado de
@@ -387,30 +498,34 @@ src/
   cancel-token.{hpp,cpp}             tickets, comprobación de actualizaciones) con un cierre acotado
   ui-tasks.{hpp,cpp}                 cuando OBS descarga el plugin, con tests; ui-tasks los une al
                                      bucle de eventos de Qt
-  auth-manager.{hpp,cpp}           → la puerta de login de cuenta gratuita (ver `docs/ACCOUNT_GATE.md`),
-                                     en hilos en segundo plano
+  auth-manager.{hpp,cpp}           → la puerta de login de cuenta gratuita (ver
+                                     `docs/ACCOUNT_GATE-es.md`), en hilos en segundo plano
   auth-client.{hpp,cpp}            → protocolo de inicio de sesión: vinculación v2, renovación,
                                      cierre de sesión, el cambio único desde la v0.5.x y las
                                      reglas de 401/403, con tests
   token-store.{hpp,cpp}            → el inicio de sesión del plugin, cifrado con la API de
-                                     protección de datos de Windows, con tests
+                                     protección de datos de Windows; en macOS y Linux, un archivo
+                                     que solo puede leer tu usuario (0600), con tests
   api-client.{hpp,cpp}             → peticiones solo a api.trigglow.com, errores, Retry-After y
                                      las páginas fijas que puede abrir el plugin, con tests
   json.{hpp,cpp}                   → lector/escritor JSON estricto y acotado, con tests
-  win-http.{hpp,cpp}               → el único camino WinHTTP endurecido (sin redirecciones, TLS
-                                     1.2+, timeouts, tope de tamaño) para toda llamada de red;
-                                     macOS/Linux responden "no disponible" hasta tener cliente HTTP
+  win-http.{hpp,cpp}               → el único camino HTTPS endurecido (sin redirecciones, TLS 1.2+,
+                                     solo puerto 443, timeouts, tope de tamaño) para toda llamada
+                                     de red: WinHTTP en Windows, libcurl en macOS y Linux
   i18n.hpp                         → helper Str() (obs_module_text()) — todo el texto visible de
                                      este plugin pasa por aquí; ver data/locale/*.ini
-  hotkeys.{hpp,cpp}                → registro de las 3 hotkeys nativas de OBS, conectadas a
-                                     BufferModeController
+  hotkeys.{hpp,cpp}                → registro de los 10 atajos nativos de OBS, a través de
+                                     DelayRouter
   logging.{hpp,cpp}                → wrapper de logging con prefijo de componente
   delay-controller.{hpp,cpp}       → lógica heredada del modo reconexión del diseño original
-                                     abandonado (ver `docs/SPEC.md` §6) — presente en el repo pero
+                                     abandonado (ver `docs/SPEC-es.md` §6) — presente en el repo pero
                                      nunca instanciada por plugin-main.cpp; no se envía en ningún
                                      build actual
 data/
-  locale/en-US.ini, es-ES.ini      → las cadenas traducidas reales del plugin (ver src/i18n.hpp)
+  locale/en-US.ini, es-ES.ini,     → las cadenas traducidas del plugin (ver src/i18n.hpp); OBS
+  pt-BR.ini, zh-CN.ini               elige la de su idioma, y el inglés para las claves que falten
+  images/, videos/                 → el fotograma de reserva de la insignia y los vídeos de carga
+                                     por defecto
   fonts/                           → Figtree y Geist Mono empaquetadas + sus licencias OFL
   licenses/                        → avisos de los componentes de terceros (iconos Lucide, DLL de FFmpeg)
 tests/
@@ -433,16 +548,20 @@ tests/
   support_client_tests.cpp · trigi_states_tests.cpp → cliente de cuenta, Trigi y tickets, con un
                                      sustituto de red guionizado (fake-transport.hpp)
   background_tasks_tests.cpp       → cancelación y cierre acotado de los trabajos en segundo plano
-                                     (23 suites en total, 24 con hw_storage_codec_tests)
+  packet_delay_core_tests.cpp      → empalmes, timestamps, recorte y borrado del modo stream
+  relay_harness.cpp                → arnés de extremo a extremo del relay: entra un stream RTMP
+                                     local, cambios de delay, un borrado, y se comprueba la salida
+                                     (manual, Windows)
 tools/fonts/                       → cómo se generan los subconjuntos de las fuentes empaquetadas
 docs/
-  SPEC.md                  → especificación técnica completa (empieza por aquí)
+  SPEC-es.md               → especificación técnica completa (empieza por aquí)
   INSTALL_GUIDE-es.md       → guía de instalación paso a paso con capturas (SmartScreen,
                              asistente del instalador, activar el panel en OBS)
   BUILD_VALIDATION.md       → qué se verificó de verdad en esta entrega, y qué no
-  ROADMAP.md                → qué trajo cada versión, qué viene después y qué queda fuera de alcance
-  STREAM_DECK.md             → guía detallada de Stream Deck
-  FAQ.md · TROUBLESHOOTING.md
+  ROADMAP-es.md             → qué trajo cada versión, qué viene después y qué queda fuera de alcance
+  STREAM_MODE-es.md         → modo stream: cómo funciona, controles, límites, qué está verificado
+  STREAM_DECK-es.md         → guía detallada de Stream Deck, atajos y obs-websocket
+  FAQ-es.md · TROUBLESHOOTING-es.md
 CMakeLists.txt, CMakePresets.json, buildspec.json, cmake/  → sistema de build de la plantilla oficial
 ```
 
@@ -454,7 +573,7 @@ plugin, lo que obliga a publicar el código fuente de cualquier binario distribu
 
 Por eso este proyecto vive en **su propio repositorio, separado del repositorio principal de
 Trigglow** (que permanece privado) — publicar solo el plugin aquí cumple la GPL sin exponer el resto
-del producto. Detalle completo de esta decisión en `docs/SPEC.md` §9.
+del producto. Detalle completo de esta decisión en `docs/SPEC-es.md` §9.
 
 `main` es una rama protegida en GitHub: las fusiones requieren un pull request, incluso para el
 propio dueño del repositorio (sin pushes directos, sin force-push, sin borrar la rama). El trabajo
@@ -470,7 +589,7 @@ distribuirlos junto a un binario GPL-2.0):
 | **Figtree** (SemiBold, Bold), subconjunto | `data/fonts/Figtree-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Figtree.txt` |
 | **Geist Mono** (Medium), subconjunto | `data/fonts/GeistMono-Medium.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-GeistMono.txt` |
 | Iconos de la interfaz (trazados de Lucide, como en la web de Trigglow) | compilados desde `src/resources/icons/` | ISC (partes MIT, Feather), `data/licenses/LICENSE-lucide.txt` |
-| Bibliotecas de **FFmpeg** (avcodec, avutil, swresample), build LGPL de BtbN fijada en `buildspec.json`, solo Windows | DLL junto a la del plugin (`bin/64bit` en el paquete), sin modificar | LGPL 3.0 o posterior, con componentes MIT/BSD/Apache (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, con la etiqueta de la build y su código fuente |
+| Bibliotecas de **FFmpeg** (avcodec, avutil, swresample, y avformat para el modo stream), build LGPL de BtbN fijada en `buildspec.json`, solo Windows | DLL junto a la del plugin (`bin/64bit` en el paquete), sin modificar | LGPL 3.0 o posterior, con componentes MIT/BSD/Apache (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, con la etiqueta de la build y su código fuente |
 
 Las fuentes son instancias estáticas, en subconjunto, de las fuentes variables originales de
 [google/fonts](https://github.com/google/fonts) (`ofl/archivo`, `ofl/geistmono`); `tools/fonts/`

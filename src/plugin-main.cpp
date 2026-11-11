@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -26,7 +28,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFileInfo>
 #include <QPointer>
 #include <QScrollArea>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 extern "C" {
@@ -342,8 +343,9 @@ QString ModuleConfigPath(const char *file)
 	return path;
 }
 
-// Stream mode settings. The extra destinations' stream keys are kept here the
-// same way OBS keeps the streamer's own key in its service.json.
+// Stream mode settings. The stream goes only to the streamer's own OBS service;
+// a "destinations" array left by a 1.0 pre-release is ignored and dropped on
+// the next save.
 void LoadStreamSettings(trigglow::StreamDelayController &controller)
 {
 	const QString path = ModuleConfigPath(kStreamSettingsFile);
@@ -368,27 +370,33 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
 		controller.SetOverlayCorner(static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")));
-	std::vector<trigglow::ExtraDestination> extras;
-	if (obs_data_array_t *array = obs_data_get_array(data, "destinations")) {
+	for (int i = 0; i < 3; ++i) {
+		const std::string key = "preset" + std::to_string(i + 1);
+		if (obs_data_has_user_value(data, key.c_str()))
+			controller.SetPreset(i, static_cast<uint32_t>(obs_data_get_int(data, key.c_str())));
+	}
+	std::vector<trigglow::SceneRule> rules;
+	if (obs_data_array_t *array = obs_data_get_array(data, "scene_rules")) {
 		const size_t count = obs_data_array_count(array);
 		for (size_t i = 0; i < count; ++i) {
 			obs_data_t *item = obs_data_array_item(array, i);
-			trigglow::ExtraDestination extra;
-			extra.name = obs_data_get_string(item, "name");
-			extra.server = obs_data_get_string(item, "server");
-			extra.key = obs_data_get_string(item, "key");
-			extra.enabled = !obs_data_has_user_value(item, "enabled") || obs_data_get_bool(item, "enabled");
+			trigglow::SceneRule rule;
+			rule.scene = obs_data_get_string(item, "scene");
+			const long long action = obs_data_get_int(item, "action");
+			rule.action = action == 1   ? trigglow::SceneAction::DelayOn
+				      : action == 2 ? trigglow::SceneAction::DelayOff
+						    : trigglow::SceneAction::None;
+			rule.seconds = static_cast<uint32_t>(obs_data_get_int(item, "seconds"));
 			obs_data_release(item);
-			if (!extra.server.empty())
-				extras.push_back(std::move(extra));
+			if (!rule.scene.empty())
+				rules.push_back(std::move(rule));
 		}
 		obs_data_array_release(array);
 	}
-	controller.SetExtraDestinations(std::move(extras));
+	controller.SetSceneRules(std::move(rules));
 	obs_data_release(data);
-	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us, %zu extra destination(s))",
-			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds(),
-			  controller.ExtraDestinations().size());
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us)",
+			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds());
 }
 
 void SaveStreamSettings(const trigglow::StreamDelayController &controller)
@@ -404,18 +412,19 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
-	obs_data_array_t *array = obs_data_array_create();
-	for (const trigglow::ExtraDestination &extra : controller.ExtraDestinations()) {
+	for (int i = 0; i < 3; ++i)
+		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
+	obs_data_array_t *rules = obs_data_array_create();
+	for (const trigglow::SceneRule &rule : controller.SceneRules()) {
 		obs_data_t *item = obs_data_create();
-		obs_data_set_string(item, "name", extra.name.c_str());
-		obs_data_set_string(item, "server", extra.server.c_str());
-		obs_data_set_string(item, "key", extra.key.c_str());
-		obs_data_set_bool(item, "enabled", extra.enabled);
-		obs_data_array_push_back(array, item);
+		obs_data_set_string(item, "scene", rule.scene.c_str());
+		obs_data_set_int(item, "action", static_cast<long long>(rule.action));
+		obs_data_set_int(item, "seconds", rule.seconds);
+		obs_data_array_push_back(rules, item);
 		obs_data_release(item);
 	}
-	obs_data_set_array(data, "destinations", array);
-	obs_data_array_release(array);
+	obs_data_set_array(data, "scene_rules", rules);
+	obs_data_array_release(rules);
 	obs_data_save_json_safe(data, path.toUtf8().constData(), "tmp", "bak");
 	obs_data_release(data);
 }
@@ -424,33 +433,31 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 // folds while stream mode handles the controls.
 QWidget *BuildDockContainer(trigglow::StreamModePanel *panel, trigglow::TrigglowDelayDock *sceneDock)
 {
+	// Stream mode's panel on top (it scrolls on its own), then scene mode's
+	// dock under a fold the panel draws and keeps current: folded while stream
+	// mode handles the delay and the hotkeys, open otherwise. The streamer can
+	// still open or fold it by hand.
 	auto *container = new QWidget();
 	auto *layout = new QVBoxLayout(container);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
 	auto *panelScroll = new QScrollArea(container);
+	panelScroll->setObjectName(QStringLiteral("tgDockScroll")); // Transparent, like scene mode's.
 	panelScroll->setWidgetResizable(true);
 	panelScroll->setFrameShape(QFrame::NoFrame);
+	// Not a focus stop of its own (QScrollArea brings each focused child into
+	// view), and no sideways scrolling: narrow docks reflow instead.
+	panelScroll->setFocusPolicy(Qt::NoFocus);
+	panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	panelScroll->setWidget(panel);
 	layout->addWidget(panelScroll, 1);
 
-	auto *header = new QToolButton(container);
-	header->setText(QString::fromUtf8(Str("Stream.SceneSection")));
-	header->setCheckable(true);
-	header->setChecked(true);
-	header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	header->setArrowType(Qt::DownArrow);
-	header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	layout->addWidget(header);
+	layout->addWidget(panel->CreateSceneHeader(container, [sceneDock](bool open) { sceneDock->setVisible(open); }));
 	sceneDock->setParent(container);
 	layout->addWidget(sceneDock, 1);
 
-	QObject::connect(header, &QToolButton::toggled, container, [header, sceneDock](bool open) {
-		header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-		sceneDock->setVisible(open);
-	});
-	panel->SetHandlesControlsChanged([header](bool streamHandles) { header->setChecked(!streamHandles); });
+	panel->SetHandlesControlsChanged([panel](bool streamHandles) { panel->SetSceneSectionOpen(!streamHandles); });
 	return container;
 }
 
@@ -544,6 +551,15 @@ bool obs_module_load(void)
 	// A suspended or inactive account (HTTP 403 from the server) blocks it too.
 	g_state->bufferController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI): scene
+	// mode's gate, with the same environment variable as stream mode's.
+	if (const char *skipScene = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE");
+	    skipScene && std::strcmp(skipScene, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: scene mode's account gate is skipped");
+		g_state->bufferController->SetAuthorizationCheck(nullptr);
+	}
+#endif
 
 	g_state->saveSettingsOnExit = LoadBufferSettings(*g_state->bufferController);
 
@@ -551,6 +567,13 @@ bool obs_module_load(void)
 	g_state->streamController = std::make_unique<trigglow::StreamDelayController>();
 	g_state->streamController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI).
+	if (const char *skip = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE"); skip && std::strcmp(skip, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: stream mode's account gate is skipped");
+		g_state->streamController->SetAuthorizationCheck(nullptr);
+	}
+#endif
 	g_state->streamController->SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
 		const QString label = QString::fromUtf8(Str("Overlay.Label"));
 		const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);

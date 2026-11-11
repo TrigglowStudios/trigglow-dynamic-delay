@@ -11,7 +11,7 @@ de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han us
 inicio de sesión se mantienen.
 
 **Novedades:**
-- **Modo stream (Windows): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
+- **Modo stream (Windows, macOS y Linux): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
   stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. La RAM es tu bitrate por los segundos guardados (unos 45 MB por minuto a 6 Mbps) y no se
   codifica dos veces. Con él:
@@ -20,15 +20,22 @@ inicio de sesión se mantienen.
     últimos segundos y nunca nada más nuevo.
   - **Todas las escenas van con delay**, así que puedes cambiar de escena con el delay activo.
   - **Tu grabación, el Replay Buffer y la cámara virtual siguen en directo.**
-  - **Multistream:** añade más destinos (cualquier servidor rtmp:// o rtmps:// con su clave) y
-    reciben el mismo directo con delay, con una sola codificación.
   - **Al parar el directo,** el plugin envía los segundos que los espectadores aún no han visto
     (opcional).
   - Funciona con tus ajustes de emisión de OBS de siempre (Twitch, YouTube, Kick, TikTok y
     cualquier servidor RTMP o RTMPS); no hay que cambiar nada. Enhanced Broadcasting, SRT y WHIP
     usan el modo escena.
-  - El dock muestra el estado de cada destino, la RAM usada y el bitrate.
+  - El dock muestra adónde va tu directo y su estado, la RAM usada y el bitrate.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+  - En macOS y Linux está en alpha como el resto de esas versiones: compilado y comprobado en la
+    CI, aún no usado en un directo. Allí el plugin lleva su propio FFmpeg para ello (LGPL, enlazado
+    dentro); RTMPS usa el TLS propio de macOS y, en Linux, el OpenSSL 3 del sistema (los paquetes
+    ahora dependen de él).
+- **El modo escena también cambia el delay en directo, hasta 600 s.** Bájalo y los espectadores
+  saltan hacia delante al momento; súbelo y la imagen se congela (o sale la escena de carga, por
+  encima de 3 s) solo durante los segundos de más. El buffer nunca vuelve a empezar desde cero.
+  Antes había que quitar el delay para cambiarlo, y el máximo era 60 s. Para cambiar de escena con
+  el delay activado, usa el modo stream; el dock lo dice.
 - **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
   "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
   La sesión se guarda en un archivo que solo puede leer tu usuario.
@@ -37,6 +44,12 @@ inicio de sesión se mantienen.
 - **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
   automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
   emisión propio de OBS está activado (se suman).
+- **Borrar lo que aún no se ha emitido (modo stream).** ¿Se ha visto algo que no debía? Un botón o
+  un atajo y los segundos que aún esperan en el delay no se envían nunca: el directo salta al
+  momento actual y el delay vuelve solo.
+- **Delay por escena (modo stream).** Activa el delay (con sus propios segundos) o quítalo al
+  cambiar a una escena: activado en tu escena de juego y quitado en la de charla, sin tocar nada.
+- **Tres presets de delay**, cada uno con su atajo.
 - **Atajos nuevos:** Volver al directo, Delay +5 s y Delay -5 s. Los tres de siempre mantienen su
   nombre y su tecla.
 - **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre

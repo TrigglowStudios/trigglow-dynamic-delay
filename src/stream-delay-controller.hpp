@@ -83,14 +83,20 @@ struct StreamDelayStatus {
 	std::vector<std::string> warnings;
 	bool showOverlay = true;
 	uint32_t overlayCorner = 1;
+	// Seconds until the delay comes back after a Dump (0: no dump pending).
+	uint32_t dumpRestoreIn = 0;
+	// The scene rule applied last (empty: none).
+	std::string ruleScene;
 	relay::RelayStatus relay;
 };
 
-struct ExtraDestination {
-	std::string name;
-	std::string server;
-	std::string key;
-	bool enabled = true;
+// What switching OBS's program to a scene does to the delay (stream mode).
+enum class SceneAction : uint32_t { None = 0, DelayOn = 1, DelayOff = 2 };
+
+struct SceneRule {
+	std::string scene;
+	SceneAction action = SceneAction::None;
+	uint32_t seconds = 0; // DelayOn: these seconds (0 = keep the current ones).
 };
 
 class StreamDelayController {
@@ -110,8 +116,6 @@ public:
 	uint32_t KeepSeconds() const { return keepSeconds_; }
 	void SetDrainOnStop(bool drain);
 	bool DrainOnStop() const { return drainOnStop_; }
-	void SetExtraDestinations(std::vector<ExtraDestination> destinations);
-	const std::vector<ExtraDestination> &ExtraDestinations() const { return extras_; }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -131,6 +135,24 @@ public:
 	void AdjustDelay(int deltaSeconds);
 	// Stops sending the last seconds after OBS stopped (Draining) at once.
 	void CutDrain();
+	// Dump: what viewers haven't seen yet is never sent (something slipped on
+	// screen). The stream jumps to live and the delay comes back on its own
+	// after its seconds, rewinding only into what came after the dump. False
+	// when there is nothing to dump (not streaming through the relay, or the
+	// delay is off).
+	bool Dump();
+
+	// Presets 1-3 (seconds), each with a hotkey: set the seconds and turn the
+	// delay on.
+	void SetPreset(int index, uint32_t seconds);
+	uint32_t Preset(int index) const;
+	void ApplyPreset(int index);
+
+	// Scene rules: entering a scene can turn the delay on (with its seconds)
+	// or off. Applied when OBS's program scene changes and when a stream
+	// starts, in stream mode only (scene mode delays one chosen scene).
+	void SetSceneRules(std::vector<SceneRule> rules);
+	const std::vector<SceneRule> &SceneRules() const { return sceneRules_; }
 	bool DelayOn() const { return delayOn_; }
 
 	// True when the hotkeys and Stream Deck should drive this controller and
@@ -155,7 +177,17 @@ private:
 	void UpdateOverlay();
 	void ClearOverlay();
 	void CheckObsSettings(obs_output_t *output);
+	void SwapFrontendService();
+	void RestoreFrontendService();
+	void VerifyOutputUsesRelay();
 	uint32_t EffectiveDelay() const { return delayOn_ ? delaySeconds_ : 0; }
+
+	void ApplySceneRule();
+
+	uint32_t presets_[3] = {10, 30, 60};
+	std::vector<SceneRule> sceneRules_;
+	std::string ruleScene_;
+	int64_t dumpRestoreAtNs_ = 0; // Monotonic; 0 = no dump pending.
 
 	bool showOverlay_ = true;
 	uint32_t overlayCorner_ = 1;
@@ -168,6 +200,9 @@ private:
 
 	relay::StreamRelay relay_;
 	obs_service_t *loopbackService_ = nullptr;
+	// The streamer's own service while the frontend's is swapped for the
+	// relay's (Advanced output mode, see OnStreamingStarting). Holds a ref.
+	obs_service_t *savedFrontendService_ = nullptr;
 	std::unique_ptr<QTimer> timer_;
 	bool initialized_ = false;
 	bool modeEnabled_ = true;
@@ -178,7 +213,6 @@ private:
 	bool engaged_ = false;
 	bool draining_ = false;
 	std::string ineligible_;
-	std::vector<ExtraDestination> extras_;
 	std::function<void()> onStatus_;
 	std::function<bool()> authorized_;
 

@@ -275,7 +275,7 @@ public:
 	};
 
 	struct Counts {
-		size_t buffered = 0; // Slots reserved at least once (the logical window).
+		size_t buffered = 0; // Slots holding a frame (the logical window).
 		size_t reserved = 0;
 		size_t encoding = 0;
 		size_t ready = 0;
@@ -290,6 +290,18 @@ public:
 
 	size_t SlotCount() const { return headers_.size(); }
 	FrameArena &Arena() { return arena_; }
+
+	// v1.0.0: how many slots hold frames (the retention window), 1 to
+	// SlotCount() (the default). A delay changed live moves it instead of
+	// replacing the ring (bufferfit::ComputeLiveChange()): raised, nothing is
+	// freed until the ring holds the new window; lowered, Reserve() frees the
+	// oldest frames past it, at most kMaxEvictionsPerReserve per call so a big
+	// drop (600 -> 5 s) never stalls the graphics thread, stopping at a slot
+	// still being encoded or pinned by a reader (tried again on the next one).
+	// Any thread.
+	void SetWindow(size_t slots);
+	size_t Window() const;
+	static constexpr size_t kMaxEvictionsPerReserve = 128;
 
 	// --- Graphics thread (the only writer of the write position) ---
 
@@ -367,8 +379,9 @@ private:
 	mutable std::mutex mutex_;
 	std::vector<Header> headers_;
 	size_t writeIndex_ = 0; // Next slot Reserve() claims.
-	size_t buffered_ = 0;   // Slots reserved at least once, <= headers_.size().
+	size_t buffered_ = 0;   // Slots holding a frame (reserved and not evicted), <= window_ after Reserve().
 	size_t oldest_ = 0;     // Index of logical position 0.
+	size_t window_ = 1;     // SetWindow(); headers_.size() until set.
 	uint64_t lastCaptureNs_ = 0;
 	uint64_t reserveFailures_ = 0;
 };

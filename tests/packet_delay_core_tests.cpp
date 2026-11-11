@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "packet-delay-core.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -53,6 +55,25 @@ struct FakeStream {
 	int64_t nextVideoMs = 0;
 	int64_t nextAudioUs = 0;
 	int frame = 0;
+	// x264's default B-frames (as OBS streams them): closed GOPs of 121
+	// frames, then mini-GOPs sent P, B-ref, b, b and shown b, B-ref, b, P,
+	// with every pts two frames after the decode clock (pts - dts from 0 to
+	// 5 frames, as measured on a real OBS stream).
+	bool bframes = false;
+
+	int64_t PtsOf(int decodeIndex) const
+	{
+		if (!bframes)
+			return decodeIndex * 1000LL / 60;
+		const int g = decodeIndex % 121;
+		int display = decodeIndex;
+		if (g != 0) {
+			static const int kOrder[4] = {3, 1, 0, 2};
+			const int base = decodeIndex - g + 4 * ((g - 1) / 4) + 1;
+			display = base + kOrder[(g - 1) % 4];
+		}
+		return (display + 2) * 1000LL / 60;
+	}
 
 	// Pushes everything with dts <= `untilMs`, interleaved by dts.
 	void RunUntil(int64_t untilMs)
@@ -65,12 +86,12 @@ struct FakeStream {
 				return;
 			Packet p;
 			p.dtsMs = t;
-			p.ptsMs = t;
+			p.ptsMs = videoNext ? PtsOf(frame) : t;
 			p.arrivalNs = t * kMs;
 			p.bytes = videoNext ? 12500 : 400;
 			if (videoNext) {
 				p.kind = MediaKind::Video;
-				p.keyframe = frame % 120 == 0;
+				p.keyframe = frame % (bframes ? 121 : 120) == 0;
 				++frame;
 				nextVideoMs = frame * 1000 / 60;
 			} else {
@@ -301,10 +322,107 @@ void TestAudioOnly()
 	CHECK(!out.empty() && out.back().packet->arrivalNs <= 1600 * kMs);
 }
 
+void TestDumpNeverSendsUnaired()
+{
+	g_currentTest = "dump";
+	FakeStream s;
+	SinkScheduler sink;
+	s.RunUntil(0);
+	sink.SetDelay(10000 * kMs, 0, s.history);
+	OutLog log;
+	Run(s, sink, log, 0, 40000);
+	// At 40 s viewers are at ~30 s; 30-40 s hasn't aired. Dump: floor at
+	// now, delay off.
+	s.history.SetSpliceFloor(40000 * kMs + 1);
+	const SpliceInfo info = sink.SetDelay(0, 40000 * kMs, s.history);
+	CHECK(!info.spliced); // No keyframe after the floor yet: wait for it.
+	OutLog after;
+	after.lastVideo = log.lastVideo;
+	after.lastAudio = log.lastAudio;
+	Run(s, sink, after, 40000, 50000);
+	CHECK(after.monotonic);
+	CHECK(!after.packets.empty());
+	bool aired = false;
+	for (const OutPacket &o : after.packets) {
+		if (o.packet->arrivalNs < 40000 * kMs)
+			aired = true;
+	}
+	CHECK(!aired);
+	// The first video sent is the first keyframe after the floor (42 s).
+	for (const OutPacket &o : after.packets) {
+		if (o.packet->kind == MediaKind::Video) {
+			CHECK(o.packet->keyframe && o.packet->arrivalNs == 42000 * kMs);
+			break;
+		}
+	}
+
+	// Raising the delay again never rewinds into what was dumped.
+	const SpliceInfo again = sink.SetDelay(20000 * kMs, 50000 * kMs, s.history);
+	CHECK(again.spliced);
+	CHECK(again.shortHistory);
+	OutLog later;
+	later.lastVideo = after.lastVideo;
+	later.lastAudio = after.lastAudio;
+	Run(s, sink, later, 50000, 70000);
+	for (const OutPacket &o : later.packets)
+		CHECK(o.packet->arrivalNs >= 40000 * kMs);
+	CHECK(later.monotonic);
+}
+
+// B-frames: every splice (delay on, raised, off) starts the new GOP after
+// everything already shown, so a player never goes back in display order.
+void TestBFramesSpliceKeepsDisplayOrder()
+{
+	g_currentTest = "B-frames splice";
+	FakeStream s;
+	s.bframes = true;
+	SinkScheduler sink;
+	s.RunUntil(0);
+	sink.SetDelay(0, 0, s.history);
+
+	struct Segment {
+		int64_t until;
+		int64_t delayMs;
+	};
+	// Splices land at odd times, in the middle of mini-GOPs.
+	const Segment segments[] = {{30007, 10000}, {50023, 25000}, {70041, 5000}, {80013, 0}, {90000, 0}};
+	OutLog log;
+	int64_t from = 0;
+	int64_t maxPtsBefore = INT64_MIN;
+	for (const Segment &seg : segments) {
+		OutLog part;
+		part.lastVideo = log.lastVideo;
+		part.lastAudio = log.lastAudio;
+		Run(s, sink, part, from, seg.until);
+		CHECK(part.monotonic);
+		int64_t minPts = INT64_MAX;
+		int64_t maxPts = INT64_MIN;
+		for (const OutPacket &o : part.packets) {
+			if (o.packet->kind != MediaKind::Video)
+				continue;
+			minPts = std::min(minPts, o.ptsMs);
+			maxPts = std::max(maxPts, o.ptsMs);
+			CHECK(o.ptsMs >= o.dtsMs);
+		}
+		CHECK(minPts != INT64_MAX);
+		if (maxPtsBefore != INT64_MIN)
+			CHECK(minPts > maxPtsBefore);
+		maxPtsBefore = std::max(maxPtsBefore, maxPts);
+		log.lastVideo = part.lastVideo;
+		log.lastAudio = part.lastAudio;
+		// A splice moves the timeline by at most a few frames.
+		CHECK(part.maxVideoGap <= 6 * 17);
+		sink.SetDelay(seg.delayMs * kMs, seg.until * kMs, s.history);
+		from = seg.until;
+	}
+}
+
 } // namespace
 
 int main()
 {
+	TestBFramesSpliceKeepsDisplayOrder();
+	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();
 	TestDisableSkipsForward();

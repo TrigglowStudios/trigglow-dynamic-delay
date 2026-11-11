@@ -28,6 +28,7 @@ extern "C" {
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <util/config-file.h>
+#include <util/platform.h>
 }
 
 #include "logging.hpp"
@@ -98,6 +99,7 @@ void StreamDelayController::Shutdown()
 	if (timer_)
 		timer_->stop();
 	timer_.reset();
+	RestoreFrontendService();
 	relay_.Stop();
 	if (loopbackService_) {
 		obs_service_release(loopbackService_);
@@ -105,6 +107,74 @@ void StreamDelayController::Shutdown()
 	}
 	engaged_ = false;
 	ClearOverlay();
+}
+
+bool StreamDelayController::Dump()
+{
+	if (!engaged_ || !delayOn_ || relay_.Delay() == 0)
+		return false;
+	relay_.Dump();
+	// Back to the delay once there are its seconds of stream after the dump
+	// (plus a keyframe interval for the splice), rewinding only into them.
+	dumpRestoreAtNs_ =
+		static_cast<int64_t>(os_gettime_ns()) + (static_cast<int64_t>(delaySeconds_) + 3) * 1000000000LL;
+	TRIGGLOW_LOG_INFO(kComponent, "dump: unaired seconds dropped; the %us delay comes back on its own",
+			  delaySeconds_);
+	Notify();
+	return true;
+}
+
+void StreamDelayController::SetPreset(int index, uint32_t seconds)
+{
+	if (index < 0 || index > 2)
+		return;
+	presets_[index] = std::max<uint32_t>(1, relay::ClampDelaySeconds(seconds));
+	Notify();
+}
+
+uint32_t StreamDelayController::Preset(int index) const
+{
+	return (index >= 0 && index <= 2) ? presets_[index] : 0;
+}
+
+void StreamDelayController::ApplyPreset(int index)
+{
+	if (index < 0 || index > 2)
+		return;
+	SetDelaySeconds(presets_[index]);
+	Enable();
+}
+
+void StreamDelayController::SetSceneRules(std::vector<SceneRule> rules)
+{
+	sceneRules_ = std::move(rules);
+	Notify();
+}
+
+void StreamDelayController::ApplySceneRule()
+{
+	if (!HandlesControls())
+		return;
+	obs_source_t *scene = obs_frontend_get_current_scene();
+	const std::string name = scene ? obs_source_get_name(scene) : "";
+	obs_source_release(scene);
+	for (const SceneRule &rule : sceneRules_) {
+		if (rule.scene != name || rule.action == SceneAction::None)
+			continue;
+		ruleScene_ = name;
+		if (rule.action == SceneAction::DelayOn) {
+			if (rule.seconds > 0)
+				SetDelaySeconds(rule.seconds);
+			if (!delayOn_)
+				TRIGGLOW_LOG_INFO(kComponent, "scene rule: delay on for this scene");
+			Enable();
+		} else {
+			if (delayOn_)
+				TRIGGLOW_LOG_INFO(kComponent, "scene rule: delay off for this scene");
+			Disable();
+		}
+		return;
+	}
 }
 
 void StreamDelayController::SetShowOverlay(bool show)
@@ -249,12 +319,6 @@ void StreamDelayController::SetDrainOnStop(bool drain)
 	Notify();
 }
 
-void StreamDelayController::SetExtraDestinations(std::vector<ExtraDestination> destinations)
-{
-	extras_ = std::move(destinations);
-	Notify();
-}
-
 bool StreamDelayController::Enable()
 {
 	if (authorized_ && !authorized_()) {
@@ -277,6 +341,7 @@ void StreamDelayController::Disable()
 	if (!delayOn_)
 		return;
 	delayOn_ = false;
+	dumpRestoreAtNs_ = 0;
 	if (engaged_)
 		relay_.SetDelay(0);
 	TRIGGLOW_LOG_INFO(kComponent, "delay off");
@@ -339,6 +404,11 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	status.warnings = warnings_;
 	status.showOverlay = showOverlay_;
 	status.overlayCorner = overlayCorner_;
+	status.ruleScene = ruleScene_;
+	if (dumpRestoreAtNs_ > 0) {
+		const int64_t left = dumpRestoreAtNs_ - static_cast<int64_t>(os_gettime_ns());
+		status.dumpRestoreIn = left > 0 ? static_cast<uint32_t>((left + 999999999LL) / 1000000000LL) : 0;
+	}
 	// OBS's own Stream Delay is checked live too: it's the one setting worth
 	// fixing before a stream starts.
 	if (config_t *profile = obs_frontend_get_profile_config()) {
@@ -361,7 +431,14 @@ void StreamDelayController::FrontendEvent(int event, void *param)
 	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
 		self->OnStreamingStopped();
 		break;
+	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+		self->ApplySceneRule();
+		break;
+	case OBS_FRONTEND_EVENT_STREAMING_STARTED:
+		self->VerifyOutputUsesRelay();
+		break;
 	case OBS_FRONTEND_EVENT_EXIT:
+		self->RestoreFrontendService();
 		self->relay_.Stop();
 		self->engaged_ = false;
 		self->draining_ = false;
@@ -434,12 +511,6 @@ void StreamDelayController::OnStreamingStarting()
 	primary.key = key;
 	primary.primary = true;
 	destinations.push_back(primary);
-	for (const ExtraDestination &extra : extras_) {
-		if (!extra.enabled || extra.server.empty())
-			continue;
-		destinations.push_back(relay::Destination{extra.name.empty() ? relay::HostOf(extra.server) : extra.name,
-							  extra.server, extra.key, false});
-	}
 
 	relay::RelayOptions options;
 	options.delaySeconds = EffectiveDelay();
@@ -470,13 +541,23 @@ void StreamDelayController::OnStreamingStarting()
 	else
 		loopbackService_ = obs_service_create_private("rtmp_custom", "trigglow-dynamic-delay-relay", settings);
 	obs_data_release(settings);
+	// Simple output mode set the service on the output before this event;
+	// Advanced mode sets it right after (AdvancedOutput::StartStreaming
+	// calls obs_output_set_service(output, <frontend service>)), which would
+	// send the stream straight to the platform. So the output gets the relay
+	// now, and the frontend's service is swapped for it until OBS has started
+	// the output (same UI call, see RestoreFrontendService).
 	obs_output_set_service(output, loopbackService_);
+	SwapFrontendService();
 	CheckObsSettings(output);
 	obs_output_release(output);
 
 	engaged_ = true;
-	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s%s, delay %us", primary.name.c_str(),
-			  destinations.size() > 1 ? " and more destinations" : "", EffectiveDelay());
+	dumpRestoreAtNs_ = 0;
+	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s, delay %us", primary.name.c_str(),
+			  EffectiveDelay());
+	// The scene the stream starts on may have a rule.
+	ApplySceneRule();
 	Notify();
 }
 
@@ -485,12 +566,71 @@ void StreamDelayController::OnStreamingStopped()
 	if (!engaged_)
 		return;
 	engaged_ = false;
-	if (relay_.Running() && !relay_.Finished()) {
+	RestoreFrontendService();
+	const relay::RelayStatus relayStatus = relay_.GetStatus();
+	if (relay_.Running() && !relayStatus.ingestConnected && !relayStatus.ingestEnded) {
+		// OBS's stream never reached the relay (it failed to connect, or went
+		// elsewhere): nothing to send, and the listener would wait forever.
+		TRIGGLOW_LOG_WARN(kComponent, "OBS stopped before its stream reached the relay; nothing to send");
+		relay_.Stop();
+	} else if (relay_.Running() && !relay_.Finished()) {
 		draining_ = true;
 		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped; sending the %us viewers haven't seen yet", relay_.Delay());
 	} else {
 		relay_.Stop();
 	}
+	Notify();
+}
+
+void StreamDelayController::SwapFrontendService()
+{
+	obs_service_t *current = obs_frontend_get_streaming_service();
+	if (!current || current == loopbackService_ || savedFrontendService_)
+		return;
+	savedFrontendService_ = obs_service_get_ref(current);
+	if (!savedFrontendService_)
+		return;
+	obs_frontend_set_streaming_service(loopbackService_);
+	// Back right after OBS's start call returns to the event loop: the output
+	// keeps its own reference to the relay's service (reconnects included),
+	// and the streamer's settings never show or save the relay.
+	if (timer_)
+		QTimer::singleShot(0, timer_.get(), [this] { RestoreFrontendService(); });
+}
+
+void StreamDelayController::RestoreFrontendService()
+{
+	if (!savedFrontendService_)
+		return;
+	if (obs_frontend_get_streaming_service() == loopbackService_)
+		obs_frontend_set_streaming_service(savedFrontendService_);
+	obs_service_release(savedFrontendService_);
+	savedFrontendService_ = nullptr;
+	if (engaged_)
+		VerifyOutputUsesRelay();
+}
+
+// A stream that goes out without the relay must not look delayed: if OBS's
+// output ended up with another service, stream mode lets go of this stream.
+void StreamDelayController::VerifyOutputUsesRelay()
+{
+	if (!engaged_ || !loopbackService_)
+		return;
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	if (!output)
+		return;
+	obs_service_t *service = obs_output_get_service(output);
+	obs_output_release(output);
+	if (service == loopbackService_)
+		return;
+	TRIGGLOW_LOG_ERROR(kComponent, "OBS's stream output doesn't go through the relay; this stream isn't delayed");
+	engaged_ = false;
+	ineligible_ = "relay";
+	{
+		std::lock_guard<std::mutex> lock(eventMutex_);
+		lastEvent_ = "OBS's stream doesn't go through the relay";
+	}
+	relay_.Stop();
 	Notify();
 }
 
@@ -500,6 +640,13 @@ void StreamDelayController::Tick()
 		relay_.Stop();
 		draining_ = false;
 		TRIGGLOW_LOG_INFO(kComponent, "the last seconds were sent; stream finished");
+	}
+	if (dumpRestoreAtNs_ > 0 && static_cast<int64_t>(os_gettime_ns()) >= dumpRestoreAtNs_) {
+		dumpRestoreAtNs_ = 0;
+		if (engaged_ && delayOn_) {
+			relay_.SetDelay(delaySeconds_);
+			TRIGGLOW_LOG_INFO(kComponent, "dump: the %us delay is back", delaySeconds_);
+		}
 	}
 	Notify();
 }

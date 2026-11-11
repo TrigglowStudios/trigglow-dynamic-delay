@@ -1739,9 +1739,23 @@ std::vector<OBSSourceAutoRelease> ObsFrontendBridge::GetAudioCapableChildren(con
 	return result;
 }
 
+uint64_t ObsFrontendBridge::AudioBytesPerSecondFor(size_t sources)
+{
+	// What each AudioDelayFilter's delay line holds per second of delay: planar
+	// float at OBS's channel count and sample rate.
+	audio_t *audio = obs_get_audio();
+	if (!audio)
+		return 0;
+	return static_cast<uint64_t>(sources) * audio_output_get_channels(audio) * audio_output_get_sample_rate(audio) *
+	       sizeof(float);
+}
+
 bool ObsFrontendBridge::EnsureAudioDelayFilters(const std::string &liveSceneName) const
 {
 	auto children = GetAudioCapableChildren(liveSceneName);
+	// v1.0.0: the video ring's RAM budget sets the audio rings aside (raw PCM:
+	// 230 MB per stereo source at 600 s).
+	VideoDelayFilter::SetAudioBytesPerSecond(AudioBytesPerSecondFor(children.size()));
 	if (children.empty()) {
 		// Not a warning: plenty of scenes legitimately have no direct
 		// audio-capable children (audio routed some other way, or a
@@ -1993,9 +2007,10 @@ VideoDelayFilter::BufferFitEstimate ObsFrontendBridge::EstimateBufferFit(const s
 		fpsDen = ovi.fps_den;
 	}
 
-	return VideoDelayFilter::EstimateBufferFit(requestedDelaySeconds, minResolutionHeight, width, height, baseWidth,
-						   baseHeight, outputWidth, outputHeight, fpsNum, fpsDen, capToOutput,
-						   ringClass);
+	return VideoDelayFilter::EstimateBufferFit(
+		requestedDelaySeconds, minResolutionHeight, width, height, baseWidth, baseHeight, outputWidth,
+		outputHeight, fpsNum, fpsDen, capToOutput, ringClass,
+		AudioBytesPerSecondFor(GetAudioCapableChildren(liveSceneName).size()));
 }
 
 std::vector<ActiveVideoEncoder> ObsFrontendBridge::ListActiveVideoEncoders() const

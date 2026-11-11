@@ -51,9 +51,14 @@ public:
 	void Toggle();
 	// Stream mode: back to live (delay off). Scene mode: Disable.
 	void SkipToLive();
-	// Stream mode only (live); scene mode changes the seconds for the next Enable.
+	// Both modes change the delay live (scene mode since v1.0.0), 1-600 s.
 	void AdjustDelay(int deltaSeconds);
 	void SetDelay(uint32_t seconds);
+	// Stream mode only: drop what viewers haven't seen yet. False when there
+	// is nothing to drop (or in scene mode).
+	bool Dump();
+	// Preset 0-2: its seconds, delay on. Both modes take 1-600 s.
+	void ApplyPreset(int index);
 	RouterStatus Status() const;
 	bool StreamMode() const;
 

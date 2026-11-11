@@ -147,6 +147,11 @@ constexpr uint32_t kDecodeLookaheadFrames = 3;
 // How long before the fill window ends the decoder is pointed at the oldest
 // frame (CodecPipeline::PrimeDecode()).
 constexpr uint64_t kDecodePrimeWindowNs = 250000000ULL;
+// v1.0.0: after a live delay change (and after the hold of a raise) the
+// decoder catches up to the new target: for this long its late frames don't
+// count as decode misses and the degradation policy doesn't evaluate -- its
+// 2 s window (kPolicyWindowNs below) plus half a second.
+constexpr uint64_t kLiveChangeGraceNs = 2500000000ULL;
 
 // Adaptive degradation (B.8): evaluated this often, over trailing windows of
 // these lengths (perf2: p95 over ~2 s, the immediate p50 rule over less).
@@ -512,11 +517,25 @@ uint64_t VideoDelayFilter::GetBufferBudgetBytes()
 	return GetBufferBudget();
 }
 
+namespace {
+std::atomic<uint64_t> g_audioBytesPerSecond{0};
+} // namespace
+
+void VideoDelayFilter::SetAudioBytesPerSecond(uint64_t bytesPerSecond)
+{
+	g_audioBytesPerSecond.store(bytesPerSecond);
+}
+
+uint64_t VideoDelayFilter::AudioBytesPerSecond()
+{
+	return g_audioBytesPerSecond.load();
+}
+
 VideoDelayFilter::BufferFitEstimate
 VideoDelayFilter::EstimateBufferFit(uint32_t requestedDelaySeconds, uint32_t minResolutionHeight, uint32_t sourceWidth,
 				    uint32_t sourceHeight, uint32_t baseWidth, uint32_t baseHeight,
 				    uint32_t outputWidth, uint32_t outputHeight, uint32_t fpsNum, uint32_t fpsDen,
-				    bool capToOutput, bufferfit::RingClass ringClass)
+				    bool capToOutput, bufferfit::RingClass ringClass, uint64_t audioBytesPerSecond)
 {
 	bufferfit::Input in;
 	in.sourceWidth = sourceWidth;
@@ -531,6 +550,7 @@ VideoDelayFilter::EstimateBufferFit(uint32_t requestedDelaySeconds, uint32_t min
 	in.minResolutionHeight = minResolutionHeight;
 	in.budgetBytes = GetBufferBudget();
 	in.capToOutput = capToOutput;
+	in.reservedBytesPerSecond = audioBytesPerSecond;
 	bufferfit::ApplyStorageClass(in, RingClassFor(ringClass), kAssumedCompressionRatio);
 	const bufferfit::Result fit = bufferfit::Compute(in);
 	if (fit.bufferWidth == 0 || fit.bufferHeight == 0)
@@ -713,6 +733,12 @@ void VideoDelayFilter::StopCycle(bool releaseCodecs)
 	lastCaptureCell_ = UINT64_MAX;
 	InvalidatePlaybackCache();
 	effectiveDelaySeconds_ = 0;
+	cycleRunning_ = false;
+	ringWindowFrames_ = 0;
+	appliedDelaySeconds_ = 0;
+	ramTopWidth_ = 0;
+	ramTopHeight_ = 0;
+	topSegments_.clear();
 	policy_ = degradation::Policy();
 	interSteps_ = false;
 	captureDivisor_ = 1;
@@ -1089,6 +1115,7 @@ void VideoDelayFilter::EnsureRingSized(uint32_t origWidth, uint32_t origHeight)
 	in.minResolutionHeight = minResolutionHeight;
 	in.budgetBytes = GetBufferBudget();
 	in.capToOutput = configuredOutputCap_.load();
+	in.reservedBytesPerSecond = AudioBytesPerSecond();
 	// v0.7.0: the cycle's ring class (invariant I9) -- the same one
 	// PlannedEffectiveDelaySeconds() reads, so audio gets this whole-second delay.
 	const bufferfit::RingClass ringClass =
@@ -1099,10 +1126,14 @@ void VideoDelayFilter::EnsureRingSized(uint32_t origWidth, uint32_t origHeight)
 		return;
 
 	const bool threaded = configuredCodecWorkers_.load();
+	// v1.0.0: the same cycle as long as only the delay changed -- it then
+	// changes in place (ApplyLiveDelay()), never by a new, empty ring.
+	if (ring_ && pipelineThreaded_ == threaded && ringFrameIntervalNs_ == frameIntervalNs_ &&
+	    SameCycleGeometry(lastFitInput_, in)) {
+		if (delaySeconds == appliedDelaySeconds_ || ApplyLiveDelay(in))
+			return;
+	}
 	const bool resolutionChanged = bufferWidth_ != fit.bufferWidth || bufferHeight_ != fit.bufferHeight;
-	if (ring_ && !resolutionChanged && ring_->SlotCount() == fit.actualFrames && pipelineThreaded_ == threaded &&
-	    ringFrameIntervalNs_ == frameIntervalNs_ && effectiveDelaySeconds_.load() == fit.effectiveDelaySeconds)
-		return; // Already correctly sized.
 
 	const double fps = static_cast<double>(in.fpsNum) / in.fpsDen;
 	bool restarted = false;
@@ -1199,7 +1230,18 @@ void VideoDelayFilter::EnsureRingSized(uint32_t origWidth, uint32_t origHeight)
 
 	const FrameArena::Config arena = ArenaConfigFor(fit.actualFrames, fit.bufferWidth, fit.bufferHeight,
 							in.budgetBytes, in.compressionRatio);
-	ring_ = std::make_shared<FrameRing>(static_cast<size_t>(fit.actualFrames), arena);
+	// v1.0.0: headers for the longest delay (~90 bytes a slot), frames only
+	// in the window: a live delay change moves the window (ApplyLiveDelay()).
+	const uint64_t capacity = std::max<uint64_t>(
+		fit.actualFrames, bufferfit::CapacityFrames(in.fpsNum, in.fpsDen, in.keyframeIntervalFrames));
+	ring_ = std::make_shared<FrameRing>(static_cast<size_t>(capacity), arena);
+	ring_->SetWindow(static_cast<size_t>(fit.actualFrames));
+	ringWindowFrames_ = fit.actualFrames;
+	appliedDelaySeconds_ = delaySeconds;
+	ramTopWidth_ = 0;
+	ramTopHeight_ = 0;
+	topSegments_.assign(1, bufferfit::TopSegment{os_gettime_ns(), fit.bufferWidth, fit.bufferHeight});
+	cycleRunning_ = true;
 
 	// Degradation ladder (B.8): from the fitted size down to the user's
 	// quality floor (in buffer pixels: the same floor bufferfit used), then
@@ -1319,14 +1361,18 @@ void VideoDelayFilter::ApplyEncoderCeiling(bool force)
 		return;
 	// Only below the ring's own size, and only for the live scene the size of
 	// the canvas (the case the output cap applies to): a soft ceiling.
-	uint32_t topWidth = bufferWidth_;
-	uint32_t topHeight = bufferHeight_;
+	// v1.0.0: a live delay raise may have lowered the top so its extra
+	// seconds fit the RAM budget (ApplyLiveDelay()).
+	const uint32_t ramTopWidth = ramTopWidth_ > 0 ? ramTopWidth_ : bufferWidth_;
+	const uint32_t ramTopHeight = ramTopHeight_ > 0 ? ramTopHeight_ : bufferHeight_;
+	uint32_t topWidth = ramTopWidth;
+	uint32_t topHeight = ramTopHeight;
 	const uint32_t width = ceilingWidth_.load();
 	const uint32_t height = ceilingHeight_.load();
 	const bool canvasSized = lastFitInput_.sourceWidth == mixBaseWidth_ &&
 				 lastFitInput_.sourceHeight == mixBaseHeight_;
-	if (configuredOutputCap_.load() && canvasSized && width > 0 && height > 0 && height < bufferHeight_ &&
-	    width <= bufferWidth_) {
+	if (configuredOutputCap_.load() && canvasSized && width > 0 && height > 0 && height < ramTopHeight &&
+	    width <= ramTopWidth) {
 		topWidth = width;
 		topHeight = height;
 	}
@@ -1355,10 +1401,13 @@ void VideoDelayFilter::ApplyEncoderCeiling(bool force)
 	ApplyCurrentRung();
 	ClearPolicyWindows();
 	++healthChanges_;
-	if (topWidth != bufferWidth_ || topHeight != bufferHeight_)
+	if (topWidth != ramTopWidth || topHeight != ramTopHeight)
 		TRIGGLOW_LOG_INFO(kComponent,
 				  "encoder ceiling: capturing at most %ux%u (the largest encoder of the main canvas) "
 				  "instead of %ux%u -- the ring, its RAM limit and the delay are unchanged",
+				  topWidth, topHeight, ramTopWidth, ramTopHeight);
+	else if (ramTopHeight != bufferHeight_)
+		TRIGGLOW_LOG_INFO(kComponent, "capturing up to %ux%u (lowered from %ux%u by a live delay raise)",
 				  topWidth, topHeight, bufferWidth_, bufferHeight_);
 	else
 		TRIGGLOW_LOG_INFO(kComponent, "encoder ceiling lifted: capturing up to %ux%u again", topWidth,
@@ -1388,6 +1437,10 @@ void VideoDelayFilter::MaybeEvaluateDegradation(uint64_t nowNs)
 	const uint64_t ladderSerial = healthChanges_;
 	ApplyEncoderCeiling(false);
 	if (EvaluateCodecPolicy(nowNs) || healthChanges_ != ladderSerial)
+		return;
+	// v1.0.0: right after a live delay change (and the hold it starts) the
+	// decoder catches up to the new target: not load.
+	if (nowNs < liveChangeGraceUntilNs_)
 		return;
 
 	// OBS's lagged frames since the last evaluation.
@@ -1674,8 +1727,9 @@ void VideoDelayFilter::PublishHealth(bool running)
 		health.maxLevel = static_cast<uint32_t>(policy_.Ladder().size() - 1);
 		health.width = captureWidth_;
 		health.height = captureHeight_;
-		health.fullWidth = bufferWidth_;
-		health.fullHeight = bufferHeight_;
+		// Rung 0: the ring's size, or the one a live delay raise lowered it to.
+		health.fullWidth = ramTopWidth_ > 0 ? ramTopWidth_ : bufferWidth_;
+		health.fullHeight = ramTopHeight_ > 0 ? ramTopHeight_ : bufferHeight_;
 		health.captureFps = fps / std::max<uint32_t>(1, captureDivisor_);
 		health.encodeContexts = policy_.CurrentParallelism().contexts;
 		health.encodeSlices = policy_.CurrentParallelism().slices;
@@ -2232,7 +2286,7 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 	uint64_t oldestNs = 0;
 	if (!ring_->OldestCaptureNs(oldestNs))
 		return;
-	if (oldestNs > targetNs) {
+	if (oldestNs > targetNs && !havePlaybackFrame_) {
 		// Buffer still filling (first `delay` seconds after Enable): draw
 		// nothing. BufferModeController pairs this with a loading scene on
 		// Program for exactly this window. Right as the window ends the
@@ -2248,6 +2302,12 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 		}
 		targetNs = oldestNs;
 	}
+	// v1.0.0: with a frame shown already, a target older than the ring means
+	// the delay was raised live. Nothing newer is due, so the last frame is
+	// redrawn below (the audio is silent for as long) until the extra seconds
+	// have built up; every frame after it is still in the ring, and asking the
+	// pipeline as usual keeps the decoder where it was instead of looking
+	// like rendering resumed after a pause (which restarts it from a key).
 
 	// The newest decoded frame not younger than the target, if it isn't the
 	// one already in the textures (Render() runs once per view of the scene:
@@ -2294,7 +2354,10 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 					++perf_.holdsNoKey;
 			} else if (due.state == SlotState::Ready) {
 				++perf_.holdsLateDecode; // Encoded, but the decoder didn't get to it in time.
-				missEvents_.Push(nowNs, 0, tag);
+				// Not right after a live delay change: the decoder jumping to
+				// the new target is no sign of a slow one.
+				if (nowNs >= liveChangeGraceUntilNs_)
+					missEvents_.Push(nowNs, 0, tag);
 			} else if (due.state == SlotState::Dropped) {
 				++perf_.holdsDropped;
 			} else {
@@ -2305,6 +2368,11 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 
 	if (!havePlaybackFrame_)
 		return; // Nothing from this cycle uploaded yet: draw nothing.
+	DrawPlaybackFrame(sourceWidth, sourceHeight);
+}
+
+void VideoDelayFilter::DrawPlaybackFrame(uint32_t sourceWidth, uint32_t sourceHeight)
+{
 	gs_eparam_t *imageParam = gs_effect_get_param_by_name(effect_, "image");
 	gs_eparam_t *imageUParam = gs_effect_get_param_by_name(effect_, "image_u");
 	gs_eparam_t *imageVParam = gs_effect_get_param_by_name(effect_, "image_v");
@@ -2421,6 +2489,19 @@ void VideoDelayFilter::GetEffectiveDelaySecondsProc(void *data, calldata_t *para
 
 uint32_t VideoDelayFilter::PlannedEffectiveDelaySeconds() const
 {
+	// v1.0.0: a running cycle changes its delay in place, and what that gives
+	// depends on the ring as it is (its window, the frames it holds, the size
+	// captured now): it is applied on the graphics thread right away and that
+	// value returned, so audio gets exactly what video uses.
+	if (cycleRunning_.load()) {
+		obs_queue_task(OBS_TASK_GRAPHICS, &VideoDelayFilter::ApplyLiveDelayTask,
+			       const_cast<VideoDelayFilter *>(this), true);
+		if (cycleRunning_.load()) {
+			const uint32_t applied = effectiveDelaySeconds_.load();
+			if (applied > 0)
+				return applied;
+		}
+	}
 	// What EnsureRingSized() reads, read the same way: the target's base size,
 	// OBS's video info (Tick() keeps the filter's copy current) and the
 	// filter's settings -- obs_source_update() merges new settings into them
@@ -2472,8 +2553,97 @@ uint32_t VideoDelayFilter::PlannedEffectiveDelaySeconds() const
 		return 0;
 	return EstimateBufferFit(delaySeconds, minResolutionHeight, sourceWidth, sourceHeight, ovi.base_width,
 				 ovi.base_height, ovi.output_width, ovi.output_height, ovi.fps_num, ovi.fps_den,
-				 capToOutput, ringClass)
+				 capToOutput, ringClass, AudioBytesPerSecond())
 		.effectiveSeconds;
+}
+
+void VideoDelayFilter::ApplyLiveDelayTask(void *param)
+{
+	auto *filter = static_cast<VideoDelayFilter *>(param);
+	// The size the ring was last sized for: a change of anything but the delay
+	// still resizes it, exactly as the next Render() would.
+	if (filter->ring_ && filter->lastFitInput_.sourceWidth > 0 && filter->lastFitInput_.sourceHeight > 0)
+		filter->EnsureRingSized(filter->lastFitInput_.sourceWidth, filter->lastFitInput_.sourceHeight);
+}
+
+bool VideoDelayFilter::SameCycleGeometry(const bufferfit::Input &a, const bufferfit::Input &b)
+{
+	return a.sourceWidth == b.sourceWidth && a.sourceHeight == b.sourceHeight && a.baseWidth == b.baseWidth &&
+	       a.baseHeight == b.baseHeight && a.outputWidth == b.outputWidth && a.outputHeight == b.outputHeight &&
+	       a.fpsNum == b.fpsNum && a.fpsDen == b.fpsDen && a.minResolutionHeight == b.minResolutionHeight &&
+	       a.budgetBytes == b.budgetBytes && a.compressionRatio == b.compressionRatio &&
+	       a.capToOutput == b.capToOutput && a.keyframeIntervalFrames == b.keyframeIntervalFrames &&
+	       a.reservedBytesPerSecond == b.reservedBytesPerSecond;
+}
+
+bool VideoDelayFilter::ApplyLiveDelay(const bufferfit::Input &in)
+{
+	const uint64_t nowNs = os_gettime_ns();
+	bufferfit::LiveRing live;
+	live.windowFrames = ringWindowFrames_;
+	live.capacityFrames = ring_->SlotCount();
+	live.topWidth = ramTopWidth_ > 0 ? ramTopWidth_ : bufferWidth_;
+	live.topHeight = ramTopHeight_ > 0 ? ramTopHeight_ : bufferHeight_;
+	live.ringBytes = bufferfit::WindowBytes(topSegments_.data(), topSegments_.size(), nowNs, ringWindowFrames_,
+						frameIntervalNs_, in.compressionRatio);
+	const bufferfit::LiveChange change = bufferfit::ComputeLiveChange(in, live);
+	if (!change.valid)
+		return false; // The caller resizes instead.
+
+	const uint32_t previousDelay = appliedDelaySeconds_;
+	const uint32_t previousEffective = effectiveDelaySeconds_.load();
+	ring_->SetWindow(static_cast<size_t>(change.windowFrames));
+	ringWindowFrames_ = change.windowFrames;
+	appliedDelaySeconds_ = in.delaySeconds;
+	effectiveDelaySeconds_ = change.effectiveDelaySeconds;
+	lastFitInput_.delaySeconds = in.delaySeconds;
+	lastFit_.actualFrames = change.windowFrames;
+	lastFit_.desiredFrames =
+		bufferfit::DesiredFrames(in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
+	lastFit_.fitsFullDuration = change.fitsFullDuration;
+	lastFit_.effectiveDelaySeconds = change.effectiveDelaySeconds;
+	if (obs_data_t *published = obs_source_get_settings(filterSource_)) {
+		obs_data_set_int(published, "effective_delay_seconds", change.effectiveDelaySeconds);
+		obs_data_release(published);
+	}
+	if (change.loweredTop) {
+		ramTopWidth_ = change.topWidth;
+		ramTopHeight_ = change.topHeight;
+		topSegments_.push_back(bufferfit::TopSegment{nowNs, change.topWidth, change.topHeight});
+		// Bounded: the two oldest merge into one at the larger size (the
+		// estimate only ever errs towards more bytes).
+		while (topSegments_.size() > kMaxTopSegments) {
+			topSegments_[1].width = std::max(topSegments_[0].width, topSegments_[1].width);
+			topSegments_[1].height = std::max(topSegments_[0].height, topSegments_[1].height);
+			topSegments_[1].fromNs = topSegments_[0].fromNs;
+			topSegments_.erase(topSegments_.begin());
+		}
+		ApplyEncoderCeiling(true); // Rebuilds the ladder from the new top.
+	}
+	// The decoder jumping to the new target (lowered) or the picture holding
+	// (raised) is not load: the degradation policy starts its windows over.
+	ClearPolicyWindows();
+	const uint64_t holdNs =
+		change.effectiveDelaySeconds > previousEffective
+			? static_cast<uint64_t>(change.effectiveDelaySeconds - previousEffective) * 1000000000ULL
+			: 0;
+	liveChangeGraceUntilNs_ = nowNs + holdNs + kLiveChangeGraceNs;
+	TRIGGLOW_LOG_INFO(kComponent,
+			  "delay changed live: %us -> %us (video and audio delay %us, was %us), window %llu slots%s%s",
+			  previousDelay, in.delaySeconds, change.effectiveDelaySeconds, previousEffective,
+			  static_cast<unsigned long long>(change.windowFrames),
+			  change.effectiveDelaySeconds > previousEffective
+				  ? " -- the picture holds until the extra seconds have built up"
+				  : " -- skipped forward",
+			  change.fitsFullDuration ? "" : " (trimmed: the RAM budget doesn't hold the full delay)");
+	if (change.loweredTop)
+		TRIGGLOW_LOG_INFO(
+			kComponent,
+			"delay raise: capturing at most %ux%u from now on (was %ux%u) so the extra seconds fit "
+			"the RAM budget next to the frames already stored",
+			change.topWidth, change.topHeight, live.topWidth, live.topHeight);
+	PublishHealth(true);
+	return true;
 }
 
 void VideoDelayFilter::GetPipelineStateProc(void *data, calldata_t *params)

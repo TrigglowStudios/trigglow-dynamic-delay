@@ -93,8 +93,13 @@ int main(int argc, char **argv)
 	for (int second = 0; second < 600; ++second) {
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 		while (next < script.size() && script[next].first <= second + 1) {
-			std::printf("SET DELAY %d at t=%d\n", script[next].second, second + 1);
-			relay.SetDelay(static_cast<uint32_t>(script[next].second));
+			if (script[next].second < 0) {
+				std::printf("DUMP at t=%d\n", second + 1);
+				relay.Dump();
+			} else {
+				std::printf("SET DELAY %d at t=%d\n", script[next].second, second + 1);
+				relay.SetDelay(static_cast<uint32_t>(script[next].second));
+			}
 			++next;
 		}
 		const auto s = relay.GetStatus();

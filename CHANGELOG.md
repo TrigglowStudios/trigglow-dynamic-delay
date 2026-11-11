@@ -11,7 +11,7 @@ builds are still alpha (they build and pass CI, but haven't been run on a live s
 sign-in are kept.
 
 **What's new:**
-- **Stream mode (Windows): the delay on your stream itself, at almost no cost.** The plugin now
+- **Stream mode (Windows, macOS and Linux): the delay on your stream itself, at almost no cost.** The plugin now
   holds the stream OBS has already encoded and sends it out later, instead of keeping your
   rendered picture in RAM. RAM is your bitrate times the seconds kept (about 45 MB per minute at
   6 Mbps) and there's no second encode. With it:
@@ -20,19 +20,31 @@ sign-in are kept.
     anything newer.
   - **Every scene is delayed**, so you can switch scenes while delayed.
   - **Your recording, Replay Buffer and virtual camera stay live.**
-  - **Multistream:** add more destinations (any rtmp:// or rtmps:// server and key) and they get
-    the same delayed stream, from one encode.
   - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
   - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
-  - The dock shows each destination's state, the RAM used and the bitrate.
+  - The dock shows where your stream goes and its state, the RAM used and the bitrate.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
+  - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet
+    run on a live stream. The plugin carries its own FFmpeg for it there (LGPL, linked in); RTMPS
+    uses macOS's own TLS and, on Linux, the system's OpenSSL 3 (the packages now depend on it).
+- **Scene mode changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
+  once; raise it and the picture holds (or the loading scene shows, above 3 s) only for the extra
+  seconds. The buffer never starts again from empty. Before, you had to turn the delay off to
+  change it, and the most was 60 s. To switch scenes while delayed, use stream mode; the dock
+  says so.
 - **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
   "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
   in a file only your user can read.
 - **The delay badge for viewers in stream mode**, in the corner you choose, up to 600 s.
 - **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
   delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
+- **Dump what viewers haven't seen (stream mode).** Something slipped on screen? One button or
+  hotkey and the seconds still waiting in the delay are never sent: the stream jumps to live and the
+  delay comes back on its own.
+- **Delay by scene (stream mode).** Turn the delay on (with its own seconds) or off when you switch
+  to a scene: on in your game scene, off in Just Chatting, without touching anything.
+- **Three delay presets**, each with its own hotkey.
 - **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
   names and bindings.
 - **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the

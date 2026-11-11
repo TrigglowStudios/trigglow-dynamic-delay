@@ -18,6 +18,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include "audio-delay-line.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -51,11 +53,11 @@ extern "C" {
 // configuring all of them together so they always agree with the video
 // delay's seconds and Filling/Active state.
 //
-// Same ring-buffer delay-window logic as VideoDelayFilter::FilterAudio
-// (this is where that logic actually gets used -- VideoDelayFilter's own
-// copy stays unwired, see its Register() comment). Audio is cheap CPU-side
-// PCM (no VRAM budget tradeoff needed), so the full requested delay is
-// always buffered exactly, once per attached leaf source.
+// The delay itself is AudioDelayLine (v1.0.0; before, the same ring logic
+// lived here and every delay change emptied it). Raw PCM, once per attached
+// leaf source: 23 MB per stereo source at 60 s, 230 MB at 600 s, which the
+// video ring's RAM budget sets aside since v1.0.0
+// (bufferfit::Input::reservedBytesPerSecond).
 namespace trigglow {
 
 class AudioDelayFilter {
@@ -73,19 +75,6 @@ private:
 	obs_audio_data *FilterAudio(obs_audio_data *audio);
 	// Sets configuredDelaySeconds_, logging a real change. Under managedMutex_.
 	void ApplyDelaySeconds(uint32_t seconds);
-
-	// Resizes ring_ for the given channel count/sample rate and the current
-	// configuredDelaySeconds_. No-op if already correctly sized.
-	void EnsureRingSized(uint32_t channels, uint32_t samplesPerSec, uint32_t delaySeconds);
-
-	// Drops all buffered history (the ring's memory is kept; only the
-	// bookkeeping resets, so stale samples can never be read back).
-	void ResetHistory();
-
-	// Appends `frames` frames of silence to the ring, so the ring keeps
-	// tracking wall-clock time across gaps where the source delivered no
-	// audio. Caller guarantees frames < ring length.
-	void WriteSilence(size_t frames);
 
 	// --- obs_source_info callback trampolines ---
 	static const char *GetName(void *typeData);
@@ -124,18 +113,12 @@ private:
 	// nothing while the app is silent) or restarted.
 	bool haveExpectedTimestamp_ = false;
 	uint64_t expectedTimestamp_ = 0;
-	bool outputWasActive_ = false;    // Last chunk came from real history (not warm-up silence).
 	uint32_t timelineEventCount_ = 0; // Rate-limits gap/rewind log lines.
 
-	// ring_[channel][frame] -- one flat sample buffer per channel, big
-	// enough for configuredDelaySeconds_ at samplesPerSec_. Resized by
-	// EnsureRingSized whenever the delay, channel count, or sample rate
-	// changes.
-	std::vector<std::vector<float>> ring_;
-	size_t writeIndex_ = 0;
-	size_t bufferedFrames_ = 0; // How many frames of real history ring_ holds so far.
-	uint32_t channels_ = 0;
-	uint32_t samplesPerSec_ = 0;
+	// v1.0.0: the delay line itself (audio-delay-line.hpp): keeps its history
+	// across a delay change, so a live change skips forward or holds in step
+	// with the video instead of emptying the ring.
+	AudioDelayLine line_;
 
 	// Owned output storage for FilterAudio(): filter_audio's contract
 	// requires returned data to stay valid until the next call, so this

@@ -154,7 +154,7 @@ Result Compute(const Input &in)
 		return {};
 
 	const double ratio = in.compressionRatio > 0.0 ? in.compressionRatio : 1.0;
-	const double budget = static_cast<double>(in.budgetBytes);
+	const double budget = static_cast<double>(VideoBudgetBytes(in));
 	const uint64_t desired = DesiredFrames(in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
 	const double srcH = static_cast<double>(in.sourceHeight);
 
@@ -208,20 +208,145 @@ Result Compute(const Input &in)
 	r.cappedByOutput = capScale < 1.0;
 	r.reducedByRam = scale < capScale;
 	r.fitsFullDuration = r.actualFrames >= desired;
-	if (r.fitsFullDuration) {
-		r.effectiveDelaySeconds = in.delaySeconds;
-	} else {
-		// Whole seconds, in integer math (frames * den / num), keeping the
-		// slack in front of the delay when there's room for it.
-		const uint64_t span = r.actualFrames - 1;
-		const uint64_t slack = SlackFrames(in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
-		const uint64_t withMargin = span > slack ? span - slack : 0;
-		uint64_t seconds = withMargin * in.fpsDen / in.fpsNum;
-		if (seconds == 0)
-			seconds = span * in.fpsDen / in.fpsNum;
-		r.effectiveDelaySeconds = static_cast<uint32_t>(std::min<uint64_t>(seconds, in.delaySeconds));
-	}
+	r.effectiveDelaySeconds =
+		EffectiveSecondsFor(r.actualFrames, in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
 	return r;
+}
+
+uint32_t EffectiveSecondsFor(uint64_t frames, uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen,
+			     uint32_t keyframeIntervalFrames)
+{
+	if (fpsNum == 0 || fpsDen == 0 || frames == 0)
+		return 0;
+	if (frames >= DesiredFrames(delaySeconds, fpsNum, fpsDen, keyframeIntervalFrames))
+		return delaySeconds;
+	// Whole seconds, in integer math (frames * den / num), keeping the slack in
+	// front of the delay when there's room for it.
+	const uint64_t span = frames - 1;
+	const uint64_t slack = SlackFrames(delaySeconds, fpsNum, fpsDen, keyframeIntervalFrames);
+	const uint64_t withMargin = span > slack ? span - slack : 0;
+	uint64_t seconds = withMargin * fpsDen / fpsNum;
+	if (seconds == 0)
+		seconds = span * fpsDen / fpsNum;
+	return static_cast<uint32_t>(std::min<uint64_t>(seconds, delaySeconds));
+}
+
+uint64_t VideoBudgetBytes(const Input &in)
+{
+	const uint64_t audio = in.reservedBytesPerSecond * in.delaySeconds;
+	const uint64_t quarter = in.budgetBytes / 4;
+	return in.budgetBytes > audio && in.budgetBytes - audio > quarter ? in.budgetBytes - audio : quarter;
+}
+
+uint64_t CapacityFrames(uint32_t fpsNum, uint32_t fpsDen, uint32_t keyframeIntervalFrames)
+{
+	return DesiredFrames(kMaxDelaySeconds, fpsNum, fpsDen, keyframeIntervalFrames);
+}
+
+double WindowBytes(const TopSegment *segments, size_t count, uint64_t nowNs, uint64_t windowFrames, uint64_t intervalNs,
+		   double ratio)
+{
+	if (!segments || count == 0 || windowFrames == 0)
+		return 0.0;
+	if (ratio <= 0.0)
+		ratio = 1.0;
+	double bytes = 0.0;
+	uint64_t remaining = windowFrames;
+	uint64_t segmentEndNs = nowNs;
+	// Newest segment first: the window is the newest windowFrames frames.
+	for (size_t i = count; i-- > 0 && remaining > 0;) {
+		const TopSegment &segment = segments[i];
+		uint64_t frames = remaining; // The oldest segment takes whatever is left.
+		if (i > 0 && intervalNs > 0) {
+			const uint64_t spanNs = segmentEndNs > segment.fromNs ? segmentEndNs - segment.fromNs : 0;
+			frames = std::min(remaining, (spanNs + intervalNs - 1) / intervalNs);
+		}
+		bytes += static_cast<double>(frames) *
+			 (static_cast<double>(Nv12FrameBytes(segment.width, segment.height)) / ratio);
+		remaining -= frames;
+		segmentEndNs = segment.fromNs;
+	}
+	return bytes;
+}
+
+LiveChange ComputeLiveChange(const Input &in, const LiveRing &ring)
+{
+	LiveChange c;
+	if (in.sourceWidth == 0 || in.sourceHeight == 0 || in.fpsNum == 0 || in.fpsDen == 0 || in.delaySeconds == 0 ||
+	    ring.topWidth == 0 || ring.topHeight == 0 || ring.capacityFrames == 0)
+		return c;
+	c.valid = true;
+	c.topWidth = ring.topWidth;
+	c.topHeight = ring.topHeight;
+
+	const double ratio = in.compressionRatio > 0.0 ? in.compressionRatio : 1.0;
+	const double budget = static_cast<double>(VideoBudgetBytes(in));
+	const uint64_t full = DesiredFrames(in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
+	const uint64_t desired = std::min(full, ring.capacityFrames);
+	auto perFrame = [ratio](uint32_t width, uint32_t height) {
+		return static_cast<double>(Nv12FrameBytes(width, height)) / ratio;
+	};
+
+	if (desired <= ring.windowFrames) {
+		// Lowering (or no change): the window shrinks, nothing new to store.
+		c.windowFrames = desired;
+	} else {
+		// Raising: every frame in the ring stays, and the extra slots are
+		// captured at the top size -- or a smaller one -- from now on.
+		const uint64_t extra = desired - ring.windowFrames;
+		const double room = budget - ring.ringBytes;
+		auto fitsAt = [&](uint32_t width, uint32_t height) {
+			return room >= static_cast<double>(extra) * perFrame(width, height);
+		};
+		uint32_t width = ring.topWidth;
+		uint32_t height = ring.topHeight;
+		if (!fitsAt(width, height)) {
+			// The largest size between the floor and the top that fits, walking
+			// whole source rows down from the ideal one (Compute()'s walk).
+			const double srcH = static_cast<double>(in.sourceHeight);
+			const double capScale = OutputCapScale(in);
+			const double floorScale =
+				std::min(capScale, std::min(1.0, static_cast<double>(in.minResolutionHeight) / srcH));
+			const auto floorRows = static_cast<uint32_t>(std::llround(floorScale * srcH));
+			const auto topRows =
+				static_cast<uint32_t>(std::floor(static_cast<double>(ring.topHeight) + 1e-6));
+			uint32_t rows = topRows;
+			if (room > 0.0) {
+				const double fullResBytes = perFrame(in.sourceWidth, in.sourceHeight) > 0.0
+								    ? perFrame(in.sourceWidth, in.sourceHeight)
+								    : 1.0;
+				const double ideal = std::sqrt(room / (static_cast<double>(extra) * fullResBytes));
+				rows = std::min(rows, static_cast<uint32_t>(std::floor(ideal * srcH + 1e-6)));
+			}
+			rows = std::max(rows, floorRows);
+			auto dimsAt = [&](uint32_t r, uint32_t &w, uint32_t &h) {
+				const double s = static_cast<double>(r) / srcH;
+				w = std::min(AlignedWidth(in.sourceWidth, s), ring.topWidth);
+				h = std::min(EvenDim(in.sourceHeight, s), ring.topHeight);
+			};
+			dimsAt(rows, width, height);
+			while (rows > floorRows && !fitsAt(width, height)) {
+				--rows;
+				dimsAt(rows, width, height);
+			}
+		}
+		c.topWidth = width;
+		c.topHeight = height;
+		c.loweredTop = height < ring.topHeight || width < ring.topWidth;
+		if (fitsAt(width, height)) {
+			c.windowFrames = desired;
+		} else {
+			// Even the floor doesn't hold all of it: the whole seconds that do.
+			const double each = perFrame(width, height);
+			const uint64_t grow = room > 0.0 && each > 0.0 ? static_cast<uint64_t>(std::floor(room / each))
+								       : 0;
+			c.windowFrames = ring.windowFrames + std::min(grow, extra);
+		}
+	}
+	c.effectiveDelaySeconds =
+		EffectiveSecondsFor(c.windowFrames, in.delaySeconds, in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
+	c.fitsFullDuration = c.windowFrames >= full;
+	return c;
 }
 
 } // namespace trigglow::bufferfit

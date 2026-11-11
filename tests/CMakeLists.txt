@@ -118,6 +118,19 @@ target_include_directories(frame_ring_tests PRIVATE "${_src}")
 set_target_properties(frame_ring_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME frame_ring_tests COMMAND frame_ring_tests)
 
+# v1.0.0: the audio delay line that keeps its history across live delay
+# changes (src/audio-delay-line.*).
+add_executable(
+  audio_delay_line_tests
+  audio_delay_line_tests.cpp
+  check.hpp
+  "${_src}/audio-delay-line.cpp"
+  "${_src}/audio-delay-line.hpp"
+)
+target_include_directories(audio_delay_line_tests PRIVATE "${_src}")
+set_target_properties(audio_delay_line_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME audio_delay_line_tests COMMAND audio_delay_line_tests)
+
 add_executable(
   degradation_policy_tests
   degradation_policy_tests.cpp
@@ -232,7 +245,7 @@ if(WIN32)
     target_compile_definitions(relay_harness PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
     target_link_libraries(
       relay_harness
-      PRIVATE "${_ffmpeg}/lib/avformat.lib" "${_ffmpeg}/lib/avcodec.lib" "${_ffmpeg}/lib/avutil.lib" ws2_32
+      PRIVATE "${_ffmpeg}/lib/avformat.lib" "${_ffmpeg}/lib/avcodec.lib" "${_ffmpeg}/lib/avutil.lib" ws2_32 iphlpapi
     )
     set_target_properties(relay_harness PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
     add_custom_command(

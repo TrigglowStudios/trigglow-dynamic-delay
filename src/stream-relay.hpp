@@ -31,8 +31,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // from them; the controller polls GetStatus() and receives events through the
 // callback (which it must marshal to its own thread).
 //
-// Available only where the plugin ships FFmpeg's avformat (Windows for now):
-// RelayAvailable() is false elsewhere and every call fails cleanly.
+// Available only where the plugin ships FFmpeg's avformat (Windows, Linux, macOS;
+// not the core-only build): RelayAvailable() is false elsewhere and every call
+// fails cleanly.
 
 #include <cstdint>
 #include <functional>
@@ -107,6 +108,12 @@ public:
 	// Live delay change: every destination splices at once.
 	void SetDelay(uint32_t seconds);
 	uint32_t Delay() const;
+
+	// Dump: what viewers haven't seen yet is never sent. Every destination
+	// jumps to the next keyframe that arrives (live, delay 0); nothing from
+	// before this moment can be spliced to again. The caller raises the delay
+	// again later (SetDelay), which only rewinds into what came after.
+	void Dump();
 
 	// Cuts everything now (OBS closing, a new stream starting).
 	void Stop();

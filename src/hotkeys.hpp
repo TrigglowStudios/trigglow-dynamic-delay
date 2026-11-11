@@ -56,7 +56,19 @@ public:
 	// Unregisters them. Call from obs_module_unload().
 	void Shutdown();
 
-	enum class Action { Toggle, Enable, Disable, SkipLive, DelayUp, DelayDown, Count };
+	enum class Action {
+		Toggle,
+		Enable,
+		Disable,
+		SkipLive,
+		DelayUp,
+		DelayDown,
+		Dump,
+		Preset1,
+		Preset2,
+		Preset3,
+		Count
+	};
 
 private:
 	struct Binding {

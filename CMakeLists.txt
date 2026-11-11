@@ -24,6 +24,17 @@ option(TRIGGLOW_ALLOW_API_HOST_OVERRIDE "Test builds only: API host from the TRI
 if(TRIGGLOW_ALLOW_API_HOST_OVERRIDE AND DEFINED ENV{CI})
   message(FATAL_ERROR "TRIGGLOW_ALLOW_API_HOST_OVERRIDE is for local test builds only")
 endif()
+# Local end-to-end tests of stream mode in a real OBS only: with
+# TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1 in OBS's environment, stream mode's Enable
+# doesn't need the signed-in free account. A CI build with it ON stops here.
+option(
+  TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+  "Test builds only: skip stream mode's account gate when TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1"
+  OFF
+)
+if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE AND DEFINED ENV{CI})
+  message(FATAL_ERROR "TRIGGLOW_TEST_SKIP_ACCOUNT_GATE is for local test builds only")
+endif()
 
 include(compilerconfig)
 include(defaults)
@@ -51,7 +62,8 @@ target_compile_definitions(
 # only this pass -- macOS has no equivalent trusted prebuilt to BtbN's
 # Windows builds and isn't the priority platform yet (see docs/ROADMAP.md);
 # TRIGGLOW_HAVE_FFMPEG gates the smoke-test code so macOS keeps compiling
-# with zero FFmpeg dependency.
+# without it. v1.0.0: macOS links its own static FFmpeg for the stream mode
+# relay only (TRIGGLOW_HAVE_STREAM_RELAY, OS_MACOS block below).
 if(OS_WINDOWS)
   # BtbN's package ships only pre-versioned DLL import libs (avcodec.lib +
   # matching avcodec-63.dll etc.), not a true static archive -- so this is
@@ -100,7 +112,7 @@ if(OS_WINDOWS)
   # Not in the core-only build: hosts there have their own outputs.
   if(NOT TRIGGLOW_CORE_ONLY)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32 iphlpapi)
   endif()
 
   # Same DESTINATION set_target_properties_plugin() (cmake/windows/helpers.cmake)
@@ -139,25 +151,39 @@ if(OS_WINDOWS)
   endforeach()
 elseif(OS_LINUX)
   # v0.7.1: our own FFmpeg, an LGPL static build of avcodec and avutil with
-  # only the MJPEG encoder and decoder (.github/scripts/linux/build-ffmpeg.sh,
+  # only the MJPEG encoder and decoder (.github/scripts/build-ffmpeg.sh,
   # pinned by buildspec.json's ffmpeg-source). Linked into the plugin, so the
   # package depends on no distro FFmpeg (libavcodec60/61/62 depending on the
   # release), and compiled with hidden visibility, so none of its symbols is
   # exported to clash with the avcodec OBS itself loads. The version script
   # exports only the obs_module_* entry points.
+  # v1.0.0: the same build has avformat with only what the stream mode relay
+  # needs (FLV, RTMP/RTMPS over TCP and TLS); TLS through the system's
+  # OpenSSL 3, linked dynamically (libssl.so.3, which every supported distro
+  # ships and the packages depend on, .github/scripts/linux/package.sh).
   set(_ffmpeg_root "${CMAKE_CURRENT_SOURCE_DIR}/.deps/ffmpeg-linux-${CMAKE_SYSTEM_PROCESSOR}")
-  if(NOT EXISTS "${_ffmpeg_root}/lib/libavcodec.a" OR NOT EXISTS "${_ffmpeg_root}/lib/libavutil.a")
+  if(
+    NOT EXISTS "${_ffmpeg_root}/lib/libavcodec.a"
+    OR NOT EXISTS "${_ffmpeg_root}/lib/libavutil.a"
+    OR NOT EXISTS "${_ffmpeg_root}/lib/libavformat.a"
+  )
     message(
       FATAL_ERROR
-      "No static FFmpeg in ${_ffmpeg_root}: run .github/scripts/linux/build-ffmpeg.sh first "
+      "No static FFmpeg in ${_ffmpeg_root}: run .github/scripts/build-ffmpeg.sh first "
       "(it builds the version pinned in buildspec.json)."
     )
   endif()
   target_include_directories(${CMAKE_PROJECT_NAME} BEFORE PRIVATE "${_ffmpeg_root}/include")
-  target_link_libraries(
-    ${CMAKE_PROJECT_NAME}
-    PRIVATE "${_ffmpeg_root}/lib/libavcodec.a" "${_ffmpeg_root}/lib/libavutil.a" m
-  )
+  # Static archives in dependency order: avformat needs avcodec and avutil,
+  # and its TLS needs OpenSSL.
+  set(_ffmpeg_libs "${_ffmpeg_root}/lib/libavcodec.a" "${_ffmpeg_root}/lib/libavutil.a")
+  if(NOT TRIGGLOW_CORE_ONLY)
+    find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
+    list(PREPEND _ffmpeg_libs "${_ffmpeg_root}/lib/libavformat.a")
+    list(APPEND _ffmpeg_libs OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+  endif()
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${_ffmpeg_libs} m)
   target_link_options(
     ${CMAKE_PROJECT_NAME}
     PRIVATE
@@ -172,6 +198,50 @@ elseif(OS_LINUX)
   )
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_FFMPEG)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/mjpeg-codec.cpp src/mjpeg-codec.hpp)
+elseif(OS_MACOS AND NOT TRIGGLOW_CORE_ONLY)
+  # v1.0.0 stream mode on macOS: our own FFmpeg, an LGPL static build of
+  # avformat, avcodec and avutil with only what the relay needs (FLV,
+  # RTMP/RTMPS over TCP and TLS, the H.264/HEVC/AV1/AAC parsers), universal
+  # (arm64 and x86_64), from .github/scripts/build-ffmpeg.sh at buildspec.json's
+  # ffmpeg-source pin. TLS through Secure Transport (Security.framework), part
+  # of macOS. Compiled with hidden visibility, so the bundle exports none of
+  # its symbols (CI checks with nm). Scene mode on macOS stays without FFmpeg
+  # (no TRIGGLOW_HAVE_FFMPEG): its storage is unchanged.
+  set(_ffmpeg_root "${CMAKE_CURRENT_SOURCE_DIR}/.deps/ffmpeg-macos-universal")
+  if(
+    NOT EXISTS "${_ffmpeg_root}/lib/libavformat.a"
+    OR NOT EXISTS "${_ffmpeg_root}/lib/libavcodec.a"
+    OR NOT EXISTS "${_ffmpeg_root}/lib/libavutil.a"
+  )
+    message(
+      FATAL_ERROR
+      "No static FFmpeg in ${_ffmpeg_root}: run .github/scripts/build-ffmpeg.sh first "
+      "(it builds the version pinned in buildspec.json)."
+    )
+  endif()
+  target_include_directories(${CMAKE_PROJECT_NAME} BEFORE PRIVATE "${_ffmpeg_root}/include")
+  target_link_libraries(
+    ${CMAKE_PROJECT_NAME}
+    PRIVATE
+      "${_ffmpeg_root}/lib/libavformat.a"
+      "${_ffmpeg_root}/lib/libavcodec.a"
+      "${_ffmpeg_root}/lib/libavutil.a"
+      "-framework Security"
+      "-framework CoreFoundation"
+  )
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+  # The LGPL text and the exact build travel in the bundle's
+  # Resources/licenses, next to data/licenses/LICENSE-ffmpeg.txt.
+  foreach(_license IN ITEMS "COPYING.LGPLv2.1|LICENSE-ffmpeg-LGPL-2.1.txt" "ffmpeg-build.txt|ffmpeg-build-macos.txt")
+    string(REPLACE "|" ";" _license "${_license}")
+    list(GET _license 0 _license_source)
+    list(GET _license 1 _license_name)
+    set(_license_file "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-licenses/${_license_name}")
+    configure_file("${_ffmpeg_root}/share/licenses/${_license_source}" "${_license_file}" COPYONLY)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${_license_file}")
+    set_property(SOURCE "${_license_file}" PROPERTY MACOSX_PACKAGE_LOCATION "Resources/licenses")
+    source_group("Resources/licenses" FILES "${_license_file}")
+  endforeach()
 endif()
 
 # v0.6.0: the MJPEG encode/decode runs on worker threads (src/codec-pipeline.*).
@@ -271,6 +341,8 @@ if(TRIGGLOW_CORE_ONLY)
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/log-redact.cpp
@@ -330,6 +402,8 @@ else()
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/scene-combo-box.cpp
@@ -394,6 +468,11 @@ else()
 endif()
 
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
+if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
+  message(WARNING "Test build: stream mode's account gate can be skipped. Never publish this build.")
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
+endif()
 
 if(TRIGGLOW_ALLOW_API_HOST_OVERRIDE)
   message(WARNING "Test build: the API host can be changed with TRIGGLOW_API_HOST. Never publish this build.")

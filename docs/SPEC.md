@@ -3,7 +3,8 @@
 # Technical specification — Trigglow Dynamic Delay for OBS
 
 Status: **v1.0.0 — stable on Windows; macOS and Linux in alpha**
-Last updated: 2026-10-20 (v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
+Last updated: 2026-11-11 (v1.0.0: §1, §3.8, §8; stream mode has its own document,
+`docs/STREAM_MODE.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
 scratch on 2026-08-26 — see §0). A v0.5.1 hotfix was prepared but never published; everything in it
 shipped in v0.6.0, so this document dates those changes v0.6.0.
 Plugin machine name: `obs-trigglow-dynamic-delay`
@@ -30,6 +31,15 @@ stream's video and audio by a configurable number of seconds — with a button, 
 a Stream Deck button mapped to that hotkey — **without the streaming output ever being touched**. No
 reconnection, no cut, at any point, for any reason. No external app, no web panel, no separate
 process: everything lives inside the OBS process.
+
+**Since v1.0.0 the plugin has two modes, and this document describes scene mode (buffer mode).**
+Stream mode (the default where it can run) delays the stream OBS has already encoded: it
+points OBS's RTMP output at a relay on `127.0.0.1` inside OBS and sends the packets to the
+platform(s) after the delay, with no decode or second encode, every scene delayed and the recording
+live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for
+the streams stream mode can't relay (Enhanced Broadcasting, SRT, RIST, WHIP); it's "Scene mode
+(compatibility)" in the dock. Hotkeys and obs-websocket reach either mode through `DelayRouter`
+(§8).
 
 ## 2. Why reconnection was rejected
 
@@ -126,7 +136,10 @@ audio-capable leaf source** the stream hears with the live scene on Program: eve
 live scene at any depth (nested scenes and groups included) plus the global audio sources on output
 channels 1+ (Settings > Audio: Desktop Audio, Mic/Aux), one instance per source, each running the same delay-window ring-buffer logic as video, in sample space (`ring_[channel][frame]`).
 Video and audio use the same `delaySeconds`, so both land in sync; when the RAM budget trims the
-video ring, both use the same whole-second effective delay instead (§3.3).
+video ring, both use the same whole-second effective delay instead (§3.3). Since v1.0.0 each filter's
+ring is an `AudioDelayLine` (`src/audio-delay-line.*`, pure, tested): it keeps its history across a
+delay change, skipping forward when the delay is lowered and holding (silence) while a raise builds
+up, in step with the video (§3.3).
 
 ### 3.3. `BufferModeController` — the state machine
 
@@ -253,13 +266,60 @@ the loading scene back on Program (keeping the live scene rendering), re-syncs a
 to `Filling`. `Enable()` and that refill bump `BufferModeStatus::fillGeneration`, and the dock
 re-arms its fill timer only when it changes, so other status updates while filling (the overlay
 toggled, its corner changed) no longer restart the countdown and the switch to the wrapper. For a
-change it makes itself (`SetDelaySeconds()` / `SetMinResolutionHeight()` while `Active`), the
-controller predicts the restart with `EstimateBufferFit()` and switches Program before pushing the
-setting. Without a loading scene the default video scene is shown; only if it can't be made does
+change it makes itself (`SetMinResolutionHeight()` while `Active`; `SetDelaySeconds()` too until
+v1.0.0, which changes the delay in place, below), the controller predicts the restart with
+`EstimateBufferFit()` and switches Program before pushing the setting. Without a loading scene the default video scene is shown; only if it can't be made does
 Program stay on the blank wrapper, never on the undelayed live scene. Since v0.6.0 the dock locks
-the live and loading scenes, the seconds and the minimum quality
+the live and loading scenes and the minimum quality (the seconds too until v1.0.0)
 while `Filling`/`Active` (a disabled control is also out of the tab order), and the filters only
 apply the dock's values (below), so in practice restarts come from OBS video resets.
+
+**v1.0.0: changing the delay live.** A delay change while `Filling`/`Active` no longer restarts the
+buffer:
+- The ring's slot headers are allocated for `bufferfit::kMaxDelaySeconds` (600 s; ~90 bytes a slot,
+  about 3 MB at 60 fps) and `FrameRing::SetWindow()` says how many of them hold frames.
+  `EnsureRingSized()` treats a change of the delay alone (`SameCycleGeometry()`) with
+  `ApplyLiveDelay()`, never a hard resize: no `buffer_restarted`, no refill.
+- **Lowered:** the playback target moves forward at once (the decoder jumps to the newest frame at or
+  before it, or to the next key with the hardware codec), and `Reserve()` frees the frames past the
+  new window, at most 128 per capture (600 → 5 s at 60 fps is freed in about 5 s).
+- **Raised:** every frame stays and the window grows. The target is now older than anything left in
+  the ring, so `DrawDelayed()` keeps redrawing the last frame shown until the extra seconds have
+  built up, and the audio is silent for as long (`AudioDelayLine`, §3.2: the read point stops and
+  the lag grows by what is written); then both carry on from exactly where they stopped. Up to
+  `kHoldRaiseMaxSeconds` (3 s) the wrapper stays on Program holding that frame; above, the
+  controller's `OnLiveDelayChanged()` puts the loading scene up for the extra seconds only
+  (`Status.AddingDelay`, a fill window of `BufferModeStatus::fillWindowMs`) and then the wrapper
+  again. With no loading scene at all the wrapper holds, never the undelayed scene.
+- **While `Filling`:** the end of the fill window (`readyAtNs_`) moves by the difference; a lowered
+  delay the buffer already holds goes `Active` at once.
+- **RAM:** a raise needs room for the extra seconds next to every frame already stored.
+  `bufferfit::ComputeLiveChange()` keeps the capture size if they fit the budget; otherwise it lowers
+  the top of the degradation ladder (`ramTopWidth_`/`ramTopHeight_`; the encoders' ceiling of §3.5
+  can only take it lower), never below the quality floor; if even the floor doesn't hold them, the
+  delay is trimmed to the whole seconds that fit, never below the delay already running (the dock
+  then reads "41 / 60 s" as at Enable). What the stored frames take is estimated by
+  `bufferfit::WindowBytes()` from when the capture size changed (`topSegments_`), each stretch at the
+  size it was captured at. Neither the window's growth nor a lowered size is undone within a cycle:
+  the next Enable sizes afresh.
+- **One value for video and audio:** `get_effective_delay_seconds` applies a pushed delay on the
+  graphics thread right away (`ApplyLiveDelayTask`, `obs_queue_task(..., wait=true)`) and returns
+  what the ring really uses, which `SyncAudioDelayToVideoEffective()` gives the audio filters.
+- **Not load:** after a change (and after the hold of a raise) the decoder catches up to the new
+  target. For 2.5 s past it the degradation policy doesn't evaluate and late frames aren't decode
+  misses (`kLiveChangeGraceNs`), and the hold keeps asking the pipeline for the due frame so the
+  decoder keeps its place instead of restarting from a key as after a pause. Without both, a raise
+  put the buffer one rung down in the live test.
+- The dock's seconds stay editable while the delay runs and apply on Enter or when the field loses
+  focus (`setKeyboardTracking(false)`), so typing "300" doesn't go through 3 and 30 on air.
+
+Checked in a portable OBS 33.0.1 (1080p60 canvas and output, `hevc_amf` storage, streaming to a
+local `ffmpeg -listen 1 ... -c copy out.flv`): 10 → 5 s skipped forward at once; 5 → 7 s held 2 s;
+7 → 20 s showed the loading scene, lowered to 15 s during it and was back on the delayed view after
+the 3 s left; 15 → 60 s showed the loading scene for 45 s; 60 → 1 s at once. Program never showed
+the live scene (about 350 samples, one every 0.25 s); the delays read on screen (the clip's clock,
+live source against Program) were 9.93, 4.95, 14.97, 59.97 and 0.95 s; the received FLV ran 198 s,
+11,888 frames, no timestamp gap over 50 ms, and decoded without errors.
 
 **v0.6.0: the dock is the only place to set the delay.** The "(auto)" filters' own properties used
 to let anyone bypass the plugin (90 s in the video filter's dialog put video at 90 s and audio at
@@ -283,11 +343,11 @@ Known limitation: deleting an "(auto)" delay filter by hand while the delay is o
 the wrapper then shows the live scene with no filter, undelayed, until the user disables and
 re-enables the delay from the dock (`Enable()` recreates the filter).
 
-Known limitation, already present before v0.6.0: the plugin doesn't watch Program while the delay is
-`Active`. If the user (or a Stream Deck/obs-websocket action) switches Program to the live scene
-itself instead of the wrapper, the live scene is shown and streamed directly, without delay, since
-the video filter sits on the wrapper scene. Program must stay on the scene the plugin chose while
-the delay runs; changing scenes means turning the delay off first.
+Known limitation: the plugin doesn't watch Program while the delay is `Active`. The video filter
+sits on the live scene's own source (the wrapper nests it), so the live scene shown directly is still
+delayed, but any other scene the user (or a Stream Deck/obs-websocket action) switches Program to is
+streamed live. Since v1.0.0 the dock says so while the delay runs (`Dock.SceneSwitch.Note`):
+switching scenes while delayed needs stream mode. §3.9 explains why scene mode doesn't do it in 1.0.
 
 ### 3.4. Freeing the RAM ring on Disable
 
@@ -314,8 +374,8 @@ The graphics thread never frees the arena (hundreds of MB, tens of ms) nor waits
 
 The user picks two things, both fully free choices, never restricted:
 
-- **Delay (seconds)** — 1 to 60 in the dock's spinner (a UI sanity cap; the real limit is the RAM
-  math below).
+- **Delay (seconds)** — 1 to 600 in the dock's spinner (60 until v1.0.0, §3.10), also the controller's
+  clamp; the real limit is the RAM math below.
 - **Minimum quality** — 480p / 720p / 1080p / 1440p (2K) / 2160p (4K). The floor for the RAM
   reduction below: rather than store the delayed video below this height, the plugin stores fewer
   seconds. Since v0.6.0 it never raises the buffer above OBS's output resolution, though (rule 1
@@ -468,8 +528,13 @@ RAM-limited). `buffer_fit_tests` also covers the 1440p and 2160p floors (a 1440p
 floor stays 2560x1440 and trims the delay to the whole seconds that fit). Seven more suites cover
 the rest of the OBS-free code: `ui_tokens_tests` (WCAG contrast on OBS 31's palettes),
 `auto_names_tests` (§3.7), `overlay_layout_tests` (§3.6), `frame_arena_tests`, `frame_ring_tests`
-and `degradation_policy_tests` (§4.6, §4.7), and `pipeline_stress_tests` (§4.6). Off by default, so
-plugin packaging is unchanged. Two ways to build them (`tests/CMakeLists.txt`):
+and `degradation_policy_tests` (§4.6, §4.7), and `pipeline_stress_tests` (§4.6). Since v1.0.0
+`buffer_fit_tests` also covers the audio reserve, `WindowBytes()` and `ComputeLiveChange()` (lowered,
+raised with room, raised past the size, trimmed at the floor, no room at all, the capacity, invalid
+input, and a session of raises and lowers that never passes the budget), `frame_ring_tests` the
+retention window (eviction bounds, a pinned or encoding slot stopping it), and
+`audio_delay_line_tests` the audio delay line of §3.2. Off by default, so plugin packaging is
+unchanged. Two ways to build them (`tests/CMakeLists.txt`):
 
 ```
 # From the plugin's own build (same compiler flags as the plugin):
@@ -538,9 +603,14 @@ This section covers only the plugin's side. How trigglow.com answers (its limits
 itself, how long it keeps data) lives outside this repository; the plugin only reacts to the
 documented answers and error codes, and never shows the server's own error text.
 
-**One network path.** `win-http.*` is the only code that opens connections: WinHTTP on Windows; on
-macOS and Linux `Available()` is false and every call returns "unavailable" at once (no sign-in,
-Trigi or reports there until they get an HTTP client, planned next). Every request is HTTPS with TLS
+**One network path.** `win-http.*` is the only code that opens HTTPS connections to Trigglow and
+GitHub: WinHTTP on Windows; libcurl on macOS and Linux since v1.0.0 (`TRIGGLOW_HAVE_CURL`, CMake
+links `CURL::libcurl`; macOS 12's libcurl 7.79 is handled; before 1.0.0 `Available()` was false
+there and every call returned "unavailable"). The libcurl path follows the same rules, plus HTTPS
+on port 443 only; without libcurl (the standalone unit tests) it stays "unavailable". It was
+written and reviewed on Windows and built by CI; it hasn't been run on a real Mac or Linux machine
+yet. (Stream mode's relay opens its own RTMP/RTMPS connection to the streamer's service through
+FFmpeg, not through this path: `docs/STREAM_MODE.md`.) Every request is HTTPS with TLS
 1.2 or newer, never follows a redirect (a 3xx is an error, so a Bearer token can't be bounced to
 another host), sends no cookies and no Windows auto-logon, has per-step timeouts plus an overall
 deadline (a longer receive window for Trigi's answers and summaries), caps the response size,
@@ -564,8 +634,12 @@ the CMake option `TRIGGLOW_ALLOW_API_HOST_OVERRIDE`, which CI refuses.
    network errors keep polling until the expiry. Cancel forgets the link and the secret locally.
 3. The token is opaque (the plugin never interprets it) and only works for the plugin's own calls.
    On Windows it's stored with `CryptProtectData` for the current user, without UI, apart from the
-   plugin's settings, written to a temporary file and moved into place. The display name is kept; the
-   email isn't. If it can't be decrypted it's deleted and the plugin is signed out.
+   plugin's settings, written to a temporary file and moved into place. On macOS and Linux (v1.0.0,
+   `PosixFileProtector`) it isn't encrypted: the same file (`trigglow-auth.dat`) is created user-only
+   (0600) before anything is written to it and moved into place, the way OBS keeps the stream key in
+   its `service.json`, with a marker line that rejects a file that isn't the plugin's. The display
+   name is kept; the email isn't. If it can't be read back it's deleted and the plugin is signed
+   out.
 4. On every load: one account check, and a renewal before any other signed-in call when it's due
    (the new token is stored before it's used). `401 token_rotated` re-reads the stored token or
    renews, then retries once; any other 401 ends the session (storage deleted; Trigi keeps the text
@@ -590,7 +664,7 @@ the CMake option `TRIGGLOW_ALLOW_API_HOST_OVERRIDE`, which CI refuses.
 The dock and the log never show the link, the codes, the secret or the token.
 
 **Trigi (`support-client.*`, `support-service.*`, `trigi-page.*`, `trigi-states.*`).**
-- Shown only on Windows, signed in, when the account check says Trigi is available and the plugin's
+- Shown when signed in (on macOS and Linux since v1.0.0), when the account check says Trigi is available and the plugin's
   version is at least the minimum it reports (numeric `X.Y.Z` comparison). Otherwise the dialog opens
   on the ticket form; signed out it offers "Sign in to ask Trigi".
 - The first-use notice (version 1) has to be accepted before the first question. The accepted
@@ -658,7 +732,8 @@ The dock and the log never show the link, the codes, the secret or the token.
 network job (the sign-in check, renewal and v0.5.x exchange, the sign-in wait, Trigi, tickets and
 their attachments, reading the log for a ticket or a preview, the update check) runs on its own
 thread with a cancellation token, in a group owned by `AuthManager`, a support dialog or the dock.
-WinHTTP runs in its asynchronous mode, so cancelling a job aborts its call at once (a Trigi answer
+WinHTTP runs in its asynchronous mode, and libcurl checks the job's token while it transfers, so
+cancelling a job aborts its call at once (a Trigi answer
 can otherwise take up to 90 s), and a timeout is its own status ("Trigi took too long") instead of
 "no connection". Results reach the UI thread through one queue that the plugin drains; destroying
 an owner cancels its jobs and drops their results, queued ones included. `obs_module_unload()`
@@ -674,6 +749,93 @@ reply (HTTP code, length, action), refused, unavailable, rate limited, HTTP erro
 `[support]` ticket created (with or without the log). Never the token, the link, codes or secret,
 conversation or ticket IDs, a ticket's access key, the text of questions or answers, the technical
 data, an email or a name, or absolute paths.
+
+### 3.9. v1.0.0: switching scenes while delayed — evaluated, stream mode only in 1.0
+
+The product owner wants scene switching while delayed in 1.0. Stream mode does it (it delays the
+encoded stream, every scene). For scene mode the idea evaluated was to delay the whole program
+instead of one scene: the wrapper shows a delayed capture of a private view or canvas (`obs_view`,
+OBS 31 canvases) that renders whatever the streamer switches to, so a switch only changes what goes
+into the buffer. It isn't safe for 1.0, for three reasons, all in OBS 31.1.1's own source:
+
+1. **Channel 0 belongs to the frontend.** What the stream encodes is the main canvas's output
+   channel 0, which OBS's frontend sets to its transition. It swaps that source directly, with no
+   event first: `OBSBasic::OverrideTransition()` calls `obs_set_output_source(0, …)` for Studio
+   Mode's quick transitions, per-scene transition overrides and the T-bar
+   (`frontend/widgets/OBSBasic_Transitions.cpp` lines 99-105, 237-245, 328-333, 708-716), and
+   `OBS_FRONTEND_EVENT_SCENE_CHANGED` arrives after a switch has started. A wrapper, a private view
+   or a canvas only gets what the plugin puts there: the moment the streamer switches, channel 0
+   renders the new scene and the stream gets it undelayed until the plugin reacts. A private view
+   that mirrors Program renders every frame twice and still needs Program to stay on the wrapper,
+   which is exactly what a switch undoes.
+2. **Overwriting the main texture doesn't cover every output.** `obs_add_main_rendered_callback()`
+   runs right after `obs_view_render()` with the mix's texture still bound
+   (`libobs/obs-video.c` lines 170-211), so a callback could store that frame and draw the delayed
+   one over it, whatever was switched. But it runs for every mix of every canvas with nothing to
+   tell them apart, it relies on undocumented ordering, and a GPU-rescaled mix (every Enhanced
+   Broadcasting track) renders the view again instead of reusing the main texture whenever its color
+   space differs (`can_reuse_mix_texture()`): those tracks would go out undelayed, and Enhanced
+   Broadcasting is one of the cases scene mode exists for.
+3. **Audio leaks what the switch hid.** libobs builds the mix every tick from the active tree of
+   each view's channels (`libobs/obs-audio.c` lines 495-517): a scene's sources join or leave the
+   mix the moment Program changes, and a per-source audio filter delays the samples, not whether the
+   source is heard (filters can't sit on a scene or a transition at all, §3.2). A whole-program
+   delay built on per-source filters plays, for `delay` seconds after a switch, the delayed audio of
+   the scene switched to: going from a "be right back" scene back to the game plays the game audio
+   of the last `delay` seconds the streamer hid behind it (a queue pop, a lobby). That is a leak of
+   exactly what switching scenes is used to hide.
+
+The closest design, for after 1.0: **one shared ring for every scene.** A delay filter on each
+top-level scene, where only the scene on Program (and the A and B sources of a running transition)
+captures into one shared ring and draws from it, and nested scenes or Preview-only renders pass
+through. A switch then only changes what goes into the ring, with no refill. For audio each
+source's filter writes silence while its source isn't active, so a scene switched to stays silent
+for `delay` seconds instead of leaking, and a scene switched away from loses its own audio `delay`
+seconds early (a gap, never a leak). Open: scenes and sources created while delayed (attached on
+`source_create` before they can be shown), transitions stored as a cut, Studio Mode showing the
+Program scene in Preview, groups, and the cost of a filter per scene. A multi-week change with its
+own testing, not something to rush into 1.0.
+
+For 1.0 the dock shows `Dock.SceneSwitch.Note` while the delay runs: keep the delayed view on
+Program, and use stream mode to switch scenes while delayed.
+
+### 3.10. v1.0.0: delays up to 600 s, and their RAM
+
+The dock and the controller take 1 to 600 s (`BufferModeController::kMaxDelaySeconds`; 60 until
+v1.0.0). Nothing else changes in the sizing (§3.5): the budget, the output and encoder ceilings, the
+quality floor and then the duration. Two additions:
+- The audio rings come out of the budget. Each delayed audio source keeps raw float PCM, 384 KB a
+  second for stereo at 48 kHz: 23 MB at 60 s but 230 MB at 600 s. `ObsFrontendBridge` counts the
+  audio filters it attaches (`AudioBytesPerSecondFor()`) and every sizing sets `delay x` that aside
+  (`bufferfit::Input::reservedBytesPerSecond`, `VideoBudgetBytes()`, never below a quarter of the
+  budget), the dock's estimate included.
+- `AudioDelayLine` grows its ring when the delay needs more room (keeping the history) and gives the
+  room back once a lowered delay has settled, at least 10 s of samples past it.
+
+Measured in the portable OBS of §3.3 (Windows 11, 31 GB RAM so a 15.5 GB budget, AMD Radeon RX 7800
+XT, OBS 33.0.1, 1080p60 canvas and output, the live scene a looping 1080p60 clip of `testsrc2` with
+light noise and a 1 kHz beep, stereo, streaming x264 6 Mbps to a local ffmpeg). Each run is a fresh
+OBS: streaming with the delay off, then Enable, then 15 s after the buffer is full. "Private" is the
+OBS process's private bytes over the same OBS streaming with the delay off; "arena" is the
+`pipeline check` line's committed bytes (the stored frames) and `ratio` its measured compression:
+
+| Storage | Delay | Captured at | Arena (`ratio`) | Private | Working set |
+|---|---|---|---|---|---|
+| `hevc_amf` | 120 s | 1280x720@30 (rung 4, see below) | 160 MB (61.6x) | +515 MB | +354 MB |
+| `hevc_amf` | 300 s | 1920x1080@60 | 816 MB (66.7x) | +1,210 MB | +1,074 MB |
+| MJPEG | 120 s | 1920x1080@60 | 576 MB (38.0x) | +771 MB | +705 MB |
+| MJPEG | 300 s | 1920x1080@60 | 1,424 MB (37.9x) | +1,692 MB | +1,613 MB |
+
+The machine was shared with about twenty other OBS instances from parallel test sessions, and in
+the 120 s hardware run the AMF encoder's latency (p95 up to 26 ms) sent the buffer down the
+degradation ladder to its last rung before it filled. At the 300 s run's 1080p60 rate (2.7 MB of
+arena a second) 120 s would be about 330 MB of arena, roughly +720 MB private. Beyond the arena,
+the private bytes hold the audio ring (46 MB at 120 s, 115 MB at 300 s for this one stereo
+source), the raw and decoded frame pools and the codecs (about 200-400 MB in all, more with the
+hardware codec's D3D11 surfaces). The assumed ratios (5x MJPEG, 12x hardware) keep the estimate on
+the safe side: these 300 s rings were 11.2 GB and 4.7 GB by the estimate, 1.4 GB and 0.8 GB for
+real. After Disable the process keeps 150-270 MB over the baseline (heap and driver memory the
+reaper's frees don't return at once); a second Enable reuses it.
 
 ## 4. v0.3.0: real MJPEG compression of the RAM ring
 
@@ -1399,9 +1561,22 @@ specifically re-tested for recurrence.
 ## 8. Architecture
 
 ```
-plugin-main.cpp              → obs_module_load/unload, wiring for all components, settings file
-                                (hidden buffer_output_cap / codec_workers / buffer_codec, .invalid
+plugin-main.cpp              → obs_module_load/unload, wiring for all components, settings files
+                                (buffer-mode-settings.json with the hidden buffer_output_cap /
+                                codec_workers / buffer_codec; stream-mode-settings.json; .invalid
                                 set-aside)
+stream-delay-controller.*     → v1.0.0 stream mode, OBS side (docs/STREAM_MODE.md): eligibility,
+                                the private loopback service, delay on/off/seconds, dump, presets,
+                                scene rules, the badge on output channel 61, settings checks
+stream-relay.*                → v1.0.0 the relay (FFmpeg avformat, Windows): RTMP listener on
+                                127.0.0.1, the sender to the streamer's service, back-off, drain
+packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: splices, timestamp rewrite,
+                                trimming, dump floor; pure
+stream-mode-panel.*           → v1.0.0 the dock's stream mode section
+delay-router.*                → v1.0.0 hotkeys and obs-websocket to stream mode or scene mode
+websocket-vendor.*            → v1.0.0 obs-websocket vendor trigglow-dynamic-delay (docs/STREAM_DECK.md)
+core-host.* / core-main.cpp   → the core-only build (v0.7.2, TRIGGLOW_CORE_ONLY): scene mode driven
+                                through a private source's settings, for Trigglow Studio
 buffer-mode-controller.*      → the state machine described in §3.3 (Inactive/Filling/Active/Error)
 obs-frontend-bridge.*         → the only layer that touches obs-frontend-api.h + filter/scene wiring
 video-delay-filter.*          → §3.1 -- capture, I420 conversion, readback, playback and the small
@@ -1438,12 +1613,12 @@ auto-names.*                  → §3.7 -- names of the managed objects and thei
 hardware-info.*               → total system RAM query; the GPU adapters (DXGI vendor, name, VRAM)
                                 for the storage codec (v0.7.0)
 win-http.* / api-client.*     → §3.8 -- the one hardened HTTPS path and the api.trigglow.com client
-                                (Windows; "unavailable" on macOS/Linux until they get an HTTP
-                                client)
+                                (WinHTTP on Windows, libcurl on macOS/Linux since v1.0.0)
 json.*                        → §3.8 -- strict, bounded JSON reader/writer
 auth-manager.* / auth-client.* → §3.8 -- sign-in (device link v2), renewal, sign-out, v0.5.x
                                 exchange, 401/403 rules; the account gate (docs/ACCOUNT_GATE.md)
-token-store.*                 → §3.8 -- the plugin's sign-in, encrypted with CryptProtectData
+token-store.*                 → §3.8 -- the plugin's sign-in, encrypted with CryptProtectData on
+                                Windows; a user-only (0600) file on macOS/Linux
 support-client.* / support-service.* → §3.8 -- Trigi and ticket calls; threads, one Trigi
                                 request at a time, local choices, log lines
 support-diagnostics.* / diagnostics-collector.* → §3.8 -- the opt-in technical data v1
@@ -1461,24 +1636,30 @@ settings-ui.*                 → the Qt dock (live/loading scene, seconds, qual
                                 notice)
 ui-tokens.* / ui-theme.*      → colors derived from OBS's palette (WCAG AA), style sheet, bundled
                                 fonts and recolored SVG icons
-hotkeys.*                     → registration of the 3 native OBS hotkeys, wired to
-                                BufferModeController's Enable()/Disable()/Toggle()
+hotkeys.*                     → registration of the 10 native OBS hotkeys (v1.0.0: back to live,
+                                +/-5 s, dump, presets 1-3 next to the original three), through
+                                DelayRouter
 logging.*                     → logging wrapper with a component prefix
 delay-controller.*            → §6 -- legacy reconnect-mode logic, present but unused
-tests/                        → 23 suites, built only with -DTRIGGLOW_BUILD_TESTS=ON or on their own
+tests/                        → unit suites, built only with -DTRIGGLOW_BUILD_TESTS=ON or on their own
                                 (cmake -S tests): buffer_fit, encoder_check, ui_tokens, auto_names,
                                 overlay_layout, frame_arena, frame_ring, degradation_policy,
                                 pipeline_stress, storage_codec, storage_policy, pipeline_gop_stress,
                                 adversarial_gop, background_tasks, json, log_redact, chat_text,
                                 support_diagnostics, api_client, token_store, auth_client,
                                 support_client, trigi_states (the client ones with a scripted
-                                network stand-in); plus hw_storage_codec on Windows when the
+                                network stand-in), packet_delay_core (v1.0.0); plus
+                                hw_storage_codec and the manual relay_harness on Windows when the
                                 plugin's FFmpeg is in .deps
 ```
 
-Design principle: **`BufferModeController` is the only owner of state**. The dock and the hotkeys both
-call the same public methods (`Enable()`, `Disable()`, `Toggle()`) — there is no separate code path for
-"button" vs. "hotkey", which halves the state-sync bug surface.
+Design principle: **each mode's controller is the only owner of its state** —
+`BufferModeController` for scene mode, `StreamDelayController` for stream mode. The dock and the
+hotkeys (and, since v1.0.0, obs-websocket) call the same public methods (`Enable()`, `Disable()`,
+`Toggle()`...) — there is no separate code path for "button" vs. "hotkey", which halves the
+state-sync bug surface. `DelayRouter` only picks which controller a hotkey or obs-websocket command
+goes to (stream mode when `StreamDelayController::HandlesControls()`, scene mode otherwise); it keeps
+no state of its own.
 
 ## 9. License and repository
 

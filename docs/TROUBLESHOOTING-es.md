@@ -3,7 +3,7 @@
 # Troubleshooting básico — Trigglow Dynamic Delay
 
 ## El dock no aparece en OBS
-- `View → Docks` y comprueba que "Trigglow Dynamic Delay" esté marcado.
+- Abre el menú `Paneles` (View → Docks) y comprueba que "Trigglow Dynamic Delay" esté marcado.
 - Revisa el log de OBS (`Ayuda → Registros y Perfiles → Ver log actual`) buscando la línea
   `[obs-trigglow-dynamic-delay] loaded successfully`. Si no aparece, el plugin no se cargó — revisa
   que el binario esté en la carpeta de plugins correcta para tu sistema operativo (ver README) y que
@@ -64,7 +64,91 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
 - **Dos copias:** un paquete y la instalación del `.tar.xz` a la vez. Quédate con una: quita el
   paquete o ejecuta `./install.sh --uninstall`.
 
-## El botón "Activar delay" aparece en gris, sin poder pulsarlo
+## Modo stream (v1.0.0, Windows)
+
+### El dock dice que este directo no puede usar el modo stream
+Cuando empieza un directo, el plugin comprueba si puede reenviarlo. Si no, el directo sale tal cual
+lo envía OBS, el dock dice por qué y el modo escena (en "Modo escena (compatibilidad)") se encarga
+del delay en ese directo. El log dice `this stream can't use stream mode (<reason>: output …,
+protocol …)`.
+
+| El dock dice | Por qué | Qué hacer |
+|---|---|---|
+| "Este directo usa Enhanced Broadcasting…" | Enhanced Broadcasting envía varias pistas por una sola salida multipista | Desactiva Enhanced Broadcasting en `Ajustes → Emisión`, o usa el modo escena |
+| "Tu servicio no emite por RTMP ni RTMPS (SRT, WHIP...)" | SRT, RIST y WHIP aún no se reenvían | Usa un servidor RTMP o RTMPS si tu plataforma lo tiene, o el modo escena |
+| "Este directo no usa la salida RTMP de OBS" | emite otro plugin de salida | Modo escena |
+| "Tu servidor de emisión no es una dirección rtmp:// ni rtmps://" | el servidor de `Ajustes → Emisión` no se puede leer como tal | Revisa la dirección del servidor |
+| "El modo stream no pudo arrancar en este directo" | el relay no pudo arrancar (el log dice `couldn't start the relay (…); this stream goes out without it`) | Para el directo y vuelve a empezarlo; si se repite, envía un reporte con el log |
+| "El modo stream aún no está disponible en este sistema" | macOS o Linux (allí aún no hay relay) | Modo escena |
+
+### El delay se mueve a saltos grandes, o un cambio tarda segundos en aplicarse
+El delay solo puede cambiar en un keyframe, así que se mueve en pasos del intervalo de keyframes. En
+automático (0) los encoders usan 4–10 s; el dock avisa ("El intervalo de fotogramas clave está en
+automático…" o "El intervalo de fotogramas clave es de 8 s…"). Pon **Intervalo de fotogramas
+clave** en 2 s en `Ajustes → Salida` (modo de salida Avanzado). La comprobación se hace al empezar
+el directo, así que el aviso se actualiza en el siguiente directo.
+
+### Subir el delay no se aplica al momento
+Hasta **Guardar para subidas al instante** (120 s por defecto) el plugin ya tiene los segundos que
+necesita. Por encima, el historial todavía no llega tan atrás: el envío espera hasta que el keyframe
+más antiguo guardado tenga la antigüedad necesaria, así que la imagen de los espectadores se queda
+parada durante la diferencia. Si piensas hacer subidas grandes, sube "Guardar para subidas al
+instante" antes de salir en directo (cuesta el bitrate por esos segundos de RAM).
+
+### "El Retardo de emisión propio de OBS … está activado"
+`Ajustes → Avanzado → Retardo de la transmisión` suma su retardo fijo encima del de Dynamic Delay, y retiene
+la salida de OBS antes de que llegue al relay. Desactívalo y usa este.
+
+### El dock muestra "Reconectando" o "Error"
+- El relay se conecta a tu servicio de OBS y reintenta por su cuenta (a los 2, 4, 8 y 15 s, con el
+  delay). **Último problema:** en el dock y el log (`<host>: <error>; retrying in N s`) dicen por
+  qué.
+- Revisa el servidor y la clave de retransmisión en `Ajustes → Emisión`: el modo stream envía
+  exactamente ahí.
+
+### El log dice "the upload fell behind; jumped back to the … delay"
+Tu subida no pudo seguir el ritmo del directo durante más de 4 s. En vez de dejar que el delay
+crezca, el envío volvió a saltar al delay en el siguiente keyframe: los espectadores se saltan unos
+segundos. Baja el bitrate o revisa tu conexión.
+
+### El contador de frames perdidos de OBS se queda en 0
+Es lo esperado: OBS envía el directo al relay de tu ordenador, así que su contador de congestión
+solo ve ese enlace local. Mira en su lugar el estado y la tasa de la conexión en el dock.
+
+### Paré el directo pero la plataforma me sigue mostrando en directo
+Con **Al parar el directo, enviar los segundos que los espectadores aún no han visto** activado (lo
+está por defecto), el plugin sigue enviando los últimos segundos del delay ("Directo parado:
+enviando los últimos 30 s") y después para. **Dejar de enviar ya** lo corta; empezar un directo
+nuevo o cerrar OBS también lo corta.
+
+### Activar el delay antes de emitir hizo que el directo empezara tarde
+Eso es lo que significa "Delay preparado: tu próximo directo empieza 30 s tarde": con el delay
+activo, el primer paquete sale pasado el delay, así que la plataforma te muestra en directo ese
+tiempo después.
+
+### Borrar no hizo nada
+Solo funciona emitiendo en modo stream con el delay activo (si no, `DumpDelay` responde
+`dumped: false`). Después de un borrado el dock dice "Borrado: el delay vuelve en N s".
+
+### Una regla de escena o un preset no se aplicó
+Las reglas de escena solo actúan en modo stream, cuando el programa de OBS cambia de escena y cuando
+empieza un directo; el dock muestra la última aplicada. Activar el delay, por una regla o un preset,
+necesita la cuenta gratuita, igual que el botón. En modo escena un preset solo pone los segundos
+(hasta 60) y activa el delay.
+
+### La insignia de delay sale en mi grabación
+En modo stream la insignia se pinta sobre el programa de OBS, que también es lo que graba la
+grabación, así que con el delay activo también sale en ella. Desmarca **Mostrar la insignia de delay
+a los espectadores** si no la quieres en ninguna de las dos.
+
+### Reportar un problema del modo stream
+Las líneas del log empiezan por `[obs-trigglow-dynamic-delay]` y el componente `stream-mode` o
+`stream-relay`: `relay listening on 127.0.0.1:<port>, …, delay Ns, keeps Ns` al
+empezar un directo, `<host>: delay now Ns (replays/skips N s)` en cada cambio, las comprobaciones de
+ajustes y los errores de la conexión. La plataforma solo aparece con su host; tu clave de
+retransmisión no se escribe en el log.
+
+## Modo escena: el botón "Activar delay" aparece en gris, sin poder pulsarlo
 - `Activar delay` permanece deshabilitado hasta que inicies sesión con tu cuenta gratuita de
   Trigglow y elijas una **escena en directo** en el dock. Mientras está deshabilitado, una lista
   debajo indica cuál de las dos cosas falta. La escena auxiliar del propio plugin ("Trigglow Delay
@@ -73,7 +157,7 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
 - Mientras el delay se prepara o está activo, `Activar delay` se sustituye por `Desactivar delay`:
   solo hay un botón a la vez.
 
-## No puedo cambiar los segundos de delay, la calidad ni las escenas
+## Modo escena: no puedo cambiar los segundos de delay, la calidad ni las escenas
 - **Es a propósito.** Mientras el delay se prepara (`Preparando delay`) o está activo (`Delay
   activo`), los selectores de escena en directo y de carga, los segundos de delay y la calidad
   mínima están bloqueados: muestran un candado en lugar de sus flechas, y la línea de debajo dice
@@ -101,10 +185,11 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
   más detalle del que cabe en el mensaje corto del dock.
 
 ## Iniciar sesión desde el dock
-- **Por ahora el inicio de sesión solo funciona en Windows (v0.6.0 y v0.7.0).** En macOS y Linux el
-  plugin todavía no tiene cliente HTTP (previsto a continuación, ver `docs/ROADMAP-es.md`), así que
-  allí no están disponibles el inicio de sesión ni, con él, `Activar delay`, Trigi y los reportes
-  desde OBS.
+- **El inicio de sesión funciona en Windows, y desde la v1.0.0 también en macOS y Linux** (con la
+  libcurl del sistema). La parte de macOS y Linux la compila la CI, pero aún no se ha probado en un
+  Mac ni en un equipo Linux de verdad: si allí falla, el dock muestra uno de los mensajes de abajo y
+  el log de OBS tiene los detalles; repórtalo, por favor. En Linux los paquetes instalan libcurl; el
+  `.tar.xz` necesita `libcurl.so.4` instalada (`ldd` sobre el plugin lo muestra).
 - **Cómo va.** Pulsa **Iniciar sesión**: el navegador abre trigglow.com (inicia sesión o crea ahí una
   cuenta gratuita) y el dock muestra "La página debe mostrar el código KD7F-29QM." (tu código será
   otro). Comprueba que la página muestra el mismo código y pulsa **Confirmar**; el dock lo recoge solo
@@ -144,6 +229,10 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
   copia de los ficheros en otro equipo, no puede usarlo: si no se puede descifrar, el plugin lo
   descarta y te pide iniciar sesión. Tu email no se guarda, y el inicio de sesión nunca se adjunta a
   un reporte.
+- En macOS y Linux (v1.0.0) está en `trigglow-auth.dat`, en la carpeta de configuración del plugin:
+  un fichero que solo tu usuario puede leer y escribir (modo 0600), sin cifrar, igual que OBS guarda
+  tu clave de retransmisión en `service.json`. Solo sirve para las llamadas propias del plugin;
+  Cerrar sesión o las apps conectadas de trigglow.com lo revocan.
 - **Cerrar sesión** en el dock lo revoca en trigglow.com y lo borra de este equipo (la copia local se
   borra aunque no haya conexión).
 - **Desde trigglow.com**, por ejemplo si ya no tienes ese equipo: Ajustes → Sesiones activas → Apps
@@ -166,10 +255,10 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
   si el dock te pide iniciar sesión, hazlo una vez.
 
 ## Preguntar a Trigi (Reportar un problema)
-- **Trigi no aparece y el diálogo se abre en el formulario de ticket.** Trigi necesita Windows, una
-  cuenta con la sesión iniciada y una versión del plugin que admita. Sin sesión, el diálogo ofrece
-  **Inicia sesión para preguntar a Trigi** y **Enviar un reporte sin Trigi**; en macOS y Linux, usa el
-  formulario web. Si Trigi está apagado de momento, el formulario dice "Trigi no está disponible
+- **Trigi no aparece y el diálogo se abre en el formulario de ticket.** Trigi necesita una cuenta
+  con la sesión iniciada y una versión del plugin que admita (en macOS y Linux, la v1.0.0 o
+  posterior). Sin sesión, el diálogo ofrece **Inicia sesión para preguntar a Trigi** y **Enviar un
+  reporte sin Trigi**. Si Trigi está apagado de momento, el formulario dice "Trigi no está disponible
   ahora. Tu mensaje va directo al equipo de soporte." y tu mensaje llega a una persona.
 - **Qué significa cada mensaje:**
   - "No hay conexión con trigglow.com. Revisa tu conexión y vuelve a intentarlo.": revisa la conexión
@@ -198,7 +287,7 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
   diálogo abren las páginas correctas (soporte en trigglow.com, la actualización en GitHub).
 
 ## Enviar un reporte
-- **Con la sesión iniciada (Windows)**: el ticket se crea desde tu cuenta, así que solo escribes qué
+- **Con la sesión iniciada**: el ticket se crea desde tu cuenta, así que solo escribes qué
   ha pasado (el asunto es opcional). Para enviar al equipo el log de OBS, abre **Ver qué se envía**,
   revísalo y después marca **Adjuntar el registro (log) de OBS** (empieza desmarcada y no se puede
   marcar antes de haberlo visto): las rutas con tu usuario de Windows, URLs, claves, emails e IPs van
@@ -221,9 +310,11 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
   enviarlo.
 - **"Tu sesión de Trigglow ha caducado. Vuelve a conectar desde el dock."**: vuelve a iniciar sesión
   y envíalo.
-- **macOS y Linux**: el formulario aparece desactivado (v0.6.0 y v0.7.0). Usa
-  [trigglow.com/support](https://www.trigglow.com/support) y adjunta tú el log de OBS (revísalo
-  antes: ahí el plugin no puede ocultar tus datos personales).
+- **macOS y Linux**: desde la v1.0.0 Trigi y el formulario también funcionan ahí, pero el plugin
+  todavía no sabe encontrar y adjuntar el log de OBS en esos sistemas. Si el equipo lo necesita,
+  adjúntalo tú al ticket en [trigglow.com/support](https://www.trigglow.com/support) (revísalo
+  antes: ahí el plugin no puede ocultar tus datos personales). Antes de la v1.0.0 el formulario
+  aparecía desactivado.
 
 ## "Encoding overloaded" (sobrecarga al codificar) o frames perdidos en cuanto activo el delay
 
@@ -581,7 +672,7 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
   el buffer se vuelve a llenar).
 - No borres ni renombres la escena ni los filtros del plugin; para parar el delay, usa el dock.
 
-## Cambié el Programa a mi escena en directo y el directo salió sin delay (problema conocido)
+## Cambié el Programa a mi escena en directo y el directo salió sin delay (modo escena, problema conocido)
 - Con el delay en marcha, el Programa tiene que quedarse en la escena que eligió el plugin: la escena
   de carga mientras se llena, y después su escena auxiliar "Trigglow Delay Buffer (auto)", que
   contiene tu escena en directo con el filtro de delay. Si haces clic en tu escena en directo en la
@@ -591,6 +682,8 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
 - Deja el Programa en la escena que eligió el plugin mientras el delay está en marcha. Para cambiar
   de escena, desactiva antes el delay desde el dock, cambia y vuelve a activarlo (el buffer se vuelve
   a llenar).
+- El modo stream no tiene este problema: retrasa todas las escenas, así que puedes cambiar de escena
+  libremente.
 
 ## El buffer nunca parece llenarse / `Preparando delay` nunca llega a `Delay activo`
 - Revisa el log de OBS buscando avisos con el prefijo `[obs-trigglow-dynamic-delay]` alrededor del
@@ -616,11 +709,14 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
   revisa el log de OBS buscando avisos.
 
 ## La hotkey no hace nada
-- Confirma que la asignaste en `Ajustes → Atajos de teclado` (buscando "Trigglow") — el plugin
-  registra 3 atajos (`Trigglow: Activar/desactivar Dynamic Delay`, `Trigglow: Activar Dynamic
-  Delay` y `Trigglow: Desactivar Dynamic Delay`; con OBS en inglés, `Trigglow: Toggle Dynamic
-  Delay`, `Trigglow: Enable Dynamic Delay` y `Trigglow: Disable Dynamic Delay`) sin ninguna tecla
-  asignada por defecto.
+- Confirma que la asignaste en `Ajustes → Atajos` (buscando "Trigglow") — el plugin
+  registra 10 atajos, ninguno con tecla por defecto: `Trigglow: Activar/desactivar Dynamic Delay`,
+  `Activar Dynamic Delay`, `Desactivar Dynamic Delay`, `Volver al directo (quitar delay)`,
+  `Delay +5 s`, `Delay -5 s`, `Borrar lo que aún no se ha emitido` y `Preset de delay 1` a `3`
+  (traducidos según el idioma de OBS; con OBS en inglés, `Trigglow: Toggle Dynamic Delay`…).
+- Los atajos van al modo stream cuando este se encarga del directo actual o del siguiente, y al
+  modo escena en los demás casos. En modo escena `Borrar` no hace nada; `Delay +5 s` / `-5 s` cambian el delay en directo en
+  los dos modos (1–600).
 - Prueba primero el botón del dock para descartar que sea un problema de configuración del plugin en
   sí (por ejemplo, que no haya ninguna escena en directo elegida, lo cual también bloquea que la
   hotkey de Activar o Activar/desactivar haga algo), y no de la asignación de la hotkey/Stream Deck.
@@ -628,16 +724,20 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
 ## El botón de Stream Deck no hace nada
 - Verifica que la combinación configurada en Stream Deck coincide exactamente con la asignada en
   OBS.
+- Con el plugin de Stream Deck de Trigglow (obs-websocket): comprueba que obs-websocket esté
+  activado en OBS (`Herramientas → Ajustes del servidor WebSocket`), que el host, el puerto y la
+  contraseña del plugin de Stream Deck coincidan, y que el log de OBS diga
+  `obs-websocket vendor "trigglow-dynamic-delay" registered`.
 - Si el botón cambia de escena o activa filtros por su nombre en vez de usar el atajo, mira "Tras
   actualizar, una acción de Stream Deck u obs-websocket ya no funciona" más arriba.
-- Ver `docs/STREAM_DECK.md` para el flujo completo paso a paso.
+- Ver `docs/STREAM_DECK-es.md` para el flujo completo paso a paso.
 
 ## El plugin no compila
 - Revisa `docs/BUILD_VALIDATION.md` — ahí se documenta qué se ha verificado (builds reales en CI
   contra el SDK real de OBS y Qt6 real en Windows/macOS/Ubuntu, además de pruebas en directo dentro de
   una instancia real de OBS en Windows) y qué no (pruebas en directo en macOS/Linux, y una corrección
   confirmada para el riesgo de GPU Device-Remove/Reset descrito en `docs/SPEC-es.md` §7). Los tests
-  unitarios (23 suites, sin OBS) se compilan con `-DTRIGGLOW_BUILD_TESTS=ON` o por separado con
+  unitarios (sin OBS, entre ellos `packet_delay_core_tests` del modo stream) se compilan con `-DTRIGGLOW_BUILD_TESTS=ON` o por separado con
   `cmake -S tests -B build_tests`, y CI los ejecuta en todas las plataformas; una 24.ª,
   `hw_storage_codec_tests`, se añade en Windows cuando el FFmpeg del plugin ya está en `.deps` (un
   build local del plugin).
@@ -646,7 +746,10 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
   Abre un issue en el repositorio con el log de error completo.
 
 ## No sé si el problema es del plugin o de mi configuración de streaming
-- Desactiva el plugin (bórralo temporalmente de la carpeta de plugins) y confirma que el streaming
-  funciona bien sin él. Si el problema persiste sin el plugin, no es cosa del plugin — y esta es una
-  prueba especialmente limpia para este plugin en concreto, ya que nunca toca el output de streaming
-  en absoluto; si tienes problemas de streaming, no los causó él.
+- Primero desmarca **Usar el modo stream** en el dock (se aplica a partir del siguiente directo):
+  así OBS vuelve a emitir directamente a tu plataforma, como sin el plugin. Si el problema
+  desaparece, está en el modo stream: repórtalo con el log de OBS.
+- Después desactiva el plugin (bórralo temporalmente de la carpeta de plugins) y confirma que el
+  streaming funciona bien sin él. Si el problema persiste sin el plugin, no es cosa del plugin. El
+  modo escena nunca toca el output de streaming, así que con el modo stream desactivado el plugin no
+  puede causar problemas de conexión.

@@ -81,6 +81,13 @@ public:
 	// With no video at all, the packet at or before `atNs` (or the oldest).
 	bool FindSplicePoint(int64_t atNs, uint64_t &seqOut) const;
 
+	// Dump: nothing that arrived before `floorNs` may be spliced to again, so
+	// what viewers hadn't seen yet when the streamer pressed Dump is never
+	// sent. FindSplicePoint() then only returns keyframes that arrived at or
+	// after it (none yet: false, and the sinks wait for the next one).
+	void SetSpliceFloor(int64_t floorNs) { spliceFloorNs_ = floorNs; }
+	int64_t SpliceFloor() const { return spliceFloorNs_; }
+
 	const Packet *At(uint64_t seq) const;
 	uint64_t FrontSeq() const { return frontSeq_; }
 	uint64_t EndSeq() const { return frontSeq_ + packets_.size(); }
@@ -104,6 +111,7 @@ private:
 	uint64_t nextSeq_ = 0;
 	size_t bytes_ = 0;
 	bool sawVideo_ = false;
+	int64_t spliceFloorNs_ = INT64_MIN;
 };
 
 // A packet ready to leave, with its timestamps rewritten for the destination.
@@ -164,6 +172,7 @@ private:
 	int64_t offsetMs_ = 0;
 	bool haveTimeline_ = false;
 	int64_t lastVideoDtsOut_ = 0;
+	int64_t maxVideoPtsOut_ = 0; // Newest display time sent (B-frames: ahead of dts).
 	int64_t lastAudioDtsOut_ = 0;
 	int64_t lastAnyDtsOut_ = 0;
 	bool haveVideoOut_ = false;
