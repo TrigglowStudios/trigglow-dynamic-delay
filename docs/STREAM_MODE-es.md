@@ -16,11 +16,46 @@ el stream. Su RAM es el buffer a una calidad cercana a la de origen: de ~190 MB 
 
 El modo stream guarda los paquetes que el propio encoder de OBS ha producido para el stream y los
 envía más tarde. No se decodifica ni se vuelve a codificar nada; la CPU solo copia bytes. El
-historial es el bitrate del stream por los segundos guardados (45 MB por minuto a 6 Mbps), y casi
-todo espera en un archivo temporal cifrado en el disco, así que la RAM que ocupa es más o menos la
-misma con cualquier delay (ver Memoria y disco).
+historial es el bitrate del stream por los segundos guardados (45 MB por minuto a 6 Mbps). El
+streamer elige dónde espera: en RAM, o casi todo en un archivo temporal cifrado en el disco, donde
+la RAM que ocupa es más o menos la misma con cualquier delay (ver Memoria y disco).
 
 ## Memoria y disco
+
+**Dónde vive el búfer del delay** lo elige el streamer (dock: Opciones > Búfer del delay, guardado
+como `buffer_storage` en `stream-mode-settings.json`), como el ajuste "memoria / disco" del búfer de
+un grabador:
+
+- **Memoria:** todo el historial se queda en RAM y no se escribe nada en disco: el bitrate por los
+  segundos guardados (45 MB por minuto a 6 Mbps). Llega hasta el delay o el preset o la regla por
+  escena con delay más alto (ver Cambiar el delay en directo), así que subir por encima de eso espera
+  a los segundos que faltan.
+- **Disco:** el volcado de abajo. La RAM se queda en 13-15 MB con cualquier delay y toda subida hasta
+  600 s es al instante, pero todo el directo se escribe en disco mientras emites (unos 2,7 GB por
+  hora a 6 Mbps), y se vuelve a leer con delays largos.
+- **Automático** (el valor por defecto, también para ajustes guardados antes de existir la opción):
+  Memoria si la carpeta temporal está en un SSD, Disco si está en un disco duro mecánico. Un SSD gana
+  poco con el volcado en los delays habituales (60 s de historial son 45 MB de RAM) y a cambio
+  recibiría horas de escrituras continuas; un disco duro no se desgasta al escribir, y un equipo con
+  uno es más probable que vaya justo de RAM. Una unidad cuyo tipo no se puede saber (unidad de red,
+  un adaptador USB que no lo transmite, un error) cuenta como SSD. El dock dice lo detectado:
+  "Automático (Memoria, SSD detectado)".
+- La unidad se comprueba al cargar OBS (para el dock) y otra vez al empezar cada directo, y queda en
+  el log una vez por directo (`delay buffer: memory (choice auto, temp folder drive ssd)`), nunca con
+  la ruta. Un cambio en directo se aplica al siguiente; el dock lo indica.
+- **Detección** (`drive-kind.*`, la unidad de la carpeta del volcado): en Windows, los discos del
+  volumen responden a `IOCTL_STORAGE_QUERY_PROPERTY` con `StorageDeviceSeekPenaltyProperty` (si hay
+  penalización de búsqueda es un disco duro), y `StorageDeviceTrimProperty` como segunda señal
+  cuando eso no se puede leer (TRIM significa SSD; sin TRIM, por sí solo, no demuestra nada). Un
+  volumen sobre varios discos es HDD si lo es alguno. A las unidades de red y los discos en RAM no
+  se les pregunta. No hacen falta permisos de administrador. En Linux,
+  `/sys/dev/block/<major:minor>/queue/rotational` del dispositivo de la carpeta (su disco si es una
+  partición; para un sistema de archivos con número de dispositivo anónimo, como btrfs, el origen
+  del montaje en `/proc/self/mountinfo`). En macOS, el "Medium Type" de IOKit ("Solid State" /
+  "Rotational") en las características del dispositivo, buscado hacia arriba en el registro desde
+  el disco BSD de la carpeta (pasando por los contenedores APFS hasta la unidad física).
+
+El resto de esta sección es cómo se guarda el historial y cómo funciona Disco:
 
 - **Almacenamiento contiguo.** Los bytes de los paquetes van seguidos en bloques de 1 MiB
   (`PayloadStore`, `payload-store.*`), un registro por paquete: sus flags, sus datos laterales y su
@@ -28,7 +63,7 @@ misma con cualquier delay (ver Memoria y disco).
   mismos bytes. Los metadatos del planificador son 48 bytes por paquete. Antes, cada paquete era
   una reserva de memoria propia de FFmpeg, que costaba un 10-13 % encima del historial (abajo: +490
   MB de RAM para 446 MB de historial, +106 MB para 93 MB).
-- **El volcado a disco.** En RAM solo quedan los segundos más recientes (4 s más dos intervalos de
+- **El volcado a disco** (Disco). En RAM solo quedan los segundos más recientes (4 s más dos intervalos de
   fotogramas clave: el directo y los delays cortos nunca tocan el disco, y bajar el delay empalma
   dentro de la RAM) y lo que cada destino va a enviar a continuación (3 s por delante). Los bloques
   llenos más antiguos van a un archivo temporal y su RAM se libera. Un bloque que un destino está a
@@ -43,7 +78,7 @@ misma con cualquier delay (ver Memoria y disco).
   OBS se cierra de golpe: se borra al cerrarse en Windows y se desvincula nada más crearlo en Linux y
   macOS. El siguiente directo borra cualquiera que haya dejado un corte de luz. El espacio liberado se
   reutiliza y el archivo se recorta cuando el historial encoge.
-- **Uso de disco.** El bitrate por 600 s mientras emites en modo stream (unos 450 MB a 6 Mbps, 600
+- **Uso de disco.** El bitrate por 600 s mientras emites con Disco (unos 450 MB a 6 Mbps, 600
   MB a 8 Mbps), escritos y, con delays más largos que la ventana de RAM, leídos de nuevo al bitrate
   del stream. El volcado siempre deja 1 GiB libre en ese disco.
 - **Cuando no se puede usar el disco** (no hay sitio, falla una escritura o una lectura, un bloque
@@ -63,7 +98,7 @@ stream x264 de 6,2 Mbps (1280x720 a 30 fps, B-frames, keyframes cada 2 s, AAC a 
 | 10 s | 127 s, 93 MB / 607 s, 446 MB | +106 MB | +96 MB | +13 MB | 11 MB | 440 MB |
 | 120 s | 127 s, 93 MB / 607 s, 446 MB | +103 MB | +96 MB | +15 MB | 13 MB | 440 MB |
 | 600 s | 607 s, 446 MB / 607 s, 446 MB | +490 MB | +453 MB | +13 MB | 12 MB | 440 MB |
-| 600 s, solo RAM (sin volcado) | 607 s, 446 MB | | | +454 MB | 449 MB | 0 |
+| 600 s, solo RAM (Memoria) | 607 s, 446 MB | | | +454 MB | 449 MB | 0 |
 
 "+N MB" es cuánto creció el proceso (bytes privados) respecto a sí mismo antes del directo. "Antes"
 es el relay sin estos cambios, con "Guardar para subidas al instante" en su valor por defecto (120
@@ -118,12 +153,12 @@ stream continuo: sin reconexión ni cabecera nueva. El paso es el intervalo de f
 (se recomiendan 2 s); el dock avisa cuando está en automático o pasa de 4 s (ver Comprobación de
 ajustes).
 
-Con el volcado a disco, el historial siempre llega 600 s atrás (el máximo del delay) más dos
+Con Disco (el volcado), el historial siempre llega 600 s atrás (el máximo del delay) más dos
 intervalos de fotogramas clave más 1 s: cuesta disco, no RAM, y cualquier subida en directo es al
-instante en cuanto el directo lleva ese tiempo. Solo en RAM (si no se pudo usar el disco) llega el
+instante en cuanto el directo lleva ese tiempo. Con Memoria, o si no se pudo usar el disco, llega el
 delay o el preset o la regla por escena con delay más alto, lo que sea mayor, más el mismo margen
-(`KeepSeconds()` y `RetentionNs()` en `packet-delay-core.hpp`). La línea "Subidas al instante" del
-dock dice cuál se aplica. Si pides más de lo que tiene el historial (al principio de un directo, o
+(`KeepSeconds()` y `RetentionNs()` en `packet-delay-core.hpp`). El "Subidas al instante: N s" del
+dock, junto a "Búfer del delay", dice cuál se aplica. Si pides más de lo que tiene el historial (al principio de un directo, o
 por encima de los presets solo en RAM), el emisor espera hasta que el keyframe guardado más antiguo
 tenga la antigüedad suficiente (`SpliceInfo::shortHistory`).
 
@@ -190,8 +225,8 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 ## Controles
 
 - Dock: activar/quitar, volver al directo, segundos (1-600, +/-5), borrar, tres presets, delay por
-  escena, hasta dónde una subida es al instante (solo lectura; sustituye al ajuste "Guardar para
-  subidas al instante", cuyo `keep_seconds` guardado se sigue leyendo y escribiendo sin cambios),
+  escena, el búfer del delay (Automático / Memoria / Disco) con hasta dónde una subida es al
+  instante (solo lectura; sustituye al ajuste "Guardar para subidas al instante", cuyo `keep_seconds` guardado se sigue leyendo y escribiendo sin cambios),
   envío al parar, la insignia, adónde va el directo (solo lectura: `Ajustes → Emisión` de OBS). Las
   estadísticas muestran la RAM y el disco que ocupa el historial.
 - Atajos (`Ajustes → Atajos` de OBS): Activar/desactivar, Activar, Desactivar (mismos nombres que
@@ -289,10 +324,25 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
   - Un volcado limitado a 70 MB volvió a la RAM al llenarse (queda en el log), leyó de vuelta los
     bloques volcados y siguió; la salida siguió idéntica byte a byte y sin huecos. Matar el proceso
     a mitad de directo borró su archivo de volcado al instante.
+- La elección del búfer del delay (2026-11-11), Windows 11:
+  - Tests unitarios: `drive_kind_tests` (Automático con unidades SSD, HDD y desconocidas, las
+    opciones explícitas, valores guardados y ajustes de antes de existir la opción, las señales de
+    Windows y varios discos, el análisis de `rotational` y `mountinfo` en Linux, el tipo de medio
+    en macOS).
+  - Detección en este equipo (dos SSD NVMe, ningún disco duro): C: y E: SSD, la carpeta temporal
+    (en C:) SSD; letras de unidad que no existen, desconocida.
+  - En un OBS 33.0.1 portable: un archivo de ajustes sin `buffer_storage` se cargó como Automático
+    y se volvió a guardar como `auto`; un directo a un receptor RTMP local con Automático dejó en
+    el log `delay buffer: memory (choice auto, temp folder drive ssd)` y no creó archivo de
+    volcado, y uno con Disco dejó `disk (choice disk, ...)` y el archivo de volcado existía mientras
+    se emitía. El dock entre 260 y 380 px en inglés, español, portugués y chino: nada cortado;
+    "Subidas al instante" va junto a "Búfer del delay" o debajo cuando no cabe, y la etiqueta larga
+    de Automático acaba en "..." cuando el desplegable es demasiado estrecho.
 - Aún sin probar: una plataforma real (Twitch por RTMP, Kick por RTMPS, YouTube con HEVC por
-  enhanced RTMP) mirando su reproductor, el dock a mano (también la línea nueva "Subidas al
-  instante"), el volcado dentro de un OBS real, el volcado en marcha en macOS (aquí no se compila) y
-  Linux (solo tests unitarios), un disco lento (USB, HDD) o casi lleno en la práctica, y OBS
+  enhanced RTMP) mirando su reproductor, el volcado en marcha en macOS (aquí no se compila) y
+  Linux (solo tests unitarios), la detección de la unidad en marcha en macOS y Linux y con un
+  disco duro, una unidad USB o una carpeta temporal en red, un disco lento (USB, HDD) o casi lleno
+  en la práctica, y OBS
   reconectando al relay a mitad de directo (el relay escucha una sola vez: si se cae la conexión de
   OBS con él, el directo termina en vez de continuar).
 - El relay y la integración con OBS compilan en Windows, Linux y macOS. En Linux, el relay en sí
