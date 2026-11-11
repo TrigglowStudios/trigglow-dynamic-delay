@@ -101,8 +101,9 @@ struct RelayOptions {
 	// When OBS stops streaming with the delay on, keep sending what viewers
 	// haven't seen yet (the last N seconds) before closing.
 	bool drainOnStop = true;
-	// Keep only the newest seconds and what each destination sends next in
-	// RAM; the rest goes to an encrypted temp file (spill-file.hpp). Falls
+	// Disk (the streamer's delay buffer choice, drive-kind.hpp): keep only the
+	// newest seconds and what each destination sends next in RAM; the rest
+	// goes to an encrypted temp file (spill-file.hpp). Falls
 	// back to RAM on its own when the disk fails, fills up or is too slow.
 	bool spillToDisk = true;
 	// At most this many bytes in that file (0: the free disk space minus a

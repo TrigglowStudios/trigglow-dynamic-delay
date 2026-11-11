@@ -126,6 +126,16 @@ elseif(NOT APPLE)
 endif()
 add_test(NAME spill_file_tests COMMAND spill_file_tests)
 
+# v1.0.0 stream mode: where the delay buffer lives (Auto / Memory / Disk) and
+# the hardware-free parts of the drive type detection.
+add_executable(drive_kind_tests drive_kind_tests.cpp "${_src}/drive-kind.cpp" "${_src}/drive-kind.hpp")
+target_include_directories(drive_kind_tests PRIVATE "${_src}")
+set_target_properties(drive_kind_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(APPLE)
+  target_link_libraries(drive_kind_tests PRIVATE "-framework IOKit" "-framework CoreFoundation")
+endif()
+add_test(NAME drive_kind_tests COMMAND drive_kind_tests)
+
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
 # with a fake codec (threads, no FFmpeg).

@@ -872,11 +872,12 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	d.spill.reset();
 	d.spillNote.clear();
 	d.loggedSpill = SpillState::Off;
+	// A file a crash (or power loss) left behind goes first, also when this
+	// stream keeps its history in memory (buffer_storage).
+	const int stale = SpillFile::RemoveStale();
+	if (stale > 0)
+		TRIGGLOW_LOG_INFO(kComponent, "deleted %d spill file(s) a previous session left", stale);
 	if (options.spillToDisk) {
-		// A file a crash (or power loss) left behind goes first.
-		const int stale = SpillFile::RemoveStale();
-		if (stale > 0)
-			TRIGGLOW_LOG_INFO(kComponent, "deleted %d spill file(s) a previous session left", stale);
 		const size_t blockBytes = d.history.Store().BlockBytes();
 		const uint64_t freeBytes = SpillFile::FreeDiskBytes();
 		uint64_t room = freeBytes > kDiskReserveBytes ? freeBytes - kDiskReserveBytes : 0;

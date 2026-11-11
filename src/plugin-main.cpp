@@ -366,6 +366,8 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetKeepSeconds(static_cast<uint32_t>(obs_data_get_int(data, "keep_seconds")));
 	if (obs_data_has_user_value(data, "drain_on_stop"))
 		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
+	// Missing (settings from before the choice) or unknown: Automatic.
+	controller.SetBufferStorage(trigglow::relay::ParseBufferStorage(obs_data_get_string(data, "buffer_storage")));
 	if (obs_data_has_user_value(data, "show_overlay"))
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
@@ -395,8 +397,9 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 	}
 	controller.SetSceneRules(std::move(rules));
 	obs_data_release(data);
-	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us)",
-			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds());
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us, buffer %s)",
+			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds(),
+			  trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
 }
 
 void SaveStreamSettings(const trigglow::StreamDelayController &controller)
@@ -410,6 +413,8 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_int(data, "delay_seconds", controller.DelaySeconds());
 	obs_data_set_int(data, "keep_seconds", controller.KeepSeconds());
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
+	obs_data_set_string(data, "buffer_storage",
+			    trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
 	for (int i = 0; i < 3; ++i)
