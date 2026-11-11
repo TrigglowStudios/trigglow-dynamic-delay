@@ -203,6 +203,8 @@ Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}\bin\64bit"; Flags:
 ; without it.
 Source: "{#PluginStageDir}\data\locale\en-US.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
 Source: "{#PluginStageDir}\data\locale\es-ES.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\locale\pt-BR.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\locale\zh-CN.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
 ; v0.5.x overlay badge frame, kept as a fallback (src/overlay-badge.cpp).
 Source: "{#PluginStageDir}\data\images\delay-badge.png"; DestDir: "{app}\data\images"; Flags: ignoreversion
 ; Default loading video, shown while the delay fills when no loading scene is
