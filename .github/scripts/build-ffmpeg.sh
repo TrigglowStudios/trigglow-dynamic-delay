@@ -190,6 +190,11 @@ for arch in "${archs[@]}"; do
   args=(--prefix="${arch_prefix}" "${common_args[@]}")
   if [[ ${os} == Darwin ]]; then
     darwin_flags="-arch ${arch} -mmacosx-version-min=${macos_min}"
+    # --disable-asm, plain C: -fvisibility=hidden doesn't reach FFmpeg's
+    # assembly, whose functions (ff_*_neon, ff_crc32_aarch64...) would be
+    # exported from the bundle (macOS has no version script like Linux). The
+    # relay decodes nothing, so it loses nothing; CI's "Check Plugin Binary"
+    # checks it.
     args+=(
       --enable-cross-compile
       --target-os=darwin
@@ -197,10 +202,6 @@ for arch in "${archs[@]}"; do
       --cc=clang
       "--extra-cflags=${darwin_flags} -fvisibility=hidden"
       "--extra-ldflags=${darwin_flags}"
-      # Plain C: -fvisibility=hidden doesn't reach FFmpeg's assembly, whose
-      # functions (ff_*_neon, ff_crc32_aarch64...) would be exported from the
-      # bundle (macOS has no version script like Linux). The relay decodes
-      # nothing, so it loses nothing; CI's "Check Plugin Binary" checks it.
       --disable-asm
     )
   fi
