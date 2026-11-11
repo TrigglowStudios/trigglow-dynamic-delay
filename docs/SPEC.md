@@ -3,7 +3,8 @@
 # Technical specification — Trigglow Dynamic Delay for OBS
 
 Status: **v1.0.0 — stable on Windows; macOS and Linux in alpha**
-Last updated: 2026-10-20 (v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
+Last updated: 2026-11-11 (v1.0.0: §1, §3.8, §8; stream mode has its own document,
+`docs/STREAM_MODE.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
 scratch on 2026-08-26 — see §0). A v0.5.1 hotfix was prepared but never published; everything in it
 shipped in v0.6.0, so this document dates those changes v0.6.0.
 Plugin machine name: `obs-trigglow-dynamic-delay`
@@ -30,6 +31,15 @@ stream's video and audio by a configurable number of seconds — with a button, 
 a Stream Deck button mapped to that hotkey — **without the streaming output ever being touched**. No
 reconnection, no cut, at any point, for any reason. No external app, no web panel, no separate
 process: everything lives inside the OBS process.
+
+**Since v1.0.0 the plugin has two modes, and this document describes scene mode (buffer mode).**
+Stream mode (Windows, the default where it can run) delays the stream OBS has already encoded: it
+points OBS's RTMP output at a relay on `127.0.0.1` inside OBS and sends the packets to the
+platform(s) after the delay, with no decode or second encode, every scene delayed and the recording
+live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for macOS and Linux and for
+the streams stream mode can't relay (Enhanced Broadcasting, SRT, RIST, WHIP); it's "Scene mode
+(compatibility)" in the dock. Hotkeys and obs-websocket reach either mode through `DelayRouter`
+(§8).
 
 ## 2. Why reconnection was rejected
 
@@ -538,9 +548,14 @@ This section covers only the plugin's side. How trigglow.com answers (its limits
 itself, how long it keeps data) lives outside this repository; the plugin only reacts to the
 documented answers and error codes, and never shows the server's own error text.
 
-**One network path.** `win-http.*` is the only code that opens connections: WinHTTP on Windows; on
-macOS and Linux `Available()` is false and every call returns "unavailable" at once (no sign-in,
-Trigi or reports there until they get an HTTP client, planned next). Every request is HTTPS with TLS
+**One network path.** `win-http.*` is the only code that opens HTTPS connections to Trigglow and
+GitHub: WinHTTP on Windows; libcurl on macOS and Linux since v1.0.0 (`TRIGGLOW_HAVE_CURL`, CMake
+links `CURL::libcurl`; macOS 12's libcurl 7.79 is handled; before 1.0.0 `Available()` was false
+there and every call returned "unavailable"). The libcurl path follows the same rules, plus HTTPS
+on port 443 only; without libcurl (the standalone unit tests) it stays "unavailable". It was
+written and reviewed on Windows and built by CI; it hasn't been run on a real Mac or Linux machine
+yet. (Stream mode's relay opens its own RTMP/RTMPS connection to the streamer's service through
+FFmpeg, not through this path: `docs/STREAM_MODE.md`.) Every request is HTTPS with TLS
 1.2 or newer, never follows a redirect (a 3xx is an error, so a Bearer token can't be bounced to
 another host), sends no cookies and no Windows auto-logon, has per-step timeouts plus an overall
 deadline (a longer receive window for Trigi's answers and summaries), caps the response size,
@@ -564,8 +579,12 @@ the CMake option `TRIGGLOW_ALLOW_API_HOST_OVERRIDE`, which CI refuses.
    network errors keep polling until the expiry. Cancel forgets the link and the secret locally.
 3. The token is opaque (the plugin never interprets it) and only works for the plugin's own calls.
    On Windows it's stored with `CryptProtectData` for the current user, without UI, apart from the
-   plugin's settings, written to a temporary file and moved into place. The display name is kept; the
-   email isn't. If it can't be decrypted it's deleted and the plugin is signed out.
+   plugin's settings, written to a temporary file and moved into place. On macOS and Linux (v1.0.0,
+   `PosixFileProtector`) it isn't encrypted: the same file (`trigglow-auth.dat`) is created user-only
+   (0600) before anything is written to it and moved into place, the way OBS keeps the stream key in
+   its `service.json`, with a marker line that rejects a file that isn't the plugin's. The display
+   name is kept; the email isn't. If it can't be read back it's deleted and the plugin is signed
+   out.
 4. On every load: one account check, and a renewal before any other signed-in call when it's due
    (the new token is stored before it's used). `401 token_rotated` re-reads the stored token or
    renews, then retries once; any other 401 ends the session (storage deleted; Trigi keeps the text
@@ -590,7 +609,7 @@ the CMake option `TRIGGLOW_ALLOW_API_HOST_OVERRIDE`, which CI refuses.
 The dock and the log never show the link, the codes, the secret or the token.
 
 **Trigi (`support-client.*`, `support-service.*`, `trigi-page.*`, `trigi-states.*`).**
-- Shown only on Windows, signed in, when the account check says Trigi is available and the plugin's
+- Shown when signed in (on macOS and Linux since v1.0.0), when the account check says Trigi is available and the plugin's
   version is at least the minimum it reports (numeric `X.Y.Z` comparison). Otherwise the dialog opens
   on the ticket form; signed out it offers "Sign in to ask Trigi".
 - The first-use notice (version 1) has to be accepted before the first question. The accepted
@@ -658,7 +677,8 @@ The dock and the log never show the link, the codes, the secret or the token.
 network job (the sign-in check, renewal and v0.5.x exchange, the sign-in wait, Trigi, tickets and
 their attachments, reading the log for a ticket or a preview, the update check) runs on its own
 thread with a cancellation token, in a group owned by `AuthManager`, a support dialog or the dock.
-WinHTTP runs in its asynchronous mode, so cancelling a job aborts its call at once (a Trigi answer
+WinHTTP runs in its asynchronous mode, and libcurl checks the job's token while it transfers, so
+cancelling a job aborts its call at once (a Trigi answer
 can otherwise take up to 90 s), and a timeout is its own status ("Trigi took too long") instead of
 "no connection". Results reach the UI thread through one queue that the plugin drains; destroying
 an owner cancels its jobs and drops their results, queued ones included. `obs_module_unload()`
@@ -1399,9 +1419,22 @@ specifically re-tested for recurrence.
 ## 8. Architecture
 
 ```
-plugin-main.cpp              → obs_module_load/unload, wiring for all components, settings file
-                                (hidden buffer_output_cap / codec_workers / buffer_codec, .invalid
+plugin-main.cpp              → obs_module_load/unload, wiring for all components, settings files
+                                (buffer-mode-settings.json with the hidden buffer_output_cap /
+                                codec_workers / buffer_codec; stream-mode-settings.json; .invalid
                                 set-aside)
+stream-delay-controller.*     → v1.0.0 stream mode, OBS side (docs/STREAM_MODE.md): eligibility,
+                                the private loopback service, delay on/off/seconds, dump, presets,
+                                scene rules, the badge on output channel 61, settings checks
+stream-relay.*                → v1.0.0 the relay (FFmpeg avformat, Windows): RTMP listener on
+                                127.0.0.1, the sender to the streamer's service, back-off, drain
+packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: splices, timestamp rewrite,
+                                trimming, dump floor; pure
+stream-mode-panel.*           → v1.0.0 the dock's stream mode section
+delay-router.*                → v1.0.0 hotkeys and obs-websocket to stream mode or scene mode
+websocket-vendor.*            → v1.0.0 obs-websocket vendor trigglow-dynamic-delay (docs/STREAM_DECK.md)
+core-host.* / core-main.cpp   → the core-only build (v0.7.2, TRIGGLOW_CORE_ONLY): scene mode driven
+                                through a private source's settings, for Trigglow Studio
 buffer-mode-controller.*      → the state machine described in §3.3 (Inactive/Filling/Active/Error)
 obs-frontend-bridge.*         → the only layer that touches obs-frontend-api.h + filter/scene wiring
 video-delay-filter.*          → §3.1 -- capture, I420 conversion, readback, playback and the small
@@ -1438,12 +1471,12 @@ auto-names.*                  → §3.7 -- names of the managed objects and thei
 hardware-info.*               → total system RAM query; the GPU adapters (DXGI vendor, name, VRAM)
                                 for the storage codec (v0.7.0)
 win-http.* / api-client.*     → §3.8 -- the one hardened HTTPS path and the api.trigglow.com client
-                                (Windows; "unavailable" on macOS/Linux until they get an HTTP
-                                client)
+                                (WinHTTP on Windows, libcurl on macOS/Linux since v1.0.0)
 json.*                        → §3.8 -- strict, bounded JSON reader/writer
 auth-manager.* / auth-client.* → §3.8 -- sign-in (device link v2), renewal, sign-out, v0.5.x
                                 exchange, 401/403 rules; the account gate (docs/ACCOUNT_GATE.md)
-token-store.*                 → §3.8 -- the plugin's sign-in, encrypted with CryptProtectData
+token-store.*                 → §3.8 -- the plugin's sign-in, encrypted with CryptProtectData on
+                                Windows; a user-only (0600) file on macOS/Linux
 support-client.* / support-service.* → §3.8 -- Trigi and ticket calls; threads, one Trigi
                                 request at a time, local choices, log lines
 support-diagnostics.* / diagnostics-collector.* → §3.8 -- the opt-in technical data v1
@@ -1461,24 +1494,30 @@ settings-ui.*                 → the Qt dock (live/loading scene, seconds, qual
                                 notice)
 ui-tokens.* / ui-theme.*      → colors derived from OBS's palette (WCAG AA), style sheet, bundled
                                 fonts and recolored SVG icons
-hotkeys.*                     → registration of the 3 native OBS hotkeys, wired to
-                                BufferModeController's Enable()/Disable()/Toggle()
+hotkeys.*                     → registration of the 10 native OBS hotkeys (v1.0.0: back to live,
+                                +/-5 s, dump, presets 1-3 next to the original three), through
+                                DelayRouter
 logging.*                     → logging wrapper with a component prefix
 delay-controller.*            → §6 -- legacy reconnect-mode logic, present but unused
-tests/                        → 23 suites, built only with -DTRIGGLOW_BUILD_TESTS=ON or on their own
+tests/                        → unit suites, built only with -DTRIGGLOW_BUILD_TESTS=ON or on their own
                                 (cmake -S tests): buffer_fit, encoder_check, ui_tokens, auto_names,
                                 overlay_layout, frame_arena, frame_ring, degradation_policy,
                                 pipeline_stress, storage_codec, storage_policy, pipeline_gop_stress,
                                 adversarial_gop, background_tasks, json, log_redact, chat_text,
                                 support_diagnostics, api_client, token_store, auth_client,
                                 support_client, trigi_states (the client ones with a scripted
-                                network stand-in); plus hw_storage_codec on Windows when the
+                                network stand-in), packet_delay_core (v1.0.0); plus
+                                hw_storage_codec and the manual relay_harness on Windows when the
                                 plugin's FFmpeg is in .deps
 ```
 
-Design principle: **`BufferModeController` is the only owner of state**. The dock and the hotkeys both
-call the same public methods (`Enable()`, `Disable()`, `Toggle()`) — there is no separate code path for
-"button" vs. "hotkey", which halves the state-sync bug surface.
+Design principle: **each mode's controller is the only owner of its state** —
+`BufferModeController` for scene mode, `StreamDelayController` for stream mode. The dock and the
+hotkeys (and, since v1.0.0, obs-websocket) call the same public methods (`Enable()`, `Disable()`,
+`Toggle()`...) — there is no separate code path for "button" vs. "hotkey", which halves the
+state-sync bug surface. `DelayRouter` only picks which controller a hotkey or obs-websocket command
+goes to (stream mode when `StreamDelayController::HandlesControls()`, scene mode otherwise); it keeps
+no state of its own.
 
 ## 9. License and repository
 

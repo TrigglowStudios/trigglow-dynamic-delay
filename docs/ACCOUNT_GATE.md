@@ -1,8 +1,10 @@
+*[Versión en español](ACCOUNT_GATE-es.md)*
+
 # Free account gate
 
 Trigglow Dynamic Delay is, and stays, 100% free -- no subscription, no paid tier, no feature ever
-locked behind payment. Starting with this change, using the delay (the dock's Enable button, its
-hotkey, and Stream Deck) requires having signed in to a free trigglow.com account at least once.
+locked behind payment. Since v0.3.3, turning the delay on (the dock's buttons, the hotkeys, Stream
+Deck and obs-websocket, in stream mode and in scene mode) requires having signed in to a free trigglow.com account at least once.
 The purpose is discovery, not monetization or lead generation: Trigglow ships several other free
 (with-limits) products for streamers, and most people who install this plugin from the OBS
 resources directory would otherwise never find out they exist.
@@ -12,7 +14,8 @@ resources directory would otherwise never find out they exist.
 - No password, email, or any personal data is ever typed into or stored by the plugin itself --
   see "How login works" below. The plugin only ever holds its own opaque token, which works for
   nothing but the few calls the plugin makes.
-- No plugin configuration (scenes, delay seconds, quality floor) is gated. Only Enable/Toggle are.
+- No plugin configuration (scenes, delay seconds, quality floor, presets, scene rules) is gated. Only turning the delay on is (Enable, Toggle, a preset or a scene rule that turns
+  it on). Turning it off, back to live and Dump never are.
 - No account data collected here is used for marketing or resold to third parties without separate,
   explicit consent -- that's a Trigglow product/privacy-policy commitment, not something enforced
   in this code, but it's the reason the gate is scoped this narrowly.
@@ -23,7 +26,9 @@ resources directory would otherwise never find out they exist.
    calls `POST /auth/plugin/start` on trigglow.com, which returns a short code (like `KD7F-29QM`),
    the confirmation page to open, and a secret that never leaves the plugin. This call (and every
    other HTTPS call this feature makes) goes through `src/win-http.hpp` (WinHTTP, native Windows
-   API) rather than Qt's `QNetworkAccessManager` -- see that header's comment for why: Qt's TLS
+   API, on Windows; libcurl on macOS and Linux since v1.0.0, with the same rules: HTTPS on port 443
+   only, TLS 1.2+, no redirects, a capped body, CR/LF refused in headers, cancellable, nothing
+   logged) rather than Qt's `QNetworkAccessManager` -- see that header's comment for why: Qt's TLS
    backend plugin is tied to the exact Qt version already loaded in the host process (OBS's own
    bundled Qt, not the older one this plugin builds against), and shipping a mismatched one just
    gets silently rejected at runtime ("No functional TLS backend was found", hit live 2026-09-01).
@@ -45,10 +50,15 @@ resources directory would otherwise never find out they exist.
    automatically when the server says so, and "Sign out" revokes it on the server as well as
    deleting it locally (the local copy goes even without a connection). The user can also revoke it
    from trigglow.com: Settings -> Active sessions -> Connected apps.
-6. The token is stored encrypted with the Windows data protection API, for the current Windows
-   user only, apart from the plugin's settings. The email is not stored. If it can't be decrypted
-   (another Windows user, a restored profile), it is deleted and the dock goes back to "Sign in".
-   It is never read, attached or mentioned by "Report a problem".
+6. On Windows the token is stored encrypted with the Windows data protection API, for the current
+   Windows user only, apart from the plugin's settings (`trigglow-auth.dat` in the plugin's config
+   folder). If it can't be decrypted (another Windows user, a restored profile), it is deleted and
+   the dock goes back to "Sign in". On macOS and Linux (v1.0.0) the same file is **not encrypted**:
+   it is a file only your user can read and write (mode 0600, set before anything is written to
+   it), the way OBS keeps your stream key in its `service.json`, with a marker that rejects a file
+   that isn't the plugin's. The token only works for the plugin's own calls and Sign out (or
+   trigglow.com's connected apps) revokes it. The email is not stored. The token is never read,
+   attached or mentioned by "Report a problem".
 
 Sign-ins made with version 0.5.x or earlier are exchanged once, silently, for a plugin token on the
 first start of 0.6.0, and the old plain-text sign-in file is overwritten and deleted. Until that
@@ -66,13 +76,22 @@ trigglow.com can't be reached, the plugin stays signed in and Enable keeps worki
 says the account is suspended or not active, Enable is blocked and the dock says why. Outside of an
 active `StartLogin()` wait, the plugin makes no other network calls related to this feature.
 
-Sign-in (and with it Enable and Trigi) works only on Windows in 0.6.0 and 0.7.0: macOS and Linux
-get an HTTP client, with the sign-in kept in the system's keychain or secret store, next (planned
-as 0.6.1, which wasn't published; see `docs/ROADMAP.md`).
+Sign-in (and with it Enable and Trigi) worked only on Windows from 0.6.0 to 0.7.3. Since v1.0.0
+it works on macOS and Linux too, over the system's libcurl (CMake links `CURL::libcurl`; the
+`.deb` depends on `libcurl4t64 | libcurl4`, the Arch package on `curl`, the `.rpm` takes it from
+the binary's needs; macOS 12's libcurl 7.79 is handled). This path is built by CI but hasn't been
+run on a real Mac or Linux machine yet. The planned keychain or secret-store storage wasn't done:
+see step 6.
 
-## Enforcement point
+## Enforcement points
 
-`BufferModeController::SetAuthorizationCheck()` (`src/buffer-mode-controller.hpp`) is the single
-choke point: both the dock's Enable button (`settings-ui.cpp`) and the hotkey/Stream Deck path
-(`hotkeys.cpp`) call straight into `BufferModeController::Enable()`/`Toggle()`, so gating there
-covers both without duplicating the check.
+One per mode, both set from the same check in `plugin-main.cpp`:
+
+- **Scene mode:** `BufferModeController::SetAuthorizationCheck()`
+  (`src/buffer-mode-controller.hpp`). The dock's Enable button (`settings-ui.cpp`) and every
+  hotkey or obs-websocket command routed to scene mode end in `BufferModeController::Enable()`/
+  `Toggle()`, so gating there covers them all.
+- **Stream mode:** `StreamDelayController::SetAuthorizationCheck()`
+  (`src/stream-delay-controller.hpp`), checked in `StreamDelayController::Enable()`, which the
+  dock's stream mode section, presets, scene rules and the routed hotkeys and obs-websocket
+  commands (`src/delay-router.cpp`) go through.
