@@ -197,11 +197,12 @@ for arch in "${archs[@]}"; do
       --cc=clang
       "--extra-cflags=${darwin_flags} -fvisibility=hidden"
       "--extra-ldflags=${darwin_flags}"
+      # Plain C: -fvisibility=hidden doesn't reach FFmpeg's assembly, whose
+      # functions (ff_*_neon, ff_crc32_aarch64...) would be exported from the
+      # bundle (macOS has no version script like Linux). The relay decodes
+      # nothing, so it loses nothing; CI's "Check Plugin Binary" checks it.
+      --disable-asm
     )
-    # No nasm needed, and the relay decodes nothing: plain C on x86_64.
-    if [[ ${arch} == x86_64 ]]; then
-      args+=(--disable-x86asm)
-    fi
   fi
 
   mkdir -p "${build}"
