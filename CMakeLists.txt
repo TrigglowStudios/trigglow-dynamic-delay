@@ -107,7 +107,7 @@ if(OS_WINDOWS)
   # Not in the core-only build: hosts there have their own outputs.
   if(NOT TRIGGLOW_CORE_ONLY)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32 iphlpapi)
   endif()
 
   # Same DESTINATION set_target_properties_plugin() (cmake/windows/helpers.cmake)
