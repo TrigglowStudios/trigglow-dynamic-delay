@@ -31,6 +31,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // ends and the destination finished, or after [max s] (default 600). [keep s]
 // is the relay's keepSeconds (default 30). [spill MB]: the spill's size limit
 // (0, the default: the free disk space; -1: no spill, RAM only).
+//
+// Each status line ends with this process's resource use since it started
+// (Windows only; docs/BENCHMARK-buffer-storage.md): "cpu=" user + kernel CPU
+// seconds, "ior=" / "iow=" bytes read / written through ReadFile/WriteFile
+// (the spill file and this program's stdout), "ioo=" other I/O bytes,
+// "ppriv=" / "pws=" peak private bytes / working set, "raise=" how far the
+// delay can be raised with no wait, then the spill's note when it isn't
+// active.
 
 #include "stream-relay.hpp"
 
@@ -83,6 +91,44 @@ void ProcessMemoryMb(double &privateMb, double &workingSetMb)
 		workingSetMb = static_cast<double>(counters.WorkingSetSize) / 1048576.0;
 	}
 #endif
+}
+
+// This process's CPU seconds (user + kernel), I/O byte counters and peak
+// memory in MB (0 where unsupported).
+struct ProcessUsage {
+	double cpuSeconds = 0.0;
+	unsigned long long readBytes = 0;
+	unsigned long long writeBytes = 0;
+	unsigned long long otherBytes = 0;
+	double peakPrivateMb = 0.0;
+	double peakWorkingSetMb = 0.0;
+};
+
+ProcessUsage ProcessUsageNow()
+{
+	ProcessUsage usage;
+#ifdef _WIN32
+	const HANDLE self = GetCurrentProcess();
+	FILETIME created, exited, kernel, user;
+	if (GetProcessTimes(self, &created, &exited, &kernel, &user)) {
+		const auto ticks = [](const FILETIME &ft) {
+			return (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+		};
+		usage.cpuSeconds = static_cast<double>(ticks(kernel) + ticks(user)) / 1e7;
+	}
+	IO_COUNTERS io = {};
+	if (GetProcessIoCounters(self, &io)) {
+		usage.readBytes = io.ReadTransferCount;
+		usage.writeBytes = io.WriteTransferCount;
+		usage.otherBytes = io.OtherTransferCount;
+	}
+	PROCESS_MEMORY_COUNTERS_EX counters = {};
+	if (GetProcessMemoryInfo(self, reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters), sizeof(counters))) {
+		usage.peakPrivateMb = static_cast<double>(counters.PeakPagefileUsage) / 1048576.0;
+		usage.peakWorkingSetMb = static_cast<double>(counters.PeakWorkingSetSize) / 1048576.0;
+	}
+#endif
+	return usage;
 }
 
 } // namespace
@@ -154,16 +200,20 @@ int main(int argc, char **argv)
 		double privateMb = 0.0;
 		double workingSetMb = 0.0;
 		ProcessMemoryMb(privateMb, workingSetMb);
+		const ProcessUsage usage = ProcessUsageNow();
 		std::printf(
 			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB disk=%.2fMB spill=%d %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
-			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s\n",
+			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s | cpu=%.2fs ior=%llu "
+			"iow=%llu ioo=%llu ppriv=%.1fMB pws=%.1fMB raise=%us %s\n",
 			second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
 			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.historyDiskBytes / 1048576.0,
 			s.spillActive ? 1 : 0, s.bitrateMbps, s.keyframeIntervalSeconds, s.videoCodec.c_str(), s.width,
 			s.height, privateMb, workingSetMb, sink ? static_cast<int>(sink->state) : -1,
 			sink ? sink->behindSeconds : 0.0, sink ? sink->sentMbps : 0.0,
 			sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull, sink ? sink->reconnects : 0,
-			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
+			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "", usage.cpuSeconds, usage.readBytes,
+			usage.writeBytes, usage.otherBytes, usage.peakPrivateMb, usage.peakWorkingSetMb,
+			s.instantRaiseSeconds, s.spillNote.c_str());
 		std::fflush(stdout);
 		if (relay.Finished() && s.ingestEnded)
 			break;
