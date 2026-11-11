@@ -32,7 +32,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Model:
 // - PacketHistory: every packet the stream produced in the last `retention`
 //   seconds, in arrival order, each stamped with its arrival time. It always
-//   starts at a video keyframe, so a sink can splice there.
+//   starts at a video keyframe, so a sink can splice there. The packets' bytes
+//   live back to back in its PayloadStore (payload-store.hpp); each Packet is
+//   only the metadata the scheduler needs.
 // - SinkScheduler: one per destination. It sends packet p once
 //   now >= p.arrival + delay. Changing the delay SPLICES: the sink jumps to the
 //   newest video keyframe old enough for the new delay (back in time to add
@@ -40,35 +42,44 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //   to remove it) and rewrites timestamps so what leaves stays continuous.
 //   The destination never sees a cut or a reconnect.
 
+#include "payload-store.hpp"
+
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <memory>
 #include <vector>
 
 namespace trigglow::relay {
 
 enum class MediaKind : uint8_t { Video, Audio, Other };
 
-// One encoded packet. Timestamps are in milliseconds (FLV's own timebase,
-// which is what RTMP carries). `payload` is opaque to the core: the relay keeps
-// a reference to the FFmpeg packet there; tests leave it empty.
+// One encoded packet's metadata. Timestamps are in milliseconds (FLV's own
+// timebase, which is what RTMP carries). Its bytes are a record in the
+// history's PayloadStore, opaque to the core (the relay's serialized FFmpeg
+// packet; tests usually store none).
 struct Packet {
-	MediaKind kind = MediaKind::Other;
-	int stream = 0;
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
+	int64_t arrivalNs = 0;     // Monotonic clock, when the packet reached the relay.
+	uint64_t recordOffset = 0; // Set by PacketHistory::Push().
+	uint32_t recordBytes = 0;  // Set by PacketHistory::Push().
+	uint32_t bytes = 0;        // Payload size, for the bitrate.
+	MediaKind kind = MediaKind::Other;
+	uint8_t stream = 0;
 	bool keyframe = false;
-	int64_t arrivalNs = 0; // Monotonic clock, when the packet reached the relay.
-	size_t bytes = 0;
-	uint64_t seq = 0; // Assigned by PacketHistory::Push().
-	std::shared_ptr<void> payload;
 };
 
 class PacketHistory {
 public:
-	// Appends `packet` (its seq is assigned here) and returns that seq.
-	uint64_t Push(Packet packet);
+	// Appends `packet`, with `parts` stored back to back as its record, and
+	// returns its seq (seqs only grow; At() finds a packet by it).
+	uint64_t Push(Packet packet, const PayloadStore::Span *parts = nullptr, size_t partCount = 0);
+
+	// Appends the packet's record to `out`. False when it isn't available.
+	bool CopyRecord(const Packet &packet, std::vector<uint8_t> &out) const
+	{
+		return store_.CopyOut(packet.recordOffset, packet.recordBytes, out);
+	}
+	const PayloadStore &Store() const { return store_; }
 
 	// Drops whole GOPs from the front while the NEXT video keyframe is still
 	// older than now - retention, and never past `minKeepSeq` (the oldest
@@ -92,7 +103,10 @@ public:
 	uint64_t FrontSeq() const { return frontSeq_; }
 	uint64_t EndSeq() const { return frontSeq_ + packets_.size(); }
 	bool Empty() const { return packets_.empty(); }
+	// Payload bytes of the packets kept.
 	size_t Bytes() const { return bytes_; }
+	// RAM held for the history: records plus the packets' metadata.
+	size_t RamBytes() const { return store_.RamBytes() + packets_.CapacityBytes(); }
 	bool HasVideo() const { return sawVideo_; }
 
 	// Seconds the history covers (newest arrival - oldest arrival).
@@ -106,7 +120,8 @@ public:
 	void Clear();
 
 private:
-	std::deque<Packet> packets_;
+	ChunkedQueue<Packet> packets_;
+	PayloadStore store_;
 	uint64_t frontSeq_ = 0;
 	uint64_t nextSeq_ = 0;
 	size_t bytes_ = 0;

@@ -31,16 +31,21 @@ bool IsVideoKey(const Packet &p)
 
 // ---------------------------------------------------------------- history --
 
-uint64_t PacketHistory::Push(Packet packet)
+uint64_t PacketHistory::Push(Packet packet, const PayloadStore::Span *parts, size_t partCount)
 {
-	packet.seq = nextSeq_++;
+	const uint64_t seq = nextSeq_++;
 	if (packets_.empty())
-		frontSeq_ = packet.seq;
+		frontSeq_ = seq;
 	if (packet.kind == MediaKind::Video)
 		sawVideo_ = true;
+	size_t recordBytes = 0;
+	for (size_t i = 0; i < partCount; ++i)
+		recordBytes += parts[i].bytes;
+	packet.recordOffset = store_.Append(parts, partCount);
+	packet.recordBytes = static_cast<uint32_t>(recordBytes);
 	bytes_ += packet.bytes;
-	packets_.push_back(std::move(packet));
-	return packets_.back().seq;
+	packets_.push_back(packet);
+	return seq;
 }
 
 void PacketHistory::Trim(int64_t nowNs, int64_t retentionNs, uint64_t minKeepSeq)
@@ -64,11 +69,11 @@ void PacketHistory::Trim(int64_t nowNs, int64_t retentionNs, uint64_t minKeepSeq
 		while (drop < packets_.size() && packets_[drop].arrivalNs <= cutoff && frontSeq_ + drop < minKeepSeq)
 			++drop;
 	}
-	for (size_t i = 0; i < drop; ++i) {
-		bytes_ -= packets_.front().bytes;
-		packets_.pop_front();
-	}
+	for (size_t i = 0; i < drop; ++i)
+		bytes_ -= packets_[i].bytes;
+	packets_.pop_front(drop);
 	frontSeq_ += drop;
+	store_.TrimTo(packets_.empty() ? store_.EndOffset() : packets_.front().recordOffset);
 }
 
 bool PacketHistory::FindSplicePoint(int64_t atNs, uint64_t &seqOut) const
@@ -133,7 +138,8 @@ double PacketHistory::KeyframeIntervalSeconds() const
 	int64_t first = 0;
 	int64_t last = 0;
 	size_t count = 0;
-	for (const Packet &p : packets_) {
+	for (size_t i = 0; i < packets_.size(); ++i) {
+		const Packet &p = packets_[i];
 		if (!IsVideoKey(p))
 			continue;
 		if (count == 0)
@@ -157,6 +163,7 @@ double PacketHistory::BytesPerSecond() const
 void PacketHistory::Clear()
 {
 	packets_.clear();
+	store_.Clear();
 	bytes_ = 0;
 	frontSeq_ = nextSeq_;
 	sawVideo_ = false;

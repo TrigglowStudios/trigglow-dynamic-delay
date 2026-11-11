@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -214,13 +215,98 @@ struct StreamInfo {
 	AVRational timeBase{1, 1000};
 };
 
+// A packet's record in the history (PayloadStore): what av_read_frame gave,
+// so the destination gets the very same bytes, flags and side data.
+//   u32 flags, u32 side data count, { u32 type, u32 size, bytes } x count,
+//   payload
+constexpr size_t kRecordHeaderBytes = 8;
+constexpr size_t kSideHeaderBytes = 8;
+
+void PutU32(uint8_t *at, uint32_t value)
+{
+	std::memcpy(at, &value, sizeof(value));
+}
+
+uint32_t GetU32(const uint8_t *at)
+{
+	uint32_t value = 0;
+	std::memcpy(&value, at, sizeof(value));
+	return value;
+}
+
+// Builds the record's pieces for `pkt` (`meta` holds the headers; the spans
+// point into it and into the packet, which must outlive the Push()).
+void RecordParts(const AVPacket *pkt, std::vector<uint8_t> &meta, std::vector<PayloadStore::Span> &spans)
+{
+	const int sideCount = pkt->side_data_elems > 0 ? pkt->side_data_elems : 0;
+	meta.resize(kRecordHeaderBytes + static_cast<size_t>(sideCount) * kSideHeaderBytes);
+	PutU32(meta.data(), static_cast<uint32_t>(pkt->flags));
+	PutU32(meta.data() + 4, static_cast<uint32_t>(sideCount));
+	spans.clear();
+	spans.push_back({meta.data(), kRecordHeaderBytes});
+	for (int i = 0; i < sideCount; ++i) {
+		const AVPacketSideData &side = pkt->side_data[i];
+		uint8_t *header = meta.data() + kRecordHeaderBytes + static_cast<size_t>(i) * kSideHeaderBytes;
+		PutU32(header, static_cast<uint32_t>(side.type));
+		PutU32(header + 4, static_cast<uint32_t>(side.size));
+		spans.push_back({header, kSideHeaderBytes});
+		spans.push_back({side.data, side.size});
+	}
+	spans.push_back({pkt->data, static_cast<size_t>(pkt->size)});
+}
+
+// Rebuilds the packet from its record into `pk` (blank). False when the
+// record is malformed.
+bool PacketFromRecord(const uint8_t *record, size_t bytes, AVPacket *pk)
+{
+	if (bytes < kRecordHeaderBytes)
+		return false;
+	const uint32_t flags = GetU32(record);
+	const uint32_t sideCount = GetU32(record + 4);
+	size_t at = kRecordHeaderBytes;
+	struct Side {
+		uint32_t type;
+		uint32_t size;
+		const uint8_t *data;
+	};
+	std::vector<Side> sides;
+	sides.reserve(sideCount);
+	for (uint32_t i = 0; i < sideCount; ++i) {
+		if (bytes - at < kSideHeaderBytes)
+			return false;
+		const Side side{GetU32(record + at), GetU32(record + at + 4), record + at + kSideHeaderBytes};
+		at += kSideHeaderBytes;
+		if (bytes - at < side.size)
+			return false;
+		at += side.size;
+		sides.push_back(side);
+	}
+	const size_t payload = bytes - at;
+	if (av_new_packet(pk, static_cast<int>(payload)) < 0)
+		return false;
+	if (payload > 0)
+		std::memcpy(pk->data, record + at, payload);
+	pk->flags = static_cast<int>(flags);
+	for (const Side &side : sides) {
+		uint8_t *dst = av_packet_new_side_data(pk, static_cast<AVPacketSideDataType>(side.type), side.size);
+		if (!dst) {
+			av_packet_unref(pk);
+			return false;
+		}
+		if (side.size > 0)
+			std::memcpy(dst, side.data, side.size);
+	}
+	return true;
+}
+
+// A due packet, its record copied into the sink's scratch buffer.
 struct Outgoing {
-	std::shared_ptr<void> payload;
+	size_t recordAt = 0;
+	size_t recordBytes = 0;
 	int stream = 0;
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
 	int64_t arrivalNs = 0;
-	size_t bytes = 0;
 };
 
 } // namespace
@@ -356,12 +442,14 @@ struct StreamRelay::Impl {
 
 		AVPacket *pkt = av_packet_alloc();
 		const AVRational ms{1, 1000};
+		std::vector<uint8_t> recordMeta;
+		std::vector<PayloadStore::Span> recordSpans;
 		while (!stop.load()) {
 			ret = av_read_frame(ic, pkt);
 			if (ret < 0)
 				break;
 			const int index = pkt->stream_index;
-			if (index < 0 || static_cast<size_t>(index) >= streams.size()) {
+			if (index < 0 || static_cast<size_t>(index) >= streams.size() || index > 255) {
 				av_packet_unref(pkt);
 				continue;
 			}
@@ -374,21 +462,18 @@ struct StreamRelay::Impl {
 			}
 			Packet p;
 			p.kind = streams[index].kind;
-			p.stream = index;
+			p.stream = static_cast<uint8_t>(index);
 			p.dtsMs = av_rescale_q(rawDts, st->time_base, ms);
 			p.ptsMs = av_rescale_q(rawPts, st->time_base, ms);
 			p.keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
 			p.arrivalNs = NowNs();
-			p.bytes = static_cast<size_t>(pkt->size);
-			AVPacket *own = av_packet_alloc();
-			av_packet_move_ref(own, pkt);
-			p.payload = std::shared_ptr<void>(own, [](void *raw) {
-				AVPacket *packet = static_cast<AVPacket *>(raw);
-				av_packet_free(&packet);
-			});
+			p.bytes = static_cast<uint32_t>(pkt->size);
+			// The bytes are copied into the history's blocks: no FFmpeg
+			// allocation is kept per packet.
+			RecordParts(pkt, recordMeta, recordSpans);
 			{
 				std::lock_guard<std::mutex> lock(m);
-				history.Push(std::move(p));
+				history.Push(p, recordSpans.data(), recordSpans.size());
 				const int64_t now = NowNs();
 				if (now - keyframeCheckNs > 2 * kSecondNs) {
 					keyframeInterval = history.KeyframeIntervalSeconds();
@@ -397,6 +482,7 @@ struct StreamRelay::Impl {
 				history.Trim(now, RetentionNs(delaySeconds, options.keepSeconds, keyframeInterval),
 					     MinSinkCursorLocked());
 			}
+			av_packet_unref(pkt);
 			cv.notify_all();
 		}
 		av_packet_free(&pkt);
@@ -497,6 +583,12 @@ struct StreamRelay::Impl {
 		const std::string host = sink.dest.name.empty() || sink.dest.name == serverHost
 						 ? serverHost
 						 : sink.dest.name + " (" + serverHost + ")";
+		// Records of the packets being sent, copied out of the history under
+		// the lock (the history may drop them right after), and the packet
+		// rebuilt from each.
+		std::vector<uint8_t> scratch;
+		std::vector<Outgoing> out;
+		AVPacket *pk = av_packet_alloc();
 
 		std::unique_lock<std::mutex> lock(m);
 		while (!stop.load() && !sink.abort.load()) {
@@ -534,11 +626,17 @@ struct StreamRelay::Impl {
 				cv.wait_for(lock, std::chrono::nanoseconds(waitNs));
 				continue;
 			}
-			std::vector<Outgoing> out;
-			out.reserve(due.size());
-			for (const OutPacket &o : due)
-				out.push_back(Outgoing{o.packet->payload, o.packet->stream, o.ptsMs, o.dtsMs,
-						       o.packet->arrivalNs, o.packet->bytes});
+			scratch.clear();
+			out.clear();
+			for (const OutPacket &o : due) {
+				const size_t at = scratch.size();
+				if (!history.CopyRecord(*o.packet, scratch))
+					continue;
+				out.push_back(Outgoing{at, o.packet->recordBytes, o.packet->stream, o.ptsMs, o.dtsMs,
+						       o.packet->arrivalNs});
+			}
+			if (out.empty())
+				continue;
 			lock.unlock();
 
 			bool ok = true;
@@ -558,29 +656,32 @@ struct StreamRelay::Impl {
 					sink.status.error.clear();
 				}
 			}
-			for (size_t i = 0; ok && i < out.size(); ++i) {
+			for (size_t i = 0; ok && pk && i < out.size(); ++i) {
 				const Outgoing &o = out[i];
 				const int target = (o.stream >= 0 && static_cast<size_t>(o.stream) < map.size())
 							   ? map[o.stream]
 							   : -1;
 				if (target < 0)
 					continue;
-				AVPacket *pk = av_packet_clone(static_cast<const AVPacket *>(o.payload.get()));
-				if (!pk)
+				if (!PacketFromRecord(scratch.data() + o.recordAt, o.recordBytes, pk))
 					continue;
 				const AVRational tb = oc->streams[target]->time_base;
+				pk->time_base = streams[o.stream].timeBase;
 				pk->stream_index = target;
 				pk->pts = av_rescale_q(o.ptsMs, AVRational{1, 1000}, tb);
 				pk->dts = av_rescale_q(o.dtsMs, AVRational{1, 1000}, tb);
 				pk->duration = 0;
 				pk->pos = -1;
 				const int ret = av_interleaved_write_frame(oc, pk);
-				av_packet_free(&pk);
+				av_packet_unref(pk);
 				if (ret < 0) {
 					ok = false;
 					error = AvError(ret);
 				}
 			}
+			// A catch-up burst can make the scratch large: don't keep it.
+			if (scratch.capacity() > 2 * PayloadStore::kDefaultBlockBytes)
+				std::vector<uint8_t>().swap(scratch);
 
 			lock.lock();
 			if (ok) {
@@ -637,6 +738,7 @@ struct StreamRelay::Impl {
 		sink.finished = true;
 		const bool drained = ingestEnded && !stop.load() && !gaveUp;
 		lock.unlock();
+		av_packet_free(&pk);
 		Disconnect(oc, !gaveUp);
 		{
 			std::lock_guard<std::mutex> statusLock(m);
@@ -836,6 +938,7 @@ RelayStatus StreamRelay::GetStatus() const
 	status.delaySeconds = d.delaySeconds;
 	status.historySeconds = d.history.SpanSeconds();
 	status.historyBytes = d.history.Bytes();
+	status.historyRamBytes = d.history.RamBytes();
 	status.bitrateMbps = d.history.BytesPerSecond() * 8.0 / 1e6;
 	status.keyframeIntervalSeconds = d.keyframeInterval;
 	for (const StreamInfo &info : d.streams) {

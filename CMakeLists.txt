@@ -356,6 +356,8 @@ else()
       src/plugin-main.cpp
       src/packet-delay-core.cpp
       src/packet-delay-core.hpp
+      src/payload-store.cpp
+      src/payload-store.hpp
       src/stream-relay.cpp
       src/stream-relay.hpp
       src/stream-delay-controller.cpp

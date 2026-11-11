@@ -88,10 +88,18 @@ add_executable(
   packet_delay_core_tests.cpp
   "${_src}/packet-delay-core.cpp"
   "${_src}/packet-delay-core.hpp"
+  "${_src}/payload-store.cpp"
+  "${_src}/payload-store.hpp"
 )
 target_include_directories(packet_delay_core_tests PRIVATE "${_src}")
 set_target_properties(packet_delay_core_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME packet_delay_core_tests COMMAND packet_delay_core_tests)
+
+# v1.0.0 stream mode: the history's byte store (contiguous blocks).
+add_executable(payload_store_tests payload_store_tests.cpp "${_src}/payload-store.cpp" "${_src}/payload-store.hpp")
+target_include_directories(payload_store_tests PRIVATE "${_src}")
+set_target_properties(payload_store_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME payload_store_tests COMMAND payload_store_tests)
 
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
@@ -240,12 +248,20 @@ if(WIN32)
       "${_src}/stream-relay.hpp"
       "${_src}/packet-delay-core.cpp"
       "${_src}/packet-delay-core.hpp"
+      "${_src}/payload-store.cpp"
+      "${_src}/payload-store.hpp"
     )
     target_include_directories(relay_harness PRIVATE "${_src}" "${_ffmpeg}/include")
     target_compile_definitions(relay_harness PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
     target_link_libraries(
       relay_harness
-      PRIVATE "${_ffmpeg}/lib/avformat.lib" "${_ffmpeg}/lib/avcodec.lib" "${_ffmpeg}/lib/avutil.lib" ws2_32 iphlpapi psapi
+      PRIVATE
+        "${_ffmpeg}/lib/avformat.lib"
+        "${_ffmpeg}/lib/avcodec.lib"
+        "${_ffmpeg}/lib/avutil.lib"
+        ws2_32
+        iphlpapi
+        psapi
     )
     set_target_properties(relay_harness PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
     add_custom_command(

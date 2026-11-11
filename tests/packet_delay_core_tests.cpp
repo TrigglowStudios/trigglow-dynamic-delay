@@ -419,9 +419,51 @@ void TestBFramesSpliceKeepsDisplayOrder()
 
 } // namespace
 
+// The history keeps each packet's record in its PayloadStore and frees it
+// with the packet.
+void TestHistoryRecords()
+{
+	g_currentTest = "HistoryRecords";
+	PacketHistory h;
+	std::vector<uint8_t> payload(50000);
+	for (size_t i = 0; i < payload.size(); ++i)
+		payload[i] = static_cast<uint8_t>(i * 7);
+	const uint8_t header[4] = {0xde, 0xad, 0xbe, 0xef};
+	for (int i = 0; i < 600; ++i) {
+		Packet p;
+		p.kind = MediaKind::Video;
+		p.keyframe = i % 60 == 0;
+		p.dtsMs = p.ptsMs = i * 33;
+		p.arrivalNs = i * 33 * kMs;
+		p.bytes = 50000;
+		payload[0] = static_cast<uint8_t>(i);
+		const PayloadStore::Span parts[2] = {{header, 4}, {payload.data(), payload.size()}};
+		h.Push(p, parts, 2);
+	}
+	CHECK(h.Bytes() == 600u * 50000u);
+	const Packet *p = h.At(123);
+	CHECK(p && p->recordBytes == 50004);
+	std::vector<uint8_t> record;
+	CHECK(p && h.CopyRecord(*p, record));
+	CHECK(record.size() == 50004 && record[0] == 0xde && record[4] == 123 && record[5] == payload[1]);
+	const size_t before = h.RamBytes();
+	CHECK(before >= 600u * 50004u);
+	// Keep about the last 5 s (packets 33 ms apart, keyframes every 60).
+	h.Trim(600 * 33 * kMs, 5000 * kMs, UINT64_MAX);
+	CHECK(h.FrontSeq() == 420);
+	CHECK(h.RamBytes() < before / 2);
+	CHECK(h.RamBytes() <= (600u - 420u) * 50004u + 3 * PayloadStore::kDefaultBlockBytes + 256 * 1024);
+	p = h.At(500);
+	record.clear();
+	CHECK(p && h.CopyRecord(*p, record) && record.size() == 50004 && record[4] == static_cast<uint8_t>(500));
+	h.Clear();
+	CHECK(h.RamBytes() == 0 && h.Bytes() == 0);
+}
+
 int main()
 {
 	TestBFramesSpliceKeepsDisplayOrder();
+	TestHistoryRecords();
 	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();

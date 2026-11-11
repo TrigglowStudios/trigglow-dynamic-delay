@@ -150,14 +150,15 @@ int main(int argc, char **argv)
 		double privateMb = 0.0;
 		double workingSetMb = 0.0;
 		ProcessMemoryMb(privateMb, workingSetMb);
-		std::printf("t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
-			    "ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s\n",
-			    second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
-			    s.historyBytes / 1048576.0, s.bitrateMbps, s.keyframeIntervalSeconds, s.videoCodec.c_str(),
-			    s.width, s.height, privateMb, workingSetMb, sink ? static_cast<int>(sink->state) : -1,
-			    sink ? sink->behindSeconds : 0.0, sink ? sink->sentMbps : 0.0,
-			    sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull, sink ? sink->reconnects : 0,
-			    sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
+		std::printf(
+			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
+			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s\n",
+			second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
+			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.bitrateMbps,
+			s.keyframeIntervalSeconds, s.videoCodec.c_str(), s.width, s.height, privateMb, workingSetMb,
+			sink ? static_cast<int>(sink->state) : -1, sink ? sink->behindSeconds : 0.0,
+			sink ? sink->sentMbps : 0.0, sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull,
+			sink ? sink->reconnects : 0, sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
 		std::fflush(stdout);
 		if (relay.Finished() && s.ingestEnded)
 			break;

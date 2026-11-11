@@ -72,7 +72,8 @@ struct RelayStatus {
 	bool ingestEnded = false; // OBS stopped sending; destinations finish the delay.
 	uint32_t delaySeconds = 0;
 	double historySeconds = 0.0;
-	uint64_t historyBytes = 0;
+	uint64_t historyBytes = 0;    // Payload bytes the history covers.
+	uint64_t historyRamBytes = 0; // RAM it holds for them (blocks + packet metadata).
 	double bitrateMbps = 0.0;
 	double keyframeIntervalSeconds = 0.0;
 	std::string videoCodec;
