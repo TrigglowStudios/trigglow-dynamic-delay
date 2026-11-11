@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Configures, builds and stages the Linux plugin (build-project.yaml's
 # linux-build job, inside ubuntu:24.04 after install-build-deps.sh and
-# build-ffmpeg.sh).
+# ../build-ffmpeg.sh).
 #
 # - libobs and obs-frontend-api: the OBS Studio pinned in buildspec.json,
 #   built from source into .deps on the first configure

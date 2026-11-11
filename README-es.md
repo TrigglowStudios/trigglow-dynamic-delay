@@ -233,7 +233,7 @@ fijadas en el primer configure, igual que el CI en un contenedor `ubuntu:24.04`:
 
 ```bash
 sudo .github/scripts/linux/install-build-deps.sh   # paquetes de Ubuntu 24.04
-.github/scripts/linux/build-ffmpeg.sh              # FFmpeg de buildspec.json, LGPL, solo MJPEG
+.github/scripts/build-ffmpeg.sh                   # FFmpeg de buildspec.json, LGPL, MJPEG y relay
 .github/scripts/linux/build.sh RelWithDebInfo      # deja el resultado en release/stage/usr
 .github/scripts/linux/package.sh                   # .deb, .rpm, .pkg.tar.zst, .tar.xz
 ```

@@ -1,5 +1,5 @@
-FFmpeg libraries shipped with Trigglow Dynamic Delay (Windows, Linux)
-=====================================================================
+FFmpeg libraries shipped with Trigglow Dynamic Delay (Windows, Linux, macOS)
+============================================================================
 
 The Windows package and installer of Trigglow Dynamic Delay ship three
 libraries of the FFmpeg project next to the plugin, unmodified:
@@ -39,16 +39,20 @@ Linux packages
 --------------
 
 The Linux packages (.deb, .rpm, .pkg.tar.zst and the per-user .tar.xz) ship
-no FFmpeg library files: libavcodec and libavutil are linked statically into
-obs-trigglow-dynamic-delay.so. They are built by the plugin's
-.github/scripts/linux/build-ffmpeg.sh from FFmpeg's own git repository, at the
+no FFmpeg library files: libavformat, libavcodec and libavutil are linked
+statically into obs-trigglow-dynamic-delay.so. They are built by the plugin's
+.github/scripts/build-ffmpeg.sh from FFmpeg's own git repository, at the
 signed release tag and commit that buildspec.json pins ("ffmpeg-source"):
 
   Source:   https://github.com/FFmpeg/FFmpeg/commit/946fcce07b6dcd0331c8cc609192aeff5e1924f8
   Tag:      n9.0.2 (FFmpeg 9.0.2, release/9.0 branch)
-  Enabled:  libavcodec and libavutil only, with the MJPEG encoder and decoder,
-            no external libraries, and without --enable-gpl, --enable-version3
-            or --enable-nonfree
+  Enabled:  libavformat, libavcodec and libavutil only: the MJPEG encoder
+            and decoder, the FLV demuxer and muxer, the RTMP, RTMPS, TCP and
+            TLS protocols and the H.264, HEVC, AV1 and AAC parsers; TLS
+            through the system's OpenSSL 3 (libssl.so.3, Apache License 2.0,
+            a system library linked dynamically, not shipped); no other
+            external library, and without --enable-gpl, --enable-version3 or
+            --enable-nonfree
 
 That build is licensed under the GNU Lesser General Public License, version
 2.1 or later: libavcodec reports "LGPL version 2.1 or later", and the build
@@ -68,6 +72,27 @@ complete source code, including the scripts that build this FFmpeg and link
 it in, is published at
 https://github.com/TrigglowStudios/trigglow-dynamic-delay, so you can rebuild the
 plugin against a modified FFmpeg. No other library is linked into it.
+
+
+macOS package
+-------------
+
+The macOS package ships no FFmpeg library files either: libavformat,
+libavcodec and libavutil are linked statically into the plugin's bundle, for
+stream mode. They are built by the same .github/scripts/build-ffmpeg.sh, from
+the same signed tag and commit as the Linux build above (n9.0.2,
+946fcce07b6dcd0331c8cc609192aeff5e1924f8), once for arm64 and once for x86_64:
+
+  Enabled:  libavformat, libavcodec and libavutil only: the FLV demuxer and
+            muxer, the RTMP, RTMPS, TCP and TLS protocols and the H.264, HEVC,
+            AV1 and AAC parsers; TLS through macOS's own Secure Transport
+            (Security.framework); no other external library, and without
+            --enable-gpl, --enable-version3 or --enable-nonfree
+
+The same LGPL 2.1-or-later terms and guard apply. The bundle carries the
+license text (Resources/licenses/LICENSE-ffmpeg-LGPL-2.1.txt) and the exact
+configuration (ffmpeg-build-macos.txt) next to this file; the source is the
+ffmpeg-n9.0.2-source.tar.xz published with every release (see above).
 
 
 Components under permissive licenses (Windows build)

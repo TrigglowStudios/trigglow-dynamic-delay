@@ -11,7 +11,7 @@ builds are still alpha (they build and pass CI, but haven't been run on a live s
 sign-in are kept.
 
 **What's new:**
-- **Stream mode (Windows): the delay on your stream itself, at almost no cost.** The plugin now
+- **Stream mode (Windows, macOS and Linux): the delay on your stream itself, at almost no cost.** The plugin now
   holds the stream OBS has already encoded and sends it out later, instead of keeping your
   rendered picture in RAM. RAM is your bitrate times the seconds kept (about 45 MB per minute at
   6 Mbps) and there's no second encode. With it:
@@ -25,6 +25,9 @@ sign-in are kept.
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
   - The dock shows where your stream goes and its state, the RAM used and the bitrate.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
+  - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet
+    run on a live stream. The plugin carries its own FFmpeg for it there (LGPL, linked in); RTMPS
+    uses macOS's own TLS and, on Linux, the system's OpenSSL 3 (the packages now depend on it).
 - **Scene mode changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
   once; raise it and the picture holds (or the loading scene shows, above 3 s) only for the extra
   seconds. The buffer never starts again from empty. Before, you had to turn the delay off to

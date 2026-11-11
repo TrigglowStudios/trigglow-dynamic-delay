@@ -36,6 +36,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -135,7 +140,21 @@ int PickLoopbackPort()
 	closesocket(s);
 	return port;
 #else
-	return 0;
+	const int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (s < 0)
+		return 0;
+	sockaddr_in addr = {};
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	addr.sin_port = 0;
+	int port = 0;
+	if (bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+		socklen_t len = sizeof(addr);
+		if (getsockname(s, reinterpret_cast<sockaddr *>(&addr), &len) == 0)
+			port = ntohs(addr.sin_port);
+	}
+	close(s);
+	return port;
 #endif
 }
 
