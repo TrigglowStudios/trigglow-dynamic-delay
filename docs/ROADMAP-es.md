@@ -196,7 +196,7 @@ Detalles en `CHANGELOG-es.md`.
 ## v1.0.0 (2026-11-11) — fuera de beta
 La primera versión estable en Windows. macOS y Linux siguen en alpha (se compilan y se prueban en
 la CI, pero aún no se han usado en un directo).
-- **Modo stream (Windows)**: el delay a nivel de output que estaba en "Más adelante" desde el
+- **Modo stream** (Windows; alpha en macOS y Linux): el delay a nivel de output que estaba en "Más adelante" desde el
   2026-09-08. El plugin apunta la salida de emisión de OBS a un relay en `127.0.0.1` y envía a la
   plataforma el stream ya codificado, pasado el delay: sin decodificar, sin una segunda
   codificación, RAM = bitrate × segundos guardados. De 0 a 600 s cambiables en directo sin
@@ -229,19 +229,15 @@ la CI, pero aún no se han usado en un directo).
 ## Siguiente
 - **Probar el modo stream en directo en plataformas reales** antes de darlo por verificado: Twitch
   (RTMP), Kick (RTMPS), YouTube (HEVC por enhanced RTMP), con cambios de delay, un borrado y un
-  OBS parado a mitad de delay, mirando el reproductor de la plataforma. Por ahora solo tiene tests
-  unitarios y pruebas con el arnés local del relay (`docs/STREAM_MODE-es.md`, "Estado de la
-  verificación").
-- **Modo stream en macOS y Linux.** El FFmpeg del plugin ahí se compila sin avformat (y sin una
-  pila TLS para RTMPS), así que esas versiones solo tienen el modo escena. Hace falta avformat con
-  RTMP y TLS en el build de FFmpeg de Linux y un FFmpeg para macOS, y luego el mismo relay.
+  OBS parado a mitad de delay, mirando el reproductor de la plataforma. Por ahora tiene tests
+  unitarios, pruebas con el arnés local del relay y pruebas en un OBS 33 real en Windows contra un
+  servidor RTMP local (`docs/STREAM_MODE-es.md`, "Estado de la verificación").
 - **Enhanced Broadcasting, SRT, RIST y WHIP en el modo stream.** Hoy esos directos pasan al modo
 - **Modo escena siguiendo los cambios de escena: un único ring compartido por todas las escenas**
   (evaluado el 2026-11-11, `docs/SPEC.md` §3.9). Un filtro de delay en cada escena de primer nivel,
   solo la escena del Programa (y las fuentes de una transición en curso) capturando en un único ring
   compartido y dibujando desde él, y filtros de audio que escriben silencio mientras su fuente no
-  está activa. Hace falta donde no puede ir el modo stream (Enhanced Broadcasting, SRT, WHIP, y
-  macOS y Linux hasta que llegue su relay).
+  está activa. Hace falta donde no puede ir el modo stream (Enhanced Broadcasting, SRT, WHIP).
   escena: Enhanced Broadcasting son varias pistas en una salida multipista, y SRT, RIST y WHIP no
   son RTMP, así que el relay necesitaría otro emisor para cada uno.
 - **Firma de código** (emitida por una CA, Windows y macOS): la solución de verdad para el aviso de
@@ -256,8 +252,9 @@ la CI, pero aún no se han usado en un directo).
 - **El plugin de Stream Deck de Trigglow con teclas de Dynamic Delay** (activar/desactivar, volver
   al directo, presets, +/-, el estado del delay en la tecla) sobre el vendor de obs-websocket; el
   camino de los atajos nativos se queda como opción sin dependencias.
-- **Verificación en directo en macOS/Linux** del modo escena y del nuevo inicio de sesión: los dos
-  compilan en verde en CI; esto trata de ejecutarlos y confirmarlos en esas plataformas.
+- **Verificación en directo en macOS/Linux** del modo stream, del modo escena y del nuevo inicio de
+  sesión: compilan en verde en CI (el relay además se probó de principio a fin en Linux con el arnés
+  local); esto trata de ejecutarlos y confirmarlos en esas plataformas.
 - Modo escena:
   - **Validar el códec de almacenamiento por hardware en NVIDIA dentro de un OBS real**: NVENC
     compartido con el encoder del stream (y Enhanced Broadcasting) sin ningún frame saltado por
@@ -277,7 +274,7 @@ la CI, pero aún no se han usado en un directo).
   - Revisar los ratios de compresión supuestos (5x para MJPEG, 12x para el códec por hardware) con
     las cifras de `ratio` y de la arena de la línea `pipeline check` de más sesiones y juegos.
 
-## Replay Buffer en directo real (resuelto por el modo stream en Windows; el modo escena no cambia)
+## Replay Buffer en directo real (resuelto por el modo stream; el modo escena no cambia)
 El modo stream nunca toca el Programa de OBS, así que el Replay Buffer, la grabación y la cámara
 virtual mantienen la imagen en directo mientras el stream va con delay. Lo que sigue es el estudio
 del 2026-09-08 para el **modo escena**, todavía pausado: ahí los filtros de delay están en las
@@ -311,8 +308,8 @@ mientras el delay está activo.
 - **Por qué pausado en vez de intentado ahora.** La propia historia de `docs/SPEC-es.md` (las entradas
   v0.3.1/v0.3.2 de §3.3, el crash de GPU sin resolver de §7) muestra que este mismo par de archivos
   ya ha sacado a la luz repetidamente bugs sutiles, solo encontrados en directo, incluso con cambios
-  acotados y específicos del propio delay. Con el modo stream cubriendo esta necesidad en Windows,
-  esto solo importa para macOS y Linux hasta que el modo stream llegue ahí.
+  acotados y específicos del propio delay. Con el modo stream cubriendo esta necesidad, esto solo
+  importa para los directos que el modo stream no puede reenviar.
 
 ## Fuera de alcance por ahora
 - **Seguir los cambios de escena del streamer con el delay activo en el modo escena, sin un hueco

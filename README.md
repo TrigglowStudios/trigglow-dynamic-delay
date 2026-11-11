@@ -36,14 +36,13 @@ custom servers). Enhanced Broadcasting, SRT, RIST and WHIP fall back to scene mo
 **Scene mode (every platform; "Scene mode (compatibility)" in the dock).** The plugin keeps your
 rendered live scene in RAM (compressed with your GPU's hardware HEVC on Windows or MJPEG, stored
 uncompressed on macOS), and
-plays it back 1 to 60 s later in a helper scene; the streaming output is never touched. It costs
-more RAM and CPU (table below) but works with any output, and it is what macOS, Linux and the
-streams stream mode can't relay use. Details: `docs/SPEC.md`.
+plays it back 1 to 600 s later in a helper scene (the seconds change live); the streaming output is never touched. It costs
+more RAM and CPU (table below) but works with any output, and it is what the streams stream mode can't relay use. Details: `docs/SPEC.md`.
 
 ## How it works
 
 ```
-Stream mode (Windows)
+Stream mode
 
   OBS scenes -> OBS encoder -> OBS RTMP output --rtmp://127.0.0.1:<port>--> relay (in OBS)
                                     |                                         |
@@ -157,7 +156,7 @@ buffer is stored uncompressed. Details in `docs/FAQ.md`.
 your browser; the plugin stays 100% free), in both modes. Since 1.0.0 sign-in works on macOS and
 Linux too (over the system's libcurl); before, it was Windows only. See `docs/ACCOUNT_GATE.md`.
 
-**For stream mode:** Windows, OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
+**For stream mode:** Windows, macOS or Linux (alpha on macOS and Linux), OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
 RTMP service or a custom rtmp:// or rtmps:// server), Enhanced Broadcasting off. A keyframe
 interval of 2 s is recommended (Settings > Output): the delay moves in steps of it.
 
@@ -272,7 +271,7 @@ contains the `obs-trigglow-dynamic-delay` folder) and restart OBS. Don't copy an
 Open OBS. If the **"Trigglow Dynamic Delay"** dock doesn't show up, go to `View → Docks` and enable
 it. Sign in once with your free Trigglow account from the dock.
 
-### Stream mode (Windows)
+### Stream mode
 
 1. Leave **Use stream mode** ticked (the default). Set the **Delay** in seconds (1-600) and, if you
    want, the three **presets** (10, 30 and 60 s by default).

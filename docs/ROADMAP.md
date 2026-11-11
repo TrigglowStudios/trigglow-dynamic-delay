@@ -175,7 +175,7 @@ Details in `CHANGELOG.md`.
 ## v1.0.0 (2026-11-11) — out of beta
 The first stable release on Windows. macOS and Linux stay alpha (built and tested in CI, not run on
 a live stream yet).
-- **Stream mode (Windows)**: the output-level delay that was listed under "Later" since 2026-09-08.
+- **Stream mode** (Windows; alpha on macOS and Linux): the output-level delay that was listed under "Later" since 2026-09-08.
   The plugin points OBS's stream output at a relay on `127.0.0.1` and sends the already-encoded
   stream to the platform after the delay: no decode, no second encode, RAM = bitrate × seconds kept.
   0–600 s changed live with no reconnect, every scene delayed, recording / Replay Buffer / virtual
@@ -202,17 +202,15 @@ a live stream yet).
 ## Next
 - **Run stream mode live on real platforms** before calling it verified: Twitch (RTMP), Kick
   (RTMPS), YouTube (HEVC over enhanced RTMP), with delay changes, a dump and an OBS stop mid-delay,
-  watching the platform's player. So far it is unit-tested and checked with the local relay harness
-  only (`docs/STREAM_MODE.md`, "Verification status").
-- **Stream mode on macOS and Linux.** The plugin's FFmpeg there is built without avformat (and
-  without a TLS stack for RTMPS), so those builds only have scene mode. Needs avformat with RTMP
-  and TLS in the Linux FFmpeg build and an FFmpeg for macOS, then the same relay.
+  watching the platform's player. So far it is unit-tested, checked with the local relay harness and
+  run in a real OBS 33 on Windows against a local RTMP server (`docs/STREAM_MODE.md`,
+  "Verification status").
 - **Enhanced Broadcasting, SRT, RIST and WHIP in stream mode.** Today those streams fall back to
 - **Scene mode following scene switches: one shared ring for every scene** (evaluated 2026-11-11,
   `docs/SPEC.md` §3.9). A delay filter on each top-level scene, only the Program scene (and a running
   transition's sources) capturing into and drawing from one shared ring, audio filters writing
   silence while their source isn't active. Needed where stream mode can't run (Enhanced
-  Broadcasting, SRT, WHIP, and macOS and Linux until their relay ships).
+  Broadcasting, SRT, WHIP).
   scene mode: Enhanced Broadcasting is several tracks on one multitrack output, and SRT, RIST and
   WHIP aren't RTMP, so the relay would need another sender for each.
 - **Code signing** (CA-issued, Windows and macOS): the real fix for the SmartScreen warning and
@@ -226,7 +224,8 @@ a live stream yet).
 - **Trigglow's Stream Deck plugin with Dynamic Delay keys** (toggle, back to live, presets, +/-,
   the delay's state on the key) over the obs-websocket vendor; the native-hotkey path stays as the
   dependency-free option.
-- **macOS/Linux live verification** of scene mode and the new sign-in: both build green in CI;
+- **macOS/Linux live verification** of stream mode, scene mode and the new sign-in: they build
+  green in CI (the relay also ran end to end on Linux with the local harness);
   this is about running and confirming them on those platforms.
 - Scene mode:
   - **Validate the hardware storage codec on NVIDIA inside a real OBS**: NVENC shared with the
@@ -246,7 +245,7 @@ a live stream yet).
   - Revisit the assumed compression ratios (5x for MJPEG, 12x for the hardware codec) with the
     `ratio` and arena figures of the `pipeline check` line from more sessions and games.
 
-## True-live Replay Buffer (solved by stream mode on Windows; scene mode unchanged)
+## True-live Replay Buffer (solved by stream mode; scene mode unchanged)
 Stream mode never touches OBS's program, so the Replay Buffer, the recording and the virtual camera
 keep the live picture while the stream is delayed. What follows is the 2026-09-08 study for **scene
 mode**, still paused: there the delay filters sit on the live scene's own sources, so any other
@@ -278,7 +277,7 @@ output sees the delayed picture while the delay is on.
 - **Why paused rather than attempted now.** `docs/SPEC.md`'s own history (§3.3's v0.3.1/v0.3.2
   entries, §7's unresolved GPU crash) shows this exact pair of files has repeatedly surfaced subtle,
   only-found-live bugs even from focused, delay-specific changes. With stream mode covering the
-  need on Windows, this only matters for macOS and Linux until stream mode reaches them.
+  need, this only matters for the streams stream mode can't relay.
 
 ## Out of scope for now
 - **Following the streamer's scene switches while delayed in scene mode, without a refill gap**

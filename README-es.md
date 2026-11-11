@@ -36,15 +36,14 @@ escena. Detalles: `docs/STREAM_MODE-es.md`.
 
 **Modo escena (todas las plataformas; "Modo escena (compatibilidad)" en el dock).** El plugin
 guarda en RAM tu escena en directo ya renderizada (comprimida con el HEVC por hardware de tu GPU en
-Windows o en MJPEG, sin comprimir en macOS) y la reproduce de 1 a 60 s más tarde en una escena
-auxiliar; el output de streaming no se toca nunca. Gasta más RAM y CPU (tabla de abajo), pero
-funciona con cualquier salida, y es lo que usan macOS, Linux y los directos que el modo stream no
-puede reenviar. Detalles: `docs/SPEC-es.md`.
+Windows o en MJPEG, sin comprimir en macOS) y la reproduce de 1 a 600 s más tarde en una escena
+auxiliar (los segundos cambian en directo); el output de streaming no se toca nunca. Gasta más RAM y CPU (tabla de abajo), pero
+funciona con cualquier salida, y es lo que usan los directos que el modo stream no puede reenviar. Detalles: `docs/SPEC-es.md`.
 
 ## Cómo funciona
 
 ```
-Modo stream (Windows)
+Modo stream
 
   escenas de OBS -> encoder de OBS -> salida RTMP de OBS --rtmp://127.0.0.1:<puerto>--> relay (en OBS)
                                             |                                               |
@@ -162,7 +161,7 @@ el dock (en tu navegador; el plugin sigue siendo 100% gratis), en los dos modos.
 inicio de sesión funciona también en macOS y Linux (con la libcurl del sistema); antes era solo de
 Windows. Ver `docs/ACCOUNT_GATE-es.md`.
 
-**Para el modo stream:** Windows, la salida RTMP o RTMPS propia de OBS (los ajustes de "Emisión" de
+**Para el modo stream:** Windows, macOS o Linux (en alpha en macOS y Linux), la salida RTMP o RTMPS propia de OBS (los ajustes de "Emisión" de
 siempre, con cualquier servicio RTMP o un servidor rtmp:// o rtmps:// personalizado) y Enhanced
 Broadcasting desactivado. Se recomienda un intervalo de fotogramas clave de 2 s
 (`Ajustes → Salida`): el delay se mueve en pasos de ese tamaño.
@@ -279,7 +278,7 @@ conocen la segunda. En Windows cada copia lleva sus propias DLL de FFmpeg al lad
 Abre OBS. Si el dock **"Trigglow Dynamic Delay"** no aparece, abre el menú `Paneles` (View → Docks) y actívalo. Inicia
 sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
 
-### Modo stream (Windows)
+### Modo stream
 
 1. Deja marcado **Usar el modo stream** (viene así por defecto). Pon el **Delay** en segundos
    (1-600) y, si quieres, los tres **presets** (10, 30 y 60 s por defecto).

@@ -21,8 +21,8 @@ Linux and macOS: see their sections below.
 "Tested up to" is the newest OBS the plugin was run in live (on Windows). OBS 33 is in release
 candidate: since v0.7.1 the plugin installs where it looks for plugins, but hasn't been tested in it
 live. In an OBS older than the minimum the plugin doesn't load, and says why in the OBS log. Linux and
-macOS are covered below; there the plugin has scene mode only (stream mode is Windows only in 1.0.0)
-and hasn't been run on a live stream yet.
+macOS are covered below; there the plugin has stream mode and scene mode too, and hasn't been run
+on a live stream yet (alpha).
 
 ## 1. Download
 
@@ -103,10 +103,10 @@ Delay"** is checked in that same menu:
 
 ![Docks menu with Trigglow Dynamic Delay listed](images/obs-panel-2-reset-panels.png)
 
-The dock appears. On Windows its top section is **Stream mode**, ticked by default: there's nothing
+The dock appears. Its top section is **Stream mode**, ticked by default: there's nothing
 else to set up before you stream (a keyframe interval of 2 s in `Settings → Output` is
 recommended). Scene mode, with its live scene picker, is folded under **Scene mode
-(compatibility)**, and is the only mode on macOS and Linux. The screenshot below is from an earlier
+(compatibility)**. The screenshot below is from an earlier
 version, before stream mode. See `README.md` ("Using the plugin") for what to configure next.
 
 ![Trigglow Dynamic Delay dock, Inactive state](images/obs-panel-3-dock.png)

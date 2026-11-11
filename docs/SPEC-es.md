@@ -34,11 +34,11 @@ jamás**. Ni reconexión, ni corte, en ningún momento, por ningún motivo. Sin 
 web, sin proceso aparte: todo vive dentro del proceso de OBS.
 
 **Desde la v1.0.0 el plugin tiene dos modos, y este documento describe el modo escena (modo
-buffer).** El modo stream (Windows, el modo por defecto donde puede funcionar) retrasa el directo
+buffer).** El modo stream (el modo por defecto donde puede funcionar) retrasa el directo
 que OBS ya ha codificado: apunta la salida RTMP de OBS a un relay en `127.0.0.1` dentro de OBS y
 envía los paquetes a la plataforma o plataformas pasado el delay, sin decodificar ni codificar dos
 veces, con todas las escenas retrasadas y la grabación en directo. Se especifica en
-`docs/STREAM_MODE-es.md`. El modo escena, el de abajo, se queda para macOS y Linux y para los
+`docs/STREAM_MODE-es.md`. El modo escena, el de abajo, se queda para los
 directos que el modo stream no puede reenviar (Enhanced Broadcasting, SRT, RIST, WHIP); en el dock
 es "Modo escena (compatibilidad)". Las hotkeys y obs-websocket llegan a cualquiera de los dos modos
 a través de `DelayRouter` (§8).

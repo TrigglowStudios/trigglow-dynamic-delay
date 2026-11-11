@@ -33,10 +33,10 @@ reconnection, no cut, at any point, for any reason. No external app, no web pane
 process: everything lives inside the OBS process.
 
 **Since v1.0.0 the plugin has two modes, and this document describes scene mode (buffer mode).**
-Stream mode (Windows, the default where it can run) delays the stream OBS has already encoded: it
+Stream mode (the default where it can run) delays the stream OBS has already encoded: it
 points OBS's RTMP output at a relay on `127.0.0.1` inside OBS and sends the packets to the
 platform(s) after the delay, with no decode or second encode, every scene delayed and the recording
-live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for macOS and Linux and for
+live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for
 the streams stream mode can't relay (Enhanced Broadcasting, SRT, RIST, WHIP); it's "Scene mode
 (compatibility)" in the dock. Hotkeys and obs-websocket reach either mode through `DelayRouter`
 (§8).

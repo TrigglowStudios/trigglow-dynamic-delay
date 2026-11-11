@@ -1,10 +1,12 @@
 FFmpeg libraries shipped with Trigglow Dynamic Delay (Windows, Linux, macOS)
 ============================================================================
 
-The Windows package and installer of Trigglow Dynamic Delay ship three
+The Windows package and installer of Trigglow Dynamic Delay ship four
 libraries of the FFmpeg project next to the plugin, unmodified:
 
-  avcodec-63.dll, avutil-61.dll, swresample-7.dll
+  avcodec-63.dll, avformat-63.dll, avutil-61.dll, swresample-7.dll
+
+(avformat-63.dll since v1.0.0, for stream mode's relay.)
 
 They come from the BtbN FFmpeg-Builds "win64-lgpl-shared" build that the
 plugin's buildspec.json pins:

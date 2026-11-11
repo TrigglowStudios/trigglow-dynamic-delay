@@ -23,8 +23,8 @@ y macOS: ver sus secciones más abajo.
 "Probado hasta" es el OBS más nuevo en el que se ha usado el plugin en directo (en Windows). OBS 33
 está en release candidate: desde la v0.7.1 el plugin se instala donde busca los plugins, pero aún
 no se ha probado en directo con él. En un OBS más antiguo que el mínimo el plugin no se carga, y
-explica por qué en el log de OBS. Linux y macOS están más abajo; allí el plugin solo tiene el modo
-escena (en la 1.0.0 el modo stream es solo para Windows) y aún no se ha usado en un directo.
+explica por qué en el log de OBS. Linux y macOS están más abajo; allí el plugin también tiene el modo
+stream y el modo escena, y aún no se ha usado en un directo (alpha).
 
 ## 1. Descarga
 
@@ -107,10 +107,10 @@ esté marcado en ese mismo menú:
 
 ![Menú de paneles con Trigglow Dynamic Delay listado](images/obs-panel-2-reset-panels.png)
 
-El panel aparece. En Windows su primera sección es **Modo stream**, marcada por defecto: no hay que
+El panel aparece. Su primera sección es **Modo stream**, marcada por defecto: no hay que
 configurar nada más antes de emitir (se recomienda un intervalo de fotogramas clave de 2 s en
 `Ajustes → Salida`). El modo escena, con su selector de escena en directo, está plegado en **Modo
-escena (compatibilidad)**, y es el único modo en macOS y Linux. La captura de abajo es de una
+escena (compatibilidad)**. La captura de abajo es de una
 versión anterior, sin el modo stream. Ver "Usar el plugin" en `README-es.md` para qué configurar a
 continuación.
 
