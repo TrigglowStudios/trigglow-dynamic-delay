@@ -45,9 +45,9 @@ namespace trigglow::relay {
 bool RelayAvailable();
 
 struct Destination {
-	std::string name;   // Shown in the dock ("Twitch", "Kick"...). Never the key.
-	std::string server; // rtmp:// or rtmps:// URL, with the app path.
-	std::string key;    // Stream key. Never logged.
+	std::string name;     // Shown in the dock ("Twitch", "Kick"...). Never the key.
+	std::string server;   // rtmp:// or rtmps:// URL, with the app path.
+	std::string key;      // Stream key. Never logged.
 	bool primary = false; // The streamer's own OBS service.
 };
 

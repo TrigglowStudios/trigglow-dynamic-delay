@@ -33,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "auth-manager.hpp"
 #include "i18n.hpp"
+#include "packet-delay-core.hpp"
 #include "stream-delay-controller.hpp"
 
 namespace trigglow {
@@ -331,7 +332,8 @@ void StreamModePanel::RefreshDestinations()
 			const relay::SinkStatus &sink = status.relay.sinks[i];
 			QString state = SinkStateText(sink.state);
 			if (!sink.error.empty() && sink.state != relay::SinkState::Live)
-				state += QStringLiteral(" (") + QString::fromStdString(sink.error) + QStringLiteral(")");
+				state +=
+					QStringLiteral(" (") + QString::fromStdString(sink.error) + QStringLiteral(")");
 			const QString sent = sink.state == relay::SinkState::Live
 						     ? QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps")
 						     : Megabytes(sink.bytesSent) + QStringLiteral(" MB");

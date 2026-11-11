@@ -295,8 +295,9 @@ void StreamDelayController::OnStreamingStarting()
 		ineligible_ = "server";
 
 	if (!ineligible_.empty()) {
-		TRIGGLOW_LOG_INFO(kComponent, "this stream can't use stream mode (%s: output %s, protocol %s); scene mode "
-					      "stays available",
+		TRIGGLOW_LOG_INFO(kComponent,
+				  "this stream can't use stream mode (%s: output %s, protocol %s); scene mode "
+				  "stays available",
 				  ineligible_.c_str(), outputId ? outputId : "none", protocol ? protocol : "none");
 		obs_output_release(output);
 		Notify();
@@ -344,8 +345,7 @@ void StreamDelayController::OnStreamingStarting()
 	if (loopbackService_)
 		obs_service_update(loopbackService_, settings);
 	else
-		loopbackService_ =
-			obs_service_create_private("rtmp_custom", "trigglow-dynamic-delay-relay", settings);
+		loopbackService_ = obs_service_create_private("rtmp_custom", "trigglow-dynamic-delay-relay", settings);
 	obs_data_release(settings);
 	obs_output_set_service(output, loopbackService_);
 	obs_output_release(output);
@@ -363,8 +363,7 @@ void StreamDelayController::OnStreamingStopped()
 	engaged_ = false;
 	if (relay_.Running() && !relay_.Finished()) {
 		draining_ = true;
-		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped; sending the %us viewers haven't seen yet",
-				  relay_.Delay());
+		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped; sending the %us viewers haven't seen yet", relay_.Delay());
 	} else {
 		relay_.Stop();
 	}

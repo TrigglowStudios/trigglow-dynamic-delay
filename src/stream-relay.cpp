@@ -30,6 +30,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #ifdef TRIGGLOW_HAVE_STREAM_RELAY
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
@@ -213,10 +216,7 @@ struct StreamRelay::Impl {
 			cb(message);
 	}
 
-	static int InterruptIngest(void *opaque)
-	{
-		return static_cast<Impl *>(opaque)->stop.load() ? 1 : 0;
-	}
+	static int InterruptIngest(void *opaque) { return static_cast<Impl *>(opaque)->stop.load() ? 1 : 0; }
 
 	struct SinkInterruptCtx {
 		Impl *impl;
@@ -344,8 +344,8 @@ struct StreamRelay::Impl {
 		}
 		av_packet_free(&pkt);
 		avformat_close_input(&ic);
-		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped sending (%s)", ret == AVERROR_EOF ? "end of stream"
-										  : AvError(ret).c_str());
+		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped sending (%s)",
+				  ret == AVERROR_EOF ? "end of stream" : AvError(ret).c_str());
 		FinishIngest("");
 	}
 
@@ -455,7 +455,8 @@ struct StreamRelay::Impl {
 			if (oc && sink.sched.LagNs(NowNs(), history) > kMaxLagNs) {
 				sink.sched.SetDelay(delayNs, NowNs(), history);
 				++sink.status.resyncs;
-				TRIGGLOW_LOG_WARN(kComponent, "%s: the upload fell behind; jumped back to the %us delay",
+				TRIGGLOW_LOG_WARN(kComponent,
+						  "%s: the upload fell behind; jumped back to the %us delay",
 						  host.c_str(), delaySeconds);
 			}
 
@@ -628,8 +629,8 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 
 	serverOut = "rtmp://127.0.0.1:" + std::to_string(port) + "/trigglow";
 	keyOut = "live";
-	TRIGGLOW_LOG_INFO(kComponent, "relay listening on 127.0.0.1:%d, %zu destination(s), delay %us, keeps %us",
-			  port, destinations.size(), d.delaySeconds, options.keepSeconds);
+	TRIGGLOW_LOG_INFO(kComponent, "relay listening on 127.0.0.1:%d, %zu destination(s), delay %us, keeps %us", port,
+			  destinations.size(), d.delaySeconds, options.keepSeconds);
 	return true;
 }
 

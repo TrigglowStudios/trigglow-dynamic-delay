@@ -11,6 +11,28 @@ de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han us
 inicio de sesión se mantienen.
 
 **Novedades:**
+- **Modo stream (Windows): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
+  stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
+  RAM. La RAM es tu bitrate por los segundos guardados (unos 45 MB por minuto a 6 Mbps) y no se
+  codifica dos veces. Con él:
+  - **De 0 a 600 s de delay, cambiable en directo.** Actívalo, quítalo, súbelo o bájalo cuando
+    quieras; tu directo nunca se reconecta. Al activarlo, los espectadores vuelven a ver los
+    últimos segundos y nunca nada más nuevo.
+  - **Todas las escenas van con delay**, así que puedes cambiar de escena con el delay activo.
+  - **Tu grabación, el Replay Buffer y la cámara virtual siguen en directo.**
+  - **Multistream:** añade más destinos (cualquier servidor rtmp:// o rtmps:// con su clave) y
+    reciben el mismo directo con delay, con una sola codificación.
+  - **Al parar el directo,** el plugin envía los segundos que los espectadores aún no han visto
+    (opcional).
+  - Funciona con tus ajustes de emisión de OBS de siempre (Twitch, YouTube, Kick, TikTok y
+    cualquier servidor RTMP o RTMPS); no hay que cambiar nada. Enhanced Broadcasting, SRT y WHIP
+    usan el modo escena.
+  - El dock muestra el estado de cada destino, la RAM usada y el bitrate.
+  - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+- **Atajos nuevos:** Volver al directo, Delay +5 s y Delay -5 s. Los tres de siempre mantienen su
+  nombre y su tecla.
+- **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre
+  el estado del delay en su tecla.
 - **Fuera de beta.** El dock ya no muestra la etiqueta "Beta" junto a la versión.
 - **El nuevo diseño de Trigglow en el dock.** El mismo aspecto que trigglow.com: la tipografía
   Figtree, el violeta de acento, un botón principal violeta sólido en lugar del degradado de cian a
