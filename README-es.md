@@ -6,7 +6,7 @@ Plugin nativo de OBS Studio que retrasa el **vídeo y el audio de tu stream junt
 configurable de segundos, desde un botón, una hotkey nativa de OBS o un Stream Deck — **sin que el
 output de streaming se toque nunca.** Sin reconexión, sin corte, en ningún momento, por ningún
 motivo. Sin app externa, sin panel web, sin proceso aparte: todo vive dentro del propio proceso de
-OBS. **Estado: MVP / v0.7.0 — Early Access.**
+OBS. **Estado: v1.0.0 — estable en Windows; las versiones de macOS y Linux siguen en alpha (aún no probadas en directo).**
 
 A partir de v0.3.0, el ring buffer de RAM se comprime de verdad con MJPEG en Windows y Linux
 (FFmpeg vendorizado), con un fallback automático y seguro a almacenamiento sin comprimir si el codec
@@ -217,7 +217,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # paquetes de Ubuntu 24.04
 desde la [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest) y
 ejecútalo — instala el plugin en la carpeta de plugins de OBS para todos los usuarios y saca de la
 carpeta de OBS una instalación de la v0.7.0 o anterior. Todavía no
-está firmado (Early Access), así que Windows SmartScreen avisará antes de dejarlo ejecutar. **Guía
+está firmado, así que Windows SmartScreen avisará antes de dejarlo ejecutar. **Guía
 completa con capturas de cada paso, incluido el aviso de SmartScreen: `docs/INSTALL_GUIDE-es.md`.**
 Instálalo antes de salir en directo, no a mitad de un stream — necesita OBS cerrado para
 sobrescribir sus archivos.
@@ -411,7 +411,7 @@ src/
                                      build actual
 data/
   locale/en-US.ini, es-ES.ini      → las cadenas traducidas reales del plugin (ver src/i18n.hpp)
-  fonts/                           → Archivo y Geist Mono empaquetadas + sus licencias OFL
+  fonts/                           → Figtree y Geist Mono empaquetadas + sus licencias OFL
   licenses/                        → avisos de los componentes de terceros (iconos Lucide, DLL de FFmpeg)
 tests/
   buffer_fit_tests.cpp             → tests unitarios de buffer-fit (desactivados por defecto:
@@ -467,7 +467,7 @@ distribuirlos junto a un binario GPL-2.0):
 
 | Recurso | Dónde | Licencia |
 |---|---|---|
-| **Archivo** (SemiBold, Bold), subconjunto | `data/fonts/Archivo-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Archivo.txt` |
+| **Figtree** (SemiBold, Bold), subconjunto | `data/fonts/Figtree-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Figtree.txt` |
 | **Geist Mono** (Medium), subconjunto | `data/fonts/GeistMono-Medium.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-GeistMono.txt` |
 | Iconos de la interfaz (trazados de Lucide, como en la web de Trigglow) | compilados desde `src/resources/icons/` | ISC (partes MIT, Feather), `data/licenses/LICENSE-lucide.txt` |
 | Bibliotecas de **FFmpeg** (avcodec, avutil, swresample), build LGPL de BtbN fijada en `buildspec.json`, solo Windows | DLL junto a la del plugin (`bin/64bit` en el paquete), sin modificar | LGPL 3.0 o posterior, con componentes MIT/BSD/Apache (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, con la etiqueta de la build y su código fuente |

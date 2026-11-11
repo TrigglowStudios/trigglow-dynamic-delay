@@ -6,7 +6,7 @@ Native OBS Studio plugin that delays your stream's **video and audio together**,
 number of seconds, from a button, a native OBS hotkey, or a Stream Deck — **without the streaming
 output ever being touched.** No reconnection, no cut, at any point, for any reason. No external
 app, no web panel, no separate process: everything lives inside the OBS process.
-**Status: MVP / v0.7.0 — Early Access.**
+**Status: v1.0.0 — stable on Windows; the macOS and Linux builds are still alpha (not yet tested on a live stream).**
 
 As of v0.3.0, the RAM ring buffer is real MJPEG-compressed on Windows and Linux (vendored FFmpeg),
 with an automatic, safe fallback to uncompressed storage if the codec isn't available — no quality
@@ -210,7 +210,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # Ubuntu 24.04 packages
 from the [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)
 and run it — it installs into OBS's plugin folder for all users and moves an install of v0.7.0 or
 earlier out of OBS's own folder. It isn't code-
-signed yet (Early Access), so Windows SmartScreen will warn you before letting it run. **Full guide
+signed yet, so Windows SmartScreen will warn you before letting it run. **Full guide
 with screenshots for every step, including the SmartScreen warning: `docs/INSTALL_GUIDE.md`.**
 Install it before you go live, not mid-stream — it needs OBS closed to overwrite its files.
 
@@ -388,7 +388,7 @@ src/
                                      instantiated by plugin-main.cpp; ships in no current build
 data/
   locale/en-US.ini, es-ES.ini      → the plugin's actual translated strings (see src/i18n.hpp)
-  fonts/                           → bundled Archivo and Geist Mono + their OFL licenses
+  fonts/                           → bundled Figtree and Geist Mono + their OFL licenses
   licenses/                        → notices of third-party components (Lucide icons, FFmpeg DLLs)
 tests/
   buffer_fit_tests.cpp             → unit tests for buffer-fit (off by default:
@@ -442,7 +442,7 @@ redistribution next to a GPL-2.0 binary):
 
 | Asset | Where | License |
 |---|---|---|
-| **Archivo** (SemiBold, Bold), subset | `data/fonts/Archivo-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Archivo.txt` |
+| **Figtree** (SemiBold, Bold), subset | `data/fonts/Figtree-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Figtree.txt` |
 | **Geist Mono** (Medium), subset | `data/fonts/GeistMono-Medium.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-GeistMono.txt` |
 | Interface icons (Lucide paths, as in the Trigglow web app) | compiled in from `src/resources/icons/` | ISC (portions MIT, Feather), `data/licenses/LICENSE-lucide.txt` |
 | **FFmpeg** libraries (avcodec, avutil, swresample), BtbN LGPL build pinned in `buildspec.json`, Windows only | DLLs next to the plugin's own (`bin/64bit` in the package), unmodified | LGPL 3.0 or later, with MIT/BSD/Apache components (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, with the build's tag and its source |

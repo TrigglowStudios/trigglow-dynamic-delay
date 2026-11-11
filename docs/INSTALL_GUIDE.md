@@ -3,7 +3,7 @@
 # Installation guide (step by step, with screenshots)
 
 This walks through the Windows installer end to end, including the Microsoft Edge SmartScreen
-warning you'll see because the installer isn't code-signed yet (Early Access — see
+warning you'll see because the installer isn't code-signed yet (see
 `docs/ROADMAP.md`). Screenshots below are from a real install on an older version, before v0.3.1
 added the Trigglow icon/wizard banner shown in the installer today — the steps and layout are
 otherwise unchanged, only that generic styling and the version number in the corner are out of date.
@@ -32,7 +32,7 @@ install by hand instead? The `.zip` in the same release contains just the plugin
 ## 2. Windows SmartScreen: why it appears, and how to get past it
 
 Because the installer isn't signed with a code-signing certificate, Microsoft Defender SmartScreen
-can't vouch for it and warns you before letting it run. This is expected for unsigned Early Access
+can't vouch for it and warns you before letting it run. This is expected for unsigned
 software, not a sign that anything is wrong — but you should only click through it for installers
 you actually trust the source of (in this case, the GitHub Releases page linked above).
 

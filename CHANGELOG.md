@@ -2,18 +2,25 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v0.7.4 — 2026-11-11 (Early Access)
+## v1.0.0 — 2026-11-11
 
-A branding release with a default loading screen: the delay itself doesn't change.
+Dynamic Delay comes out of beta on Windows: version 1.0, in Trigglow's new look. The macOS and Linux
+builds are still alpha (they build and pass CI, but haven't been run on a live stream yet).
 
 **Before you update:** nothing to do. Install it like v0.7.3; your scenes, settings, hotkeys and
 sign-in are kept.
 
 **What's new:**
-- **The new Dynamic Delay logo everywhere the plugin shows one:** the mark on the delay badge your
-  viewers see during a delay, the installer's icon and its small logo on the inner pages. The installer's Welcome and Finished banner
-  drops the purple haze, and the name under the logo is now solid white. They show
-  the Trigglow T inside the stopwatch instead of the old play button.
+- **Out of beta.** The dock no longer shows the "Beta" tag next to the version.
+- **Trigglow's new design in the dock.** The same look as trigglow.com: the Figtree typeface, the
+  violet accent, a solid violet main button instead of the cyan-to-magenta gradient, and rounded
+  cards, fields and buttons. It still follows your OBS theme (dark, light or high contrast).
+- **A new overlay.** The badge your viewers see during a delay is one rounded plate in the new
+  design: the Dynamic Delay logo, "DELAY" and your seconds, and "Dynamic Delay by Trigglow" under
+  them. A badge drawn by an earlier version is replaced the first time it shows.
+- **The new Dynamic Delay logo everywhere the plugin shows one:** the delay badge, the installer's
+  icon, its small logo on the inner pages and its Welcome and Finished banner. They show the
+  Trigglow T inside the stopwatch instead of the old play button.
 - **A loading screen by default.** If you don't choose a loading scene, the plugin now shows a
   calm Trigglow "Adding delay" video (in Spanish when OBS is in Spanish) while the delay fills,
   instead of a blank screen. It lives in its own scene, "Trigglow Delay Loading (auto)", that the

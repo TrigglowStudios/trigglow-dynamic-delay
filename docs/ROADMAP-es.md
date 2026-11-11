@@ -272,8 +272,7 @@ antes de escribir código — ver abajo.
   multi-destino) — varias sesiones de trabajo y un riesgo notablemente mayor. Solo merece
   priorizarse si el fix más acotado del Replay Buffer no llega a cubrir el uso real una vez
   entregado.
-- Instaladores firmados para Windows/macOS (el instalador de Windows actual no está firmado —
-  Early Access).
+- Instaladores firmados para Windows/macOS (el instalador de Windows actual no está firmado).
 - Un plugin de Stream Deck propio de Trigglow, además del flujo de hotkey nativa (que se mantiene
   siempre disponible como opción sin dependencias) — sobre todo para mostrar el estado
   ON/OFF/Filling con color directamente en el propio botón del Stream Deck.

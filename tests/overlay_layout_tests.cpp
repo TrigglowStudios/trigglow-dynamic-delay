@@ -66,7 +66,7 @@ void TestPlacement1080p()
 	// The v0.5.x plate (200x58) plus the 14 px "By Trigglow" line under it,
 	// on transparent pixels: the 2.5x PNG (500x180) shown at 0.4 = 200x72.
 	CHECK(Near(kDesignWidth, 200.0f));
-	CHECK(Near(kPlateHeight, 58.0f));
+	CHECK(Near(kPlateHeight, 72.0f));
 	CHECK(Near(kDesignHeight, 72.0f));
 	Placement tl = Place(1920.0f, 1080.0f, 0);
 	CHECK(Near(tl.scale, 0.4f));
@@ -251,12 +251,12 @@ void TestFileNames()
 	// The render version is part of the name: a badge drawn by an older
 	// build (no signature, or the signature inside the plate) is never
 	// picked up.
-	CHECK(kRenderVersion == 3);
-	CHECK(BadgeFileName(30) == "delay-badge-r3-30s.png");
-	CHECK(BadgeFileName(5) == "delay-badge-r3-5s.png");
-	CHECK(BadgeFileName(60) == "delay-badge-r3-60s.png");
-	CHECK(BadgeFileName(0) == "delay-badge-r3-1s.png");
-	CHECK(BadgeFileName(600) == "delay-badge-r3-60s.png");
+	CHECK(kRenderVersion == 4);
+	CHECK(BadgeFileName(30) == "delay-badge-r4-30s.png");
+	CHECK(BadgeFileName(5) == "delay-badge-r4-5s.png");
+	CHECK(BadgeFileName(60) == "delay-badge-r4-60s.png");
+	CHECK(BadgeFileName(0) == "delay-badge-r4-1s.png");
+	CHECK(BadgeFileName(600) == "delay-badge-r4-60s.png");
 	CHECK(ClampSeconds(0) == kMinSeconds);
 	CHECK(ClampSeconds(61) == kMaxSeconds);
 	CHECK(ClampSeconds(42) == 42);
@@ -271,7 +271,8 @@ void TestStaleFiles()
 	CHECK(IsStaleBadgeFile("delay-badge-r1-30s.png"));
 	CHECK(IsStaleBadgeFile("delay-badge-r2-30s.png")); // The signature inside the plate.
 	CHECK(IsStaleBadgeFile("delay-badge-r2-60s.png"));
-	CHECK(IsStaleBadgeFile("delay-badge-r30-30s.png")); // Not "r3-".
+	CHECK(IsStaleBadgeFile("delay-badge-r3-30s.png"));  // The signature under the plate (0.6 to 0.7).
+	CHECK(IsStaleBadgeFile("delay-badge-r40-30s.png")); // Not "r4-".
 	// Current badges: kept.
 	CHECK(!IsStaleBadgeFile(BadgeFileName(30)));
 	CHECK(!IsStaleBadgeFile(BadgeFileName(1)));

@@ -2,19 +2,28 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v0.7.4 — 2026-11-11 (Early Access)
+## v1.0.0 — 2026-11-11
 
-Una versión de imagen con pantalla de carga por defecto: el delay en sí no cambia.
+Dynamic Delay sale de beta en Windows: versión 1.0, con la nueva imagen de Trigglow. Las versiones
+de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han usado en un directo).
 
 **Antes de actualizar:** nada que hacer. Se instala como la v0.7.3; tus escenas, ajustes, atajos e
 inicio de sesión se mantienen.
 
 **Novedades:**
-- **El nuevo logo de Dynamic Delay en todos los sitios donde el plugin muestra uno:** la marca de la
-  insignia de delay que ven tus espectadores durante un delay, el icono del instalador y su logo
-  pequeño en las páginas interiores. El banner de bienvenida y de finalización del instalador pierde
-  la neblina morada, y el nombre bajo el logo pasa a blanco sólido. Llevan la T de Trigglow dentro del cronómetro en lugar del
-  antiguo botón de play.
+- **Fuera de beta.** El dock ya no muestra la etiqueta "Beta" junto a la versión.
+- **El nuevo diseño de Trigglow en el dock.** El mismo aspecto que trigglow.com: la tipografía
+  Figtree, el violeta de acento, un botón principal violeta sólido en lugar del degradado de cian a
+  magenta, y tarjetas, campos y botones redondeados. Sigue adaptándose al tema de OBS (oscuro, claro
+  o alto contraste).
+- **Un overlay nuevo.** La insignia que ve tu audiencia durante un delay es una sola placa
+  redondeada con el nuevo diseño: el logo de Dynamic Delay, "DELAY" y tus segundos, y debajo
+  "Dynamic Delay by Trigglow". La insignia dibujada por una versión anterior se sustituye la primera
+  vez que sale.
+- **El nuevo logo de Dynamic Delay en todos los sitios donde el plugin muestra uno:** la insignia de
+  delay, el icono del instalador, su logo pequeño en las páginas interiores y su banner de bienvenida
+  y de finalización. Llevan la T de Trigglow dentro del cronómetro en lugar del antiguo botón de
+  play.
 - **Pantalla de carga por defecto.** Si no eliges escena de carga, el plugin muestra ahora un vídeo
   tranquilo de Trigglow "Poniendo delay" (en inglés si OBS no está en español) mientras se llena el
   delay, en lugar de una pantalla en blanco. Vive en su propia escena, "Trigglow Delay Loading

@@ -3,7 +3,7 @@
 ; Unsigned by default: building this in CI produces a working .exe, but
 ; without a code-signing certificate Windows SmartScreen will show an
 ; "Unknown publisher" warning on first run (click "More info" -> "Run
-; anyway"). Normal for Early Access software; see README.md for the
+; anyway"). Normal for an unsigned installer; see README.md for the
 ; signing tradeoff.
 ;
 ; v0.7.1: installs into OBS's plugin folder for all users,

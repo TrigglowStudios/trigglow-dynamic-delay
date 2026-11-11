@@ -51,26 +51,26 @@ namespace trigglow::ui {
 
 // Families of the bundled fonts as Qt registered them
 // (QFontDatabase::applicationFontFamilies: DirectWrite may expose the static
-// SemiBold as its own "Archivo SemiBold" family, GDI/FreeType as "Archivo").
+// SemiBold as its own "Figtree SemiBold" family, GDI/FreeType as "Figtree").
 // Empty when the file is missing or couldn't be registered: callers then fall
 // back to OBS's own UI font.
 struct BrandFonts {
-	QString display;     // Archivo SemiBold (600): headlines, dialog title, overlay label.
-	QString displayBold; // Archivo Bold (700): overlay value.
+	QString display;     // Figtree SemiBold (600): headlines, dialog title, overlay label.
+	QString displayBold; // Figtree Bold (700): overlay value.
 	QString mono;        // Geist Mono Medium (500): eyebrows, chips, data.
 };
 
 struct BrandFontsReport {
 	QString directory;
-	QStringList loaded;  // "Archivo-SemiBold.ttf -> Archivo SemiBold"
+	QStringList loaded;  // "Figtree-SemiBold.ttf -> Figtree SemiBold"
 	QStringList missing; // Files not found in `directory`.
 	QStringList failed;  // Files found but rejected by QFontDatabase.
 };
 
 // Registers the bundled fonts in `directory` (the plugin's data/fonts) once per
 // process; later calls return the first report. Accepts the static instances
-// the plugin ships (Archivo-SemiBold.ttf, Archivo-Bold.ttf,
-// GeistMono-Medium.ttf) or the upstream variable files (Archivo[wdth,wght].ttf,
+// the plugin ships (Figtree-SemiBold.ttf, Figtree-Bold.ttf,
+// GeistMono-Medium.ttf) or the upstream variable files (Figtree[wght].ttf,
 // GeistMono[wght].ttf). The caller logs the report (one line).
 BrandFontsReport LoadBrandFonts(const QString &directory);
 const BrandFonts &Fonts();

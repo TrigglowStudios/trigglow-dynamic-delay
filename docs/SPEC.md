@@ -2,7 +2,7 @@
 
 # Technical specification — Trigglow Dynamic Delay for OBS
 
-Status: **MVP / v0.7.0 — Early Access**
+Status: **v1.0.0 — stable on Windows; macOS and Linux in alpha**
 Last updated: 2026-10-20 (v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
 scratch on 2026-08-26 — see §0). A v0.5.1 hotfix was prepared but never published; everything in it
 shipped in v0.6.0, so this document dates those changes v0.6.0.
@@ -491,13 +491,13 @@ Windows and macOS, and gates the release job.
 While the delay is `Active` and "Show delay overlay on stream" is checked, the wrapper scene shows a
 "DELAY 30 s" badge with the delay really in effect (`BufferModeStatus::effectiveDelaySeconds`). Since
 v0.6.0 it is **one image the plugin paints itself** (`src/overlay-badge.*`, QPainter on the UI
-thread only: ink plate, brand rule, Dynamic Delay mark, the bundled Archivo, or the system UI font when
-it isn't bundled; under the plate, outside it and below the mark, the small `Overlay.Signature`
-text, "By Trigglow" in every language, in the bundled Geist Mono at 11 px, mist at 75 % with a faint
-dark halo and no box: 7.3 px on a 720p stream), written as one PNG per seconds value to the plugin's
-config folder (`overlay/delay-badge-r3-<N>s.png`, 500x180, 2.5x the 200x72 design -- the 200x58
-plate, then the signature line on transparent pixels -- so it stays sharp) and shown by a single
-image source, **Trigglow Delay Badge (auto)**. The `r3` is `overlaylayout::kRenderVersion`, bumped
+thread only; since v1.0.0 in the Trigglow web's 2026-10 design: one rounded ink plate, 12 px
+corners, no gradient; the Dynamic Delay mark; "DELAY" in the violet accent and the seconds in the
+bundled Figtree, or the system UI font when it isn't bundled; and under them, inside the plate, the
+small `Overlay.Signature` text, "Dynamic Delay by Trigglow" in every language, Figtree 600 at 11 px,
+mist at 70 %: 7.3 px on a 720p stream), written as one PNG per seconds value to the plugin's config
+folder (`overlay/delay-badge-r4-<N>s.png`, 500x180, 2.5x the 200x72 design, all plate, so it stays
+sharp) and shown by a single image source, **Trigglow Delay Badge (auto)**. The `r4` is `overlaylayout::kRenderVersion`, bumped
 whenever the drawing changes: a PNG an older build left in that folder is never shown, and the first
 render of a session deletes it. It replaces v0.5.x's badge PNG plus a separate text source in Segoe
 UI (Windows only, magic offsets to line the two up); its text can no longer be edited, and the old
@@ -1376,7 +1376,7 @@ Explicitly out of scope for v0.2.0 (see `docs/ROADMAP.md`):
 - Saved delay presets.
 - Choosing an individual source instead of a whole scene as "live".
 - A dedicated Trigglow Stream Deck plugin (the native-hotkey path already works today).
-- Signed installers (the current Windows installer is unsigned — Early Access).
+- Signed installers (the current Windows installer is unsigned).
 - macOS/Linux **live-tested** (both already build green in CI; neither has been run live yet).
 
 ## 6. Legacy reconnect-mode code

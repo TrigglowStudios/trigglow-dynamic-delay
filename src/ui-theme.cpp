@@ -67,12 +67,9 @@ struct FontCandidate {
 // Static instances first (what data/fonts ships, see tools/fonts), then the
 // upstream variable files in case someone drops those in instead.
 constexpr FontCandidate kFontCandidates[] = {
-	{FontSlot::Display, "Archivo-SemiBold.ttf", "Archivo"},
-	{FontSlot::Display, "Archivo[wdth,wght].ttf", "Archivo"},
-	{FontSlot::DisplayBold, "Archivo-Bold.ttf", "Archivo"},
-	{FontSlot::DisplayBold, "Archivo[wdth,wght].ttf", "Archivo"},
-	{FontSlot::Mono, "GeistMono-Medium.ttf", "Geist Mono"},
-	{FontSlot::Mono, "GeistMono[wght].ttf", "Geist Mono"},
+	{FontSlot::Display, "Figtree-SemiBold.ttf", "Figtree"}, {FontSlot::Display, "Figtree[wght].ttf", "Figtree"},
+	{FontSlot::DisplayBold, "Figtree-Bold.ttf", "Figtree"}, {FontSlot::DisplayBold, "Figtree[wght].ttf", "Figtree"},
+	{FontSlot::Mono, "GeistMono-Medium.ttf", "Geist Mono"}, {FontSlot::Mono, "GeistMono[wght].ttf", "Geist Mono"},
 };
 
 BrandFonts g_fonts;
@@ -148,7 +145,7 @@ double RoleSize(const RoleSpec &spec, double basePt)
 	return std::max(spec.minSize, std::round((basePt + spec.sizeDelta) * 2.0) / 2.0);
 }
 
-// "font-family: "Archivo SemiBold"; font-size: 11.5pt; font-weight: 600;".
+// "font-family: "Figtree SemiBold"; font-size: 11.5pt; font-weight: 600;".
 // Without the brand family the OBS font stays (no font-family at all), with the
 // role's size and weight: the documented fallback.
 QString FontRule(FontRole role, double basePt)
@@ -365,10 +362,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	add(QStringLiteral(
 		"QScrollArea#tgDockScroll, QWidget#tgDockContent { background: transparent; border: none; }"));
 	add(QStringLiteral(
-		    "QFrame[tgCard=\"true\"] { background-color: %1; border: 1px solid %2; border-radius: 0px; }")
+		    "QFrame[tgCard=\"true\"] { background-color: %1; border: 1px solid %2; border-radius: 14px; }")
 		    .arg(card, line));
 	add(QStringLiteral(
-		    "QFrame[tgCard=\"inset\"] { background-color: %1; border: 1px solid %2; border-radius: 0px; }")
+		    "QFrame[tgCard=\"inset\"] { background-color: %1; border: 1px solid %2; border-radius: 10px; }")
 		    .arg(field, line));
 	add(QStringLiteral("QFrame[tgDivider=\"true\"] { background-color: %1; border: none; min-height: 1px; "
 			   "max-height: 1px; }")
@@ -379,24 +376,24 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	add(QStringLiteral("QFrame[tgRule=\"danger\"] { border: none; background-color: %1; }").arg(danger));
 	add(QStringLiteral("QFrame[tgRule=\"active\"] { border: none; background: %1; }").arg(rule));
 	add(QStringLiteral("QFrame[tgBanner=\"danger\"] { background-color: %1; border: 1px solid %2; border-left: 3px "
-			   "solid %3; border-radius: 0px; }")
+			   "solid %3; border-radius: 10px; }")
 		    .arg(dangerTint, line, hc ? text : danger));
 	add(QStringLiteral(
 		    "QFrame[tgBanner=\"warning\"] { background-color: %1; border: 1px solid %2; border-left: 3px "
-		    "solid %3; border-radius: 0px; }")
+		    "solid %3; border-radius: 10px; }")
 		    .arg(warningTint, line, hc ? text : warning));
 	add(QStringLiteral("QFrame[tgBanner=\"info\"] { background-color: %1; border: 1px solid %2; border-left: 3px "
-			   "solid %3; border-radius: 0px; }")
+			   "solid %3; border-radius: 10px; }")
 		    .arg(accentTint, line, hc ? text : accentText));
 
 	// Trigi's conversation (report dialog). The transcript is a tab stop (it
 	// scrolls from the keyboard), with the fields' focus style. Trigi's
 	// replies sit on the field color with a hairline, the user's messages on
-	// the accent tint with the web's cyan border, and Trigi's avatar matches
-	// them; "thinking" is a dashed outline. Square, like everything else.
+	// the accent tint with the web's accent border, and Trigi's avatar matches
+	// them; "thinking" is a dashed outline. Rounded like the web's cards (12 px).
 	const QString accentBorder = C(t.accentBorder);
 	add(QStringLiteral("QScrollArea[tgTranscript=\"true\"] { background: transparent; border: 1px solid %1; "
-			   "border-radius: 0px; }")
+			   "border-radius: 10px; }")
 		    .arg(line));
 	add(QStringLiteral(
 		    "QScrollArea[tgTranscript=\"true\"]:focus { border: 1px solid %1; border-bottom: 2px solid %1; }")
@@ -404,17 +401,17 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	add(QStringLiteral("QWidget#tgTranscriptContent, QWidget#tgScrollContent { background: transparent; }"));
 	add(QStringLiteral("QScrollArea[tgPlain=\"true\"] { background: transparent; border: none; }"));
 	add(QStringLiteral(
-		    "QFrame[tgBubble=\"trigi\"] { background-color: %1; border: 1px solid %2; border-radius: 0px; }")
+		    "QFrame[tgBubble=\"trigi\"] { background-color: %1; border: 1px solid %2; border-radius: 12px; }")
 		    .arg(field, line));
 	add(QStringLiteral(
-		    "QFrame[tgBubble=\"user\"] { background-color: %1; border: 1px solid %2; border-radius: 0px; }")
+		    "QFrame[tgBubble=\"user\"] { background-color: %1; border: 1px solid %2; border-radius: 12px; }")
 		    .arg(accentTint, accentBorder));
 	add(QStringLiteral(
 		    "QFrame[tgBubble=\"status\"] { background: transparent; border: 1px dashed %1; border-radius: "
-		    "0px; }")
+		    "12px; }")
 		    .arg(lineStrong));
 	add(QStringLiteral(
-		    "QLabel[tgAvatar=\"true\"] { background-color: %1; border: 1px solid %2; border-radius: 0px; "
+		    "QLabel[tgAvatar=\"true\"] { background-color: %1; border: 1px solid %2; border-radius: 8px; "
 		    "padding: 0px; }")
 		    .arg(accentTint, accentBorder));
 	// Square bullets of the first-use notice.
@@ -435,9 +432,11 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	add(QStringLiteral("QLabel[tgRole=\"dataHint\"] { color: %1; %2 }")
 		    .arg(muted, FontRule(FontRole::DataHint, basePt)));
 	add(QStringLiteral("QLabel[tgRole=\"strong\"] { color: %1; %2 }").arg(text, FontRule(FontRole::Strong, basePt)));
-	add(QStringLiteral("QLabel[tgRole=\"chip\"] { color: %1; border: 1px solid %2; padding: 1px 6px; %3 }")
+	add(QStringLiteral(
+		    "QLabel[tgRole=\"chip\"] { color: %1; border: 1px solid %2; border-radius: 9px; padding: 1px 8px; %3 }")
 		    .arg(muted, lineStrong, FontRule(FontRole::Chip, basePt)));
-	add(QStringLiteral("QLabel[tgRole=\"tag\"] { color: %1; border: 1px solid %2; padding: 1px 6px; %3 }")
+	add(QStringLiteral(
+		    "QLabel[tgRole=\"tag\"] { color: %1; border: 1px solid %2; border-radius: 9px; padding: 1px 8px; %3 }")
 		    .arg(muted, lineStrong, FontRule(FontRole::Tag, basePt)));
 	add(QStringLiteral("QLabel[tgTone=\"text\"] { color: %1; }").arg(text));
 	add(QStringLiteral("QLabel[tgTone=\"muted\"] { color: %1; }").arg(muted));
@@ -454,9 +453,9 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	// Fields. The combo box keeps the OBS theme's drop-down arrow; the spin
 	// box draws its own buttons (below).
 	add(QStringLiteral("QComboBox, QSpinBox, QLineEdit, QPlainTextEdit { background-color: %1; color: %2; "
-			   "border: 1px solid %3; border-radius: 0px; selection-background-color: %4; "
+			   "border: 1px solid %3; border-radius: 10px; selection-background-color: %4; "
 			   "selection-color: %5; }")
-		    .arg(field, text, lineStrong, C(t.accent), C(uitokens::brand::kOnGradient)));
+		    .arg(field, text, lineStrong, C(t.gradientStart), onGradient));
 	// Explicit content height: OBS themes pin inputs with height/max-height
 	// (Yami: 20 px) and margins. 24 + 2 x 2 padding + 2 x 1 border = 30 px.
 	add(QStringLiteral("QComboBox, QSpinBox, QLineEdit { height: 24px; min-height: 24px; max-height: 24px; "
@@ -506,8 +505,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 			   "height: 14px; border: none; border-left: 1px solid %1; border-radius: 0px; background: "
 			   "transparent; }")
 		    .arg(line));
-	add(QStringLiteral("QSpinBox::up-button { subcontrol-position: top right; }"));
-	add(QStringLiteral("QSpinBox::down-button { subcontrol-position: bottom right; border-top: 1px solid %1; }")
+	// The field has 10 px corners: the halves follow its right-hand corners.
+	add(QStringLiteral("QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 9px; }"));
+	add(QStringLiteral("QSpinBox::down-button { subcontrol-position: bottom right; border-top: 1px solid %1; "
+			   "border-bottom-right-radius: 9px; }")
 		    .arg(line));
 	add(QStringLiteral("QSpinBox::up-button:hover, QSpinBox::down-button:hover, QSpinBox::up-button:pressed, "
 			   "QSpinBox::down-button:pressed { background-color: %1; }")
@@ -540,11 +541,11 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	// data): Geist Mono.
 	add(QStringLiteral("QPlainTextEdit[tgMono=\"true\"] { %1 }").arg(FontRule(FontRole::DataHint, basePt)));
 
-	// Check box: square, hairline; checked = brand gradient + ink check.
+	// Check box: 4 px corners, hairline; checked = the solid violet + white check.
 	add(QStringLiteral("QCheckBox { color: %1; spacing: 8px; background: transparent; }").arg(text));
 	add(QStringLiteral("QCheckBox:disabled { color: %1; }").arg(disabled));
 	add(QStringLiteral("QCheckBox::indicator { width: 14px; height: 14px; margin: 0px; border: 1px solid %1; "
-			   "background-color: %2; border-radius: 0px; image: none; }")
+			   "background-color: %2; border-radius: 4px; image: none; }")
 		    .arg(lineStrong, field));
 	add(QStringLiteral("QCheckBox::indicator:hover { border-color: %1; }").arg(muted));
 	add(QStringLiteral(
@@ -564,7 +565,7 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	const QString tall = QStringLiteral("height: 34px; min-height: 34px; max-height: 34px; margin: 0px;");
 	const QString small = QStringLiteral("height: 26px; min-height: 26px; max-height: 26px; margin: 0px;");
 	add(QStringLiteral("QPushButton[tgVariant=\"primary\"] { background: %1; color: %2; border: 1px solid "
-			   "transparent; border-radius: 0px; padding: 0px 14px; %3 %4 }")
+			   "transparent; border-radius: 10px; padding: 0px 14px; %3 %4 }")
 		    .arg(primary, onGradient, tall, buttonFont));
 	add(QStringLiteral("QPushButton[tgVariant=\"primary\"]:hover { background: %1; }").arg(primaryHover));
 	add(QStringLiteral("QPushButton[tgVariant=\"primary\"]:pressed { background: %1; padding-top: 2px; }")
@@ -576,7 +577,7 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 
 	add(QStringLiteral(
 		    "QPushButton[tgVariant=\"secondary\"] { background: transparent; color: %1; border: 1px solid "
-		    "%2; border-radius: 0px; padding: 0px 12px; %3 %4 }")
+		    "%2; border-radius: 10px; padding: 0px 12px; %3 %4 }")
 		    .arg(text, lineStrong, small, buttonFont));
 	add(QStringLiteral("QPushButton[tgVariant=\"secondary\"][tgSize=\"large\"] { %1 }").arg(tall));
 	add(QStringLiteral(
@@ -591,7 +592,7 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 		    .arg(disabled, line));
 
 	add(QStringLiteral("QPushButton[tgVariant=\"danger\"] { background-color: %1; color: %2; border: 1px solid %3; "
-			   "border-radius: 0px; padding: 0px 14px; %4 %5 }")
+			   "border-radius: 10px; padding: 0px 14px; %4 %5 }")
 		    .arg(dangerTint, C(t.dangerButtonText), C(t.dangerBorder), tall, buttonFont));
 	add(QStringLiteral("QPushButton[tgVariant=\"danger\"]:hover { border-color: %1; }").arg(hc ? text : danger));
 	add(QStringLiteral("QPushButton[tgVariant=\"danger\"]:pressed { padding-top: 2px; }"));
@@ -617,7 +618,7 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	// Update banner: the whole banner is one button.
 	// Its height comes from the layout inside (TrigglowDelayDock::FitUpdateBanner).
 	add(QStringLiteral("QPushButton#tgUpdateBanner { background-color: %1; border: 1px solid %2; border-left: 3px "
-			   "solid %3; border-radius: 0px; padding: 0px; margin: 0px; max-height: 200px; text-align: "
+			   "solid %3; border-radius: 10px; padding: 0px; margin: 0px; max-height: 200px; text-align: "
 			   "left; }")
 		    .arg(warningTint, line, hc ? text : warning));
 	add(QStringLiteral("QPushButton#tgUpdateBanner:hover { border-color: %1; border-left: 3px solid %2; }")
@@ -625,18 +626,18 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 	add(QStringLiteral("QPushButton#tgUpdateBanner:focus { border: 2px solid %1; border-left: 3px solid %2; }")
 		    .arg(focus, hc ? text : warning));
 
-	// Fill progress: 4 px, square. High contrast outlines the track instead of
+	// Fill progress: 4 px, rounded ends. High contrast outlines the track instead of
 	// tinting it (track and chunk would both be the text color).
 	if (hc) {
-		add(QStringLiteral("QProgressBar { background-color: %1; border: 1px solid %2; border-radius: 0px; "
+		add(QStringLiteral("QProgressBar { background-color: %1; border: 1px solid %2; border-radius: 2px; "
 				   "min-height: 6px; max-height: 6px; }")
 			    .arg(card, text));
 	} else {
-		add(QStringLiteral("QProgressBar { background-color: %1; border: none; border-radius: 0px; min-height: "
+		add(QStringLiteral("QProgressBar { background-color: %1; border: none; border-radius: 2px; min-height: "
 				   "4px; max-height: 4px; }")
 			    .arg(line));
 	}
-	add(QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 0px; }").arg(C(t.progressChunk)));
+	add(QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 2px; }").arg(C(t.progressChunk)));
 	return s;
 }
 
@@ -685,9 +686,9 @@ BrandFontsReport LoadBrandFonts(const QString &directory)
 	}
 
 	if (g_fonts.display.isEmpty())
-		g_fontsReport.missing << QStringLiteral("Archivo-SemiBold.ttf");
+		g_fontsReport.missing << QStringLiteral("Figtree-SemiBold.ttf");
 	if (g_fonts.displayBold.isEmpty())
-		g_fontsReport.missing << QStringLiteral("Archivo-Bold.ttf");
+		g_fontsReport.missing << QStringLiteral("Figtree-Bold.ttf");
 	if (g_fonts.mono.isEmpty())
 		g_fontsReport.missing << QStringLiteral("GeistMono-Medium.ttf");
 	return g_fontsReport;

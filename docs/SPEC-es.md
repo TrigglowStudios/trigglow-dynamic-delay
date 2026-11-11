@@ -2,7 +2,7 @@
 
 # Especificación técnica — Trigglow Dynamic Delay para OBS
 
-Estado: **MVP / v0.7.0 — Early Access**
+Estado: **v1.0.0 — estable en Windows; macOS y Linux en alpha**
 Última actualización: 2026-10-20 (v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8;
 reescrita desde cero el 2026-08-26 — ver §0). Se preparó un hotfix v0.5.1 que nunca se publicó; todo
 lo que llevaba salió en la v0.6.0, así que este documento fecha esos cambios en la v0.6.0.
@@ -538,15 +538,15 @@ Ubuntu, Windows y macOS, y bloquea el job de release si fallan.
 Mientras el delay está `Active` y "Mostrar overlay de delay en el directo" está marcado, la escena
 contenedora muestra una insignia "DELAY 30 s" con el delay que de verdad se aplica
 (`BufferModeStatus::effectiveDelaySeconds`). Desde la v0.6.0 es **una única imagen que pinta el
-propio plugin** (`src/overlay-badge.*`, QPainter solo en el hilo de UI: placa tinta, regla de marca,
-marca de Dynamic Delay, la Archivo empaquetada o, si no está, la fuente de interfaz del sistema, y
-bajo la placa, fuera de ella y debajo de la marca, el texto pequeño `Overlay.Signature`,
-"By Trigglow" en todos los idiomas, en la Geist Mono empaquetada a 11 px, mist al 75 % con un halo
-oscuro muy suave y sin caja: 7,3 px en un directo a 720p), guardada como un PNG por cada valor de
-segundos en la carpeta de configuración del plugin (`overlay/delay-badge-r3-<N>s.png`, 500x180, 2,5
-veces el diseño de 200x72 -- la placa de 200x58 y debajo la línea de la firma sobre píxeles
-transparentes -- para que siga nítida) y mostrada por una sola fuente de imagen, **Trigglow Delay
-Badge (auto)**. El `r3` es `overlaylayout::kRenderVersion`, que sube cada vez que cambia el dibujo:
+propio plugin** (`src/overlay-badge.*`, QPainter solo en el hilo de UI; desde la v1.0.0 con el
+diseño de la web de Trigglow de 2026-10: una placa tinta redondeada, esquinas de 12 px, sin
+degradado; la marca de Dynamic Delay; "DELAY" en el violeta de acento y los segundos en la Figtree
+empaquetada o, si no está, la fuente de interfaz del sistema; y debajo, dentro de la placa, el texto
+pequeño `Overlay.Signature`, "Dynamic Delay by Trigglow" en todos los idiomas, Figtree 600 a 11 px,
+mist al 70 %: 7,3 px en un directo a 720p), guardada como un PNG por cada valor de segundos en la
+carpeta de configuración del plugin (`overlay/delay-badge-r4-<N>s.png`, 500x180, 2,5 veces el
+diseño de 200x72, todo placa, para que siga nítida) y mostrada por una sola fuente de imagen,
+**Trigglow Delay Badge (auto)**. El `r4` es `overlaylayout::kRenderVersion`, que sube cada vez que cambia el dibujo:
 un PNG que dejó en esa carpeta una compilación anterior no se muestra nunca, y el primer dibujo de
 la sesión lo borra. Sustituye al PNG de la insignia más una fuente de texto aparte en Segoe UI de la
 v0.5.x (solo Windows, con desplazamientos mágicos para alinear las dos); su texto ya no se puede
@@ -1506,7 +1506,7 @@ Explícitamente fuera de alcance para v0.2.0 (ver `docs/ROADMAP.md`):
 - Presets de delay guardados.
 - Elegir una fuente individual en vez de una escena entera como "en directo".
 - Un plugin dedicado de Trigglow para Stream Deck (la vía de hotkey nativa ya funciona hoy).
-- Instaladores firmados (el instalador actual de Windows no está firmado — Early Access).
+- Instaladores firmados (el instalador actual de Windows no está firmado).
 - macOS/Linux **probados en directo** (ambos ya compilan en verde en CI; ninguno se ha ejecutado en
   directo todavía).
 
