@@ -225,7 +225,9 @@ private:
 	QBoxLayout *presetRow_ = nullptr;
 	QSpinBox *presetSpins_[3] = {nullptr, nullptr, nullptr};
 
-	QSpinBox *keepSpin_ = nullptr;
+	// How far a live raise is instant (read-only since the spill).
+	QLabel *keepValue_ = nullptr;
+	QLabel *keepHelp_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
 	QLabel *drainText_ = nullptr;
 	QCheckBox *overlayCheck_ = nullptr;

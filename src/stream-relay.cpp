@@ -20,11 +20,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "logging.hpp"
 #include "packet-delay-core.hpp"
+#include "spill-file.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -77,6 +79,7 @@ bool StreamRelay::Start(const std::vector<Destination> &, const RelayOptions &, 
 	return false;
 }
 void StreamRelay::SetDelay(uint32_t) {}
+void StreamRelay::SetKeepSeconds(uint32_t) {}
 void StreamRelay::Dump() {}
 uint32_t StreamRelay::Delay() const
 {
@@ -106,6 +109,16 @@ constexpr int64_t kSecondNs = 1000000000LL;
 // A destination that falls this far behind its delay (a slow upload) jumps to
 // the delay again at the next keyframe instead of letting the delay grow.
 constexpr int64_t kMaxLagNs = 4 * kSecondNs;
+// Spill: the newest seconds stay in RAM (live and short delays never touch the
+// disk, and a lowered delay splices into RAM): this plus two keyframe
+// intervals.
+constexpr int64_t kRamTailNs = 4 * kSecondNs;
+// What each destination sends next is read back this far ahead.
+constexpr int64_t kPrefetchNs = 3 * kSecondNs;
+// Disk the spill always leaves free on the temp folder's volume.
+constexpr uint64_t kDiskReserveBytes = 1ULL << 30;
+// Below this much room for it, the history stays in RAM.
+constexpr uint64_t kMinSpillBytes = 64ULL << 20;
 
 int64_t NowNs()
 {
@@ -214,13 +227,98 @@ struct StreamInfo {
 	AVRational timeBase{1, 1000};
 };
 
+// A packet's record in the history (PayloadStore): what av_read_frame gave,
+// so the destination gets the very same bytes, flags and side data.
+//   u32 flags, u32 side data count, { u32 type, u32 size, bytes } x count,
+//   payload
+constexpr size_t kRecordHeaderBytes = 8;
+constexpr size_t kSideHeaderBytes = 8;
+
+void PutU32(uint8_t *at, uint32_t value)
+{
+	std::memcpy(at, &value, sizeof(value));
+}
+
+uint32_t GetU32(const uint8_t *at)
+{
+	uint32_t value = 0;
+	std::memcpy(&value, at, sizeof(value));
+	return value;
+}
+
+// Builds the record's pieces for `pkt` (`meta` holds the headers; the spans
+// point into it and into the packet, which must outlive the Push()).
+void RecordParts(const AVPacket *pkt, std::vector<uint8_t> &meta, std::vector<PayloadStore::Span> &spans)
+{
+	const int sideCount = pkt->side_data_elems > 0 ? pkt->side_data_elems : 0;
+	meta.resize(kRecordHeaderBytes + static_cast<size_t>(sideCount) * kSideHeaderBytes);
+	PutU32(meta.data(), static_cast<uint32_t>(pkt->flags));
+	PutU32(meta.data() + 4, static_cast<uint32_t>(sideCount));
+	spans.clear();
+	spans.push_back({meta.data(), kRecordHeaderBytes});
+	for (int i = 0; i < sideCount; ++i) {
+		const AVPacketSideData &side = pkt->side_data[i];
+		uint8_t *header = meta.data() + kRecordHeaderBytes + static_cast<size_t>(i) * kSideHeaderBytes;
+		PutU32(header, static_cast<uint32_t>(side.type));
+		PutU32(header + 4, static_cast<uint32_t>(side.size));
+		spans.push_back({header, kSideHeaderBytes});
+		spans.push_back({side.data, side.size});
+	}
+	spans.push_back({pkt->data, static_cast<size_t>(pkt->size)});
+}
+
+// Rebuilds the packet from its record into `pk` (blank). False when the
+// record is malformed.
+bool PacketFromRecord(const uint8_t *record, size_t bytes, AVPacket *pk)
+{
+	if (bytes < kRecordHeaderBytes)
+		return false;
+	const uint32_t flags = GetU32(record);
+	const uint32_t sideCount = GetU32(record + 4);
+	size_t at = kRecordHeaderBytes;
+	struct Side {
+		uint32_t type;
+		uint32_t size;
+		const uint8_t *data;
+	};
+	std::vector<Side> sides;
+	sides.reserve(sideCount);
+	for (uint32_t i = 0; i < sideCount; ++i) {
+		if (bytes - at < kSideHeaderBytes)
+			return false;
+		const Side side{GetU32(record + at), GetU32(record + at + 4), record + at + kSideHeaderBytes};
+		at += kSideHeaderBytes;
+		if (bytes - at < side.size)
+			return false;
+		at += side.size;
+		sides.push_back(side);
+	}
+	const size_t payload = bytes - at;
+	if (av_new_packet(pk, static_cast<int>(payload)) < 0)
+		return false;
+	if (payload > 0)
+		std::memcpy(pk->data, record + at, payload);
+	pk->flags = static_cast<int>(flags);
+	for (const Side &side : sides) {
+		uint8_t *dst = av_packet_new_side_data(pk, static_cast<AVPacketSideDataType>(side.type), side.size);
+		if (!dst) {
+			av_packet_unref(pk);
+			return false;
+		}
+		if (side.size > 0)
+			std::memcpy(dst, side.data, side.size);
+	}
+	return true;
+}
+
+// A due packet, its record copied into the sink's scratch buffer.
 struct Outgoing {
-	std::shared_ptr<void> payload;
+	size_t recordAt = 0;
+	size_t recordBytes = 0;
 	int stream = 0;
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
 	int64_t arrivalNs = 0;
-	size_t bytes = 0;
 };
 
 } // namespace
@@ -259,6 +357,13 @@ struct StreamRelay::Impl {
 	int64_t keyframeCheckNs = 0;
 	std::vector<std::unique_ptr<Sink>> sinks;
 	std::thread ingest;
+	// Spill (null: RAM only). The I/O thread is the only one that touches the
+	// file; it waits on ioCv.
+	std::unique_ptr<SpillFile> spill;
+	std::thread io;
+	std::condition_variable ioCv;
+	SpillState loggedSpill = SpillState::Off;
+	std::string spillNote; // Why the spill is off or stopped (status).
 	EventCallback callback;
 	std::string listenUrl;
 
@@ -284,6 +389,12 @@ struct StreamRelay::Impl {
 	{
 		auto *ctx = static_cast<SinkInterruptCtx *>(opaque);
 		return (ctx->impl->stop.load() || ctx->sink->abort.load()) ? 1 : 0;
+	}
+
+	// See KeepSeconds() (packet-delay-core.hpp).
+	uint32_t KeepSecondsLocked() const
+	{
+		return KeepSeconds(history.Store().Spill() == SpillState::Active, options.keepSeconds);
 	}
 
 	uint64_t MinSinkCursorLocked() const
@@ -356,12 +467,14 @@ struct StreamRelay::Impl {
 
 		AVPacket *pkt = av_packet_alloc();
 		const AVRational ms{1, 1000};
+		std::vector<uint8_t> recordMeta;
+		std::vector<PayloadStore::Span> recordSpans;
 		while (!stop.load()) {
 			ret = av_read_frame(ic, pkt);
 			if (ret < 0)
 				break;
 			const int index = pkt->stream_index;
-			if (index < 0 || static_cast<size_t>(index) >= streams.size()) {
+			if (index < 0 || static_cast<size_t>(index) >= streams.size() || index > 255) {
 				av_packet_unref(pkt);
 				continue;
 			}
@@ -374,36 +487,87 @@ struct StreamRelay::Impl {
 			}
 			Packet p;
 			p.kind = streams[index].kind;
-			p.stream = index;
+			p.stream = static_cast<uint8_t>(index);
 			p.dtsMs = av_rescale_q(rawDts, st->time_base, ms);
 			p.ptsMs = av_rescale_q(rawPts, st->time_base, ms);
 			p.keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
 			p.arrivalNs = NowNs();
-			p.bytes = static_cast<size_t>(pkt->size);
-			AVPacket *own = av_packet_alloc();
-			av_packet_move_ref(own, pkt);
-			p.payload = std::shared_ptr<void>(own, [](void *raw) {
-				AVPacket *packet = static_cast<AVPacket *>(raw);
-				av_packet_free(&packet);
-			});
+			p.bytes = static_cast<uint32_t>(pkt->size);
+			// The bytes are copied into the history's blocks: no FFmpeg
+			// allocation is kept per packet.
+			RecordParts(pkt, recordMeta, recordSpans);
+			bool blockFilled = false;
 			{
 				std::lock_guard<std::mutex> lock(m);
-				history.Push(std::move(p));
+				const size_t blockBytes = history.Store().BlockBytes();
+				const uint64_t endBefore = history.Store().EndOffset() / blockBytes;
+				history.Push(p, recordSpans.data(), recordSpans.size());
+				blockFilled = spill && history.Store().EndOffset() / blockBytes != endBefore;
 				const int64_t now = NowNs();
 				if (now - keyframeCheckNs > 2 * kSecondNs) {
 					keyframeInterval = history.KeyframeIntervalSeconds();
 					keyframeCheckNs = now;
 				}
-				history.Trim(now, RetentionNs(delaySeconds, options.keepSeconds, keyframeInterval),
+				history.Trim(now, RetentionNs(delaySeconds, KeepSecondsLocked(), keyframeInterval),
 					     MinSinkCursorLocked());
 			}
+			av_packet_unref(pkt);
 			cv.notify_all();
+			if (blockFilled)
+				ioCv.notify_one();
 		}
 		av_packet_free(&pkt);
 		avformat_close_input(&ic);
 		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped sending (%s)",
 				  ret == AVERROR_EOF ? "end of stream" : AvError(ret).c_str());
 		FinishIngest("");
+	}
+
+	// The spill's I/O: writes old blocks out, reads back what destinations
+	// are about to send, never under the lock while the disk works.
+	void IoMain()
+	{
+		std::vector<PayloadStore::Range> needed;
+		std::unique_lock<std::mutex> lock(m);
+		while (!stop.load()) {
+			const double gop = std::max(keyframeInterval, 2.0);
+			const int64_t ramNs = kRamTailNs + static_cast<int64_t>(2.0 * gop * 1e9);
+			const uint64_t ramFrom = history.OffsetAtArrival(NowNs() - ramNs);
+			needed.clear();
+			for (const auto &sink : sinks) {
+				if (sink->sched.Started() && !sink->finished)
+					needed.push_back(history.AheadRange(sink->sched.CursorSeq(), kPrefetchNs));
+			}
+			PayloadStore &store = history.Store();
+			PayloadStore::IoJob job = store.PlanIo(ramFrom, needed);
+			LogSpillLocked();
+			if (job.kind == PayloadStore::IoJob::Kind::None) {
+				ioCv.wait_for(lock, std::chrono::milliseconds(50));
+				continue;
+			}
+			lock.unlock();
+			store.RunIo(job); // Only the backend and the job: no lock needed.
+			lock.lock();
+			store.FinishIo(job);
+			history.DropLost();
+			LogSpillLocked();
+			cv.notify_all();
+		}
+	}
+
+	void LogSpillLocked()
+	{
+		const SpillState state = history.Store().Spill();
+		if (state == loggedSpill)
+			return;
+		loggedSpill = state;
+		if (state == SpillState::Fallback) {
+			spillNote = history.Store().SpillProblem();
+			TRIGGLOW_LOG_WARN(kComponent, "the history stays in RAM from now on: %s (the stream goes on)",
+					  spillNote.c_str());
+		}
+		if (history.Store().LostBefore() > 0)
+			TRIGGLOW_LOG_WARN(kComponent, "part of the history couldn't be read back from the disk");
 	}
 
 	void FinishIngest(const std::string &error)
@@ -497,6 +661,12 @@ struct StreamRelay::Impl {
 		const std::string host = sink.dest.name.empty() || sink.dest.name == serverHost
 						 ? serverHost
 						 : sink.dest.name + " (" + serverHost + ")";
+		// Records of the packets being sent, copied out of the history under
+		// the lock (the history may drop them right after), and the packet
+		// rebuilt from each.
+		std::vector<uint8_t> scratch;
+		std::vector<Outgoing> out;
+		AVPacket *pk = av_packet_alloc();
 
 		std::unique_lock<std::mutex> lock(m);
 		while (!stop.load() && !sink.abort.load()) {
@@ -523,10 +693,23 @@ struct StreamRelay::Impl {
 						  host.c_str(), delaySeconds);
 			}
 
-			std::vector<OutPacket> due = sink.sched.Due(NowNs(), history, 512);
+			// With the spill, a packet whose bytes aren't back in RAM yet waits
+			// (the I/O thread reads them ahead; this is only the fallback).
+			bool waitingForDisk = false;
+			std::vector<OutPacket> due = sink.sched.Due(NowNs(), history, 512, [&](const Packet &p) {
+				if (history.RecordInRam(p))
+					return true;
+				waitingForDisk = true;
+				return false;
+			});
 			if (due.empty()) {
 				if (ingestEnded && sink.sched.Started() && sink.sched.CaughtUp(history))
 					break;
+				if (waitingForDisk) {
+					ioCv.notify_one();
+					cv.wait_for(lock, std::chrono::milliseconds(5));
+					continue;
+				}
 				const int64_t next = sink.sched.NextDueNs(history);
 				int64_t waitNs = 100 * 1000000LL;
 				if (next >= 0)
@@ -534,11 +717,17 @@ struct StreamRelay::Impl {
 				cv.wait_for(lock, std::chrono::nanoseconds(waitNs));
 				continue;
 			}
-			std::vector<Outgoing> out;
-			out.reserve(due.size());
-			for (const OutPacket &o : due)
-				out.push_back(Outgoing{o.packet->payload, o.packet->stream, o.ptsMs, o.dtsMs,
-						       o.packet->arrivalNs, o.packet->bytes});
+			scratch.clear();
+			out.clear();
+			for (const OutPacket &o : due) {
+				const size_t at = scratch.size();
+				if (!history.CopyRecord(*o.packet, scratch))
+					continue;
+				out.push_back(Outgoing{at, o.packet->recordBytes, o.packet->stream, o.ptsMs, o.dtsMs,
+						       o.packet->arrivalNs});
+			}
+			if (out.empty())
+				continue;
 			lock.unlock();
 
 			bool ok = true;
@@ -558,29 +747,32 @@ struct StreamRelay::Impl {
 					sink.status.error.clear();
 				}
 			}
-			for (size_t i = 0; ok && i < out.size(); ++i) {
+			for (size_t i = 0; ok && pk && i < out.size(); ++i) {
 				const Outgoing &o = out[i];
 				const int target = (o.stream >= 0 && static_cast<size_t>(o.stream) < map.size())
 							   ? map[o.stream]
 							   : -1;
 				if (target < 0)
 					continue;
-				AVPacket *pk = av_packet_clone(static_cast<const AVPacket *>(o.payload.get()));
-				if (!pk)
+				if (!PacketFromRecord(scratch.data() + o.recordAt, o.recordBytes, pk))
 					continue;
 				const AVRational tb = oc->streams[target]->time_base;
+				pk->time_base = streams[o.stream].timeBase;
 				pk->stream_index = target;
 				pk->pts = av_rescale_q(o.ptsMs, AVRational{1, 1000}, tb);
 				pk->dts = av_rescale_q(o.dtsMs, AVRational{1, 1000}, tb);
 				pk->duration = 0;
 				pk->pos = -1;
 				const int ret = av_interleaved_write_frame(oc, pk);
-				av_packet_free(&pk);
+				av_packet_unref(pk);
 				if (ret < 0) {
 					ok = false;
 					error = AvError(ret);
 				}
 			}
+			// A catch-up burst can make the scratch large: don't keep it.
+			if (scratch.capacity() > 2 * PayloadStore::kDefaultBlockBytes)
+				std::vector<uint8_t>().swap(scratch);
 
 			lock.lock();
 			if (ok) {
@@ -637,6 +829,7 @@ struct StreamRelay::Impl {
 		sink.finished = true;
 		const bool drained = ingestEnded && !stop.load() && !gaveUp;
 		lock.unlock();
+		av_packet_free(&pk);
 		Disconnect(oc, !gaveUp);
 		{
 			std::lock_guard<std::mutex> statusLock(m);
@@ -675,6 +868,37 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	Impl &d = *impl_;
 	d.stop.store(false);
 	d.history.Clear();
+	d.history.Store().SetSpill(nullptr, 0);
+	d.spill.reset();
+	d.spillNote.clear();
+	d.loggedSpill = SpillState::Off;
+	if (options.spillToDisk) {
+		// A file a crash (or power loss) left behind goes first.
+		const int stale = SpillFile::RemoveStale();
+		if (stale > 0)
+			TRIGGLOW_LOG_INFO(kComponent, "deleted %d spill file(s) a previous session left", stale);
+		const size_t blockBytes = d.history.Store().BlockBytes();
+		const uint64_t freeBytes = SpillFile::FreeDiskBytes();
+		uint64_t room = freeBytes > kDiskReserveBytes ? freeBytes - kDiskReserveBytes : 0;
+		if (options.spillLimitBytes > 0)
+			room = std::min(room, options.spillLimitBytes);
+		std::string why;
+		if (room < kMinSpillBytes)
+			why = "not enough free disk space";
+		else
+			d.spill = SpillFile::Create(blockBytes, why);
+		if (d.spill) {
+			d.history.Store().SetSpill(d.spill.get(), room / blockBytes);
+			d.loggedSpill = SpillState::Active;
+			TRIGGLOW_LOG_INFO(kComponent,
+					  "older history goes to an encrypted temp file (up to %llu MB, %llu MB free)",
+					  static_cast<unsigned long long>(room >> 20),
+					  static_cast<unsigned long long>(freeBytes >> 20));
+		} else {
+			d.spillNote = why;
+			TRIGGLOW_LOG_WARN(kComponent, "the history stays in RAM: %s", why.c_str());
+		}
+	}
 	d.streams.clear();
 	d.streamsReady = false;
 	d.ingestConnected = false;
@@ -696,6 +920,8 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	d.running = true;
 
 	d.ingest = std::thread([&d] { d.IngestMain(); });
+	if (d.spill)
+		d.io = std::thread([&d] { d.IoMain(); });
 	for (auto &sink : d.sinks) {
 		Impl::Sink *raw = sink.get();
 		raw->thread = std::thread([&d, raw] { d.SinkMain(*raw); });
@@ -738,8 +964,9 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	keyOut = "live";
 	TRIGGLOW_LOG_INFO(
 		kComponent,
-		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us", port,
-		waitedMs, destinations.size(), d.delaySeconds, options.keepSeconds);
+		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us%s", port,
+		waitedMs, destinations.size(), d.delaySeconds, KeepSeconds(d.spill != nullptr, options.keepSeconds),
+		d.spill ? " (older seconds on disk)" : " in RAM");
 	return true;
 }
 
@@ -755,6 +982,12 @@ void StreamRelay::SetDelay(uint32_t seconds)
 		++impl_->delayGen;
 	}
 	impl_->cv.notify_all();
+}
+
+void StreamRelay::SetKeepSeconds(uint32_t seconds)
+{
+	std::lock_guard<std::mutex> lock(impl_->m);
+	impl_->options.keepSeconds = ClampDelaySeconds(seconds);
 }
 
 void StreamRelay::Dump()
@@ -789,17 +1022,23 @@ void StreamRelay::Stop()
 			sink->abort.store(true);
 	}
 	d.cv.notify_all();
+	d.ioCv.notify_all();
 	if (d.ingest.joinable())
 		d.ingest.join();
 	for (auto &sink : d.sinks) {
 		if (sink->thread.joinable())
 			sink->thread.join();
 	}
+	if (d.io.joinable())
+		d.io.join();
 	std::lock_guard<std::mutex> lock(d.m);
 	for (StreamInfo &info : d.streams)
 		avcodec_parameters_free(&info.par);
 	d.streams.clear();
 	d.history.Clear();
+	d.history.Store().SetSpill(nullptr, 0);
+	// Closing the file deletes it (and with it the only copy of the key).
+	d.spill.reset();
 	d.sinks.clear();
 	d.running = false;
 	TRIGGLOW_LOG_INFO(kComponent, "relay stopped");
@@ -836,6 +1075,11 @@ RelayStatus StreamRelay::GetStatus() const
 	status.delaySeconds = d.delaySeconds;
 	status.historySeconds = d.history.SpanSeconds();
 	status.historyBytes = d.history.Bytes();
+	status.historyRamBytes = d.history.RamBytes();
+	status.historyDiskBytes = d.history.Store().DiskBytes();
+	status.spillActive = d.history.Store().Spill() == SpillState::Active;
+	status.spillNote = d.spillNote;
+	status.instantRaiseSeconds = std::max(d.delaySeconds, d.KeepSecondsLocked());
 	status.bitrateMbps = d.history.BytesPerSecond() * 8.0 / 1e6;
 	status.keyframeIntervalSeconds = d.keyframeInterval;
 	for (const StreamInfo &info : d.streams) {

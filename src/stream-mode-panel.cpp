@@ -692,28 +692,20 @@ void StreamModePanel::BuildOptions(QVBoxLayout *body)
 {
 	QWidget *host = body->parentWidget();
 
-	keepSpin_ = new QSpinBox(host);
-	keepSpin_->setRange(10, static_cast<int>(relay::kMaxDelaySeconds));
-	keepSpin_->setSuffix(Tr("Stream.Seconds"));
-	keepSpin_->setKeyboardTracking(false);
-	keepSpin_->setAccessibleName(Tr("Stream.Keep"));
-	keepSpin_->setAccessibleDescription(Tr("Stream.KeepHelp"));
-	GuardWheel(keepSpin_);
+	// Since the history spills to disk this is no longer a setting: with the
+	// spill every live raise is instant; in RAM only (the disk couldn't be
+	// used) up to the highest preset or scene rule. Refresh() fills it in.
 	auto *keepLabel = new QLabel(Tr("Stream.Keep"), host);
 	SetRole(keepLabel, "eyebrow", ui::FontRole::Eyebrow);
-	keepLabel->setBuddy(keepSpin_);
-	auto *keepHelp = new QLabel(Tr("Stream.KeepHelp"), host);
-	keepHelp->setWordWrap(true);
-	SetRole(keepHelp, "hint", ui::FontRole::Hint);
+	keepValue_ = new QLabel(host);
+	keepValue_->setWordWrap(true);
+	keepValue_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	keepHelp_ = new QLabel(host);
+	keepHelp_->setWordWrap(true);
+	SetRole(keepHelp_, "hint", ui::FontRole::Hint);
 	body->addWidget(keepLabel);
-	body->addWidget(keepSpin_);
-	body->addWidget(keepHelp);
-	connect(keepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
-		if (refreshing_)
-			return;
-		controller_.SetKeepSeconds(static_cast<uint32_t>(value));
-		SettingsChanged();
-	});
+	body->addWidget(keepValue_);
+	body->addWidget(keepHelp_);
 
 	// Check boxes with wrapping labels (clicking the label toggles).
 	auto addCheck = [this, host, body](QCheckBox *&check, QLabel *&text, const char *key) {
@@ -1334,11 +1326,21 @@ void StreamModePanel::RefreshStatus(const StreamDelayStatus &status)
 		QString video = QString::fromStdString(r.videoCodec);
 		if (r.width > 0)
 			video += QStringLiteral(" %1x%2").arg(r.width).arg(r.height);
-		stats = Tr("Stream.Stats")
-				.arg(QString::number(r.historySeconds, 'f', 0))
-				.arg(Megabytes(r.historyBytes))
-				.arg(QString::number(r.bitrateMbps, 'f', 1))
-				.arg(video);
+		// RAM and disk separately: with the spill most of the history is on
+		// disk and RAM stays small.
+		if (r.spillActive || r.historyDiskBytes > 0)
+			stats = Tr("Stream.StatsDisk")
+					.arg(QString::number(r.historySeconds, 'f', 0))
+					.arg(Megabytes(r.historyRamBytes))
+					.arg(Megabytes(r.historyDiskBytes))
+					.arg(QString::number(r.bitrateMbps, 'f', 1))
+					.arg(video);
+		else
+			stats = Tr("Stream.Stats")
+					.arg(QString::number(r.historySeconds, 'f', 0))
+					.arg(Megabytes(r.historyRamBytes))
+					.arg(QString::number(r.bitrateMbps, 'f', 1))
+					.arg(video);
 	}
 	statsLabel_->setText(stats);
 	statsLabel_->setVisible(!stats.isEmpty());
@@ -1481,8 +1483,17 @@ void StreamModePanel::Refresh()
 	controlsBox_->setVisible(status.available && status.modeEnabled);
 	if (delaySpin_->value() != static_cast<int>(status.delaySeconds))
 		delaySpin_->setValue(static_cast<int>(status.delaySeconds));
-	if (keepSpin_->value() != static_cast<int>(status.keepSeconds))
-		keepSpin_->setValue(static_cast<int>(status.keepSeconds));
+	// While a stream runs, what the relay does; before, what it will do
+	// (the spill, unless the disk then can't be used).
+	const bool relayRunning = status.engaged || status.state == StreamDelayState::Draining;
+	const bool onDisk = relayRunning ? status.relay.spillActive : true;
+	const uint32_t instant =
+		relayRunning ? status.relay.instantRaiseSeconds
+			     : (onDisk ? relay::kMaxDelaySeconds : std::max(status.delaySeconds, status.keepSeconds));
+	keepValue_->setText(Tr(onDisk ? "Stream.Keep.Disk" : "Stream.Keep.Ram").arg(instant));
+	keepHelp_->setText(Tr(onDisk ? "Stream.KeepHelp" : "Stream.KeepHelp.Ram"));
+	keepValue_->setAccessibleName(Tr("Stream.Keep"));
+	keepValue_->setAccessibleDescription(keepHelp_->text());
 	for (int i = 0; i < 3; ++i) {
 		const int preset = static_cast<int>(controller_.Preset(i));
 		if (presetSpins_[i]->value() != preset)

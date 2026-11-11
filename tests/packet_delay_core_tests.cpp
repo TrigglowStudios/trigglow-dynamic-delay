@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <vector>
 
 using namespace trigglow::relay;
@@ -419,9 +420,188 @@ void TestBFramesSpliceKeepsDisplayOrder()
 
 } // namespace
 
+// The history keeps each packet's record in its PayloadStore and frees it
+// with the packet.
+void TestHistoryRecords()
+{
+	g_currentTest = "HistoryRecords";
+	PacketHistory h;
+	std::vector<uint8_t> payload(50000);
+	for (size_t i = 0; i < payload.size(); ++i)
+		payload[i] = static_cast<uint8_t>(i * 7);
+	const uint8_t header[4] = {0xde, 0xad, 0xbe, 0xef};
+	for (int i = 0; i < 600; ++i) {
+		Packet p;
+		p.kind = MediaKind::Video;
+		p.keyframe = i % 60 == 0;
+		p.dtsMs = p.ptsMs = i * 33;
+		p.arrivalNs = i * 33 * kMs;
+		p.bytes = 50000;
+		payload[0] = static_cast<uint8_t>(i);
+		const PayloadStore::Span parts[2] = {{header, 4}, {payload.data(), payload.size()}};
+		h.Push(p, parts, 2);
+	}
+	CHECK(h.Bytes() == 600u * 50000u);
+	const Packet *p = h.At(123);
+	CHECK(p && p->recordBytes == 50004);
+	std::vector<uint8_t> record;
+	CHECK(p && h.CopyRecord(*p, record));
+	CHECK(record.size() == 50004 && record[0] == 0xde && record[4] == 123 && record[5] == payload[1]);
+	const size_t before = h.RamBytes();
+	CHECK(before >= 600u * 50004u);
+	// Keep about the last 5 s (packets 33 ms apart, keyframes every 60).
+	h.Trim(600 * 33 * kMs, 5000 * kMs, UINT64_MAX);
+	CHECK(h.FrontSeq() == 420);
+	CHECK(h.RamBytes() < before / 2);
+	CHECK(h.RamBytes() <= (600u - 420u) * 50004u + 3 * PayloadStore::kDefaultBlockBytes + 256 * 1024);
+	p = h.At(500);
+	record.clear();
+	CHECK(p && h.CopyRecord(*p, record) && record.size() == 50004 && record[4] == static_cast<uint8_t>(500));
+	h.Clear();
+	CHECK(h.RamBytes() == 0 && h.Bytes() == 0);
+}
+
+// The spill's hooks in the history: where a time is in the store, what a
+// sender needs next, a sender waiting for bytes that aren't in RAM, and
+// packets whose bytes were lost.
+class LosingDisk : public SpillBackend {
+public:
+	std::map<uint64_t, std::vector<uint8_t>> slots;
+	bool failReads = false;
+	bool WriteSlot(uint64_t slot, uint64_t, const uint8_t *data, size_t bytes) override
+	{
+		slots[slot].assign(data, data + bytes);
+		return true;
+	}
+	bool ReadSlot(uint64_t slot, uint64_t, uint8_t *data, size_t bytes) override
+	{
+		if (failReads || slots[slot].size() != bytes)
+			return false;
+		std::copy(slots[slot].begin(), slots[slot].end(), data);
+		return true;
+	}
+	bool Truncate(uint64_t) override { return true; }
+};
+
+void TestSpillHooks()
+{
+	g_currentTest = "SpillHooks";
+	LosingDisk disk;
+	PacketHistory h;
+	PayloadStore::SpillLimits limits;
+	limits.maxBacklogBlocks = 1 << 20;
+	h.Store().SetSpill(&disk, 100000, limits);
+	std::vector<uint8_t> payload(20000, 0x5a);
+	// 30 fps video only, keyframe every 60 frames, 20 kB each: 10 s.
+	for (int i = 0; i < 300; ++i) {
+		Packet p;
+		p.kind = MediaKind::Video;
+		p.keyframe = i % 60 == 0;
+		p.dtsMs = p.ptsMs = i * 1000 / 30;
+		p.arrivalNs = p.dtsMs * kMs;
+		p.bytes = 20000;
+		const PayloadStore::Span part{payload.data(), payload.size()};
+		h.Push(p, &part, 1);
+	}
+	CHECK(h.OffsetAtArrival(0) == 0);
+	CHECK(h.OffsetAtArrival(5000 * kMs) == 150u * 20000u);
+	CHECK(h.OffsetAtArrival(5001 * kMs) == 151u * 20000u);
+	CHECK(h.OffsetAtArrival(99999 * kMs) == h.Store().EndOffset());
+	const PayloadStore::Range ahead = h.AheadRange(30, 1000 * kMs);
+	CHECK(ahead.from == 30u * 20000u && ahead.to == 61u * 20000u);
+
+	// Everything older than the last 2 s goes to "disk".
+	auto pump = [&](const std::vector<PayloadStore::Range> &needed) {
+		for (;;) {
+			PayloadStore::IoJob job = h.Store().PlanIo(h.OffsetAtArrival(8000 * kMs), needed);
+			if (job.kind == PayloadStore::IoJob::Kind::None)
+				return;
+			h.Store().RunIo(job);
+			h.Store().FinishIo(job);
+			h.DropLost();
+		}
+	};
+	pump({});
+	CHECK(h.Store().DiskBytes() > 0);
+	CHECK(!h.RecordInRam(*h.At(0)));
+	CHECK(h.RecordInRam(*h.At(299)));
+
+	// A sink 9.5 s behind: its packets aren't in RAM, so nothing goes and the
+	// cursor waits; once read back they go.
+	SinkScheduler sink;
+	sink.SetDelay(9500 * kMs, 10000 * kMs, h);
+	auto ready = [&](const Packet &p) {
+		return h.RecordInRam(p);
+	};
+	CHECK(sink.Due(10000 * kMs, h, 1000, ready).empty());
+	CHECK(sink.CursorSeq() == 0);
+	pump({h.AheadRange(sink.CursorSeq(), 3000 * kMs)});
+	const auto out = sink.Due(10000 * kMs, h, 1000, ready);
+	CHECK(out.size() == 16); // Arrived at 0..500 ms.
+	CHECK(sink.CursorSeq() == 16);
+
+	// The disk loses what it holds: those packets go, the history starts
+	// again at the next keyframe, and the sink re-splices there.
+	disk.failReads = true;
+	pump({{0, h.Store().EndOffset()}});
+	CHECK(h.Store().Spill() == SpillState::Fallback);
+	CHECK(h.Store().LostBefore() > 0);
+	CHECK(h.FrontSeq() > 0);
+	const Packet *front = h.At(h.FrontSeq());
+	CHECK(front && front->keyframe && h.RecordInRam(*front));
+	CHECK(front && front->recordOffset >= h.Store().LostBefore());
+	const auto after = sink.Due(18000 * kMs, h, 1000, ready);
+	CHECK(!after.empty() && after.front().packet->keyframe);
+}
+
+// Retention: with the spill every live raise up to the maximum is instant;
+// in RAM only, up to the highest preset or scene rule (or the delay).
+void TestRetentionPolicy()
+{
+	g_currentTest = "RetentionPolicy";
+	CHECK(KeepSeconds(true, 30) == kMaxDelaySeconds);
+	CHECK(KeepSeconds(true, 0) == kMaxDelaySeconds);
+	CHECK(KeepSeconds(false, 30) == 30);
+	CHECK(KeepSeconds(false, 0) == 0);
+	CHECK(KeepSeconds(false, 5000) == kMaxDelaySeconds);
+	const int64_t s = 1000000000LL;
+	CHECK(RetentionNs(10, KeepSeconds(true, 60), 2.0) == 605 * s);
+	CHECK(RetentionNs(10, KeepSeconds(false, 60), 2.0) == 65 * s);
+	CHECK(RetentionNs(120, KeepSeconds(false, 60), 2.0) == 125 * s);
+	CHECK(RetentionNs(600, KeepSeconds(false, 60), 4.0) == 609 * s);
+	CHECK(RetentionNs(10, KeepSeconds(true, 60), 0.0) == 605 * s); // Unknown GOP: 2 s.
+
+	// 700 s of stream at delay 10, trimmed as the relay does, then a raise.
+	for (const bool onDisk : {true, false}) {
+		FakeStream st;
+		SinkScheduler sink;
+		OutLog log;
+		const uint32_t keep = KeepSeconds(onDisk, 60);
+		sink.SetDelay(10000 * kMs, 0, st.history);
+		for (int64_t t = 0; t <= 700000; t += 1000) {
+			st.RunUntil(t);
+			log.Add(sink.Due(t * kMs, st.history, 100000));
+			st.history.Trim(t * kMs, RetentionNs(10, keep, st.history.KeyframeIntervalSeconds()),
+					sink.CursorSeq());
+		}
+		CHECK(st.history.SpanSeconds() >= (onDisk ? 600.0 : 60.0));
+		CHECK(st.history.SpanSeconds() <= (onDisk ? 607.0 : 67.0));
+		const SpliceInfo to60 = SinkScheduler(sink).SetDelay(60000 * kMs, 700000 * kMs, st.history);
+		CHECK(to60.spliced && !to60.shortHistory);
+		const SpliceInfo to600 = sink.SetDelay(600000 * kMs, 700000 * kMs, st.history);
+		CHECK(to600.spliced);
+		CHECK(to600.shortHistory == !onDisk);
+		if (onDisk)
+			CHECK(to600.jumpSeconds > 589.0 && to600.jumpSeconds < 592.0);
+	}
+}
+
 int main()
 {
 	TestBFramesSpliceKeepsDisplayOrder();
+	TestHistoryRecords();
+	TestSpillHooks();
+	TestRetentionPolicy();
 	TestDumpNeverSendsUnaired();
 	TestLive();
 	TestEnableRewindsAndHoldsDelay();
