@@ -602,6 +602,122 @@ void TestRingPlan()
 	CHECK_EQ(ring.GetCounts().pinned, 0u);
 }
 
+// v1.0.0: the retention window a live delay change moves.
+void TestWindow()
+{
+	testcheck::g_currentTest = "retention window";
+	FrameRing ring(100, ArenaConfig());
+	CHECK_EQ(ring.Window(), 100u);
+	ring.SetWindow(10);
+	CHECK_EQ(ring.Window(), 10u);
+	ring.SetWindow(0); // Clamped to [1, SlotCount()].
+	CHECK_EQ(ring.Window(), 1u);
+	ring.SetWindow(1000);
+	CHECK_EQ(ring.Window(), 100u);
+
+	ring.SetWindow(10);
+	uint64_t t = 0;
+	for (int i = 0; i < 30; ++i) {
+		FrameRing::Reservation r;
+		CHECK(ring.Reserve(t, r));
+		CHECK(PublishTagged(ring, r, static_cast<uint8_t>(i)));
+		t += kDelta;
+	}
+	// Only the window holds frames, the rest of the slots stay free.
+	CHECK_EQ(ring.GetCounts().buffered, 10u);
+	CHECK_EQ(ring.GetCounts().ready, 10u);
+	CHECK_EQ(ring.Arena().GetStats().liveBytes, 10u * 128u);
+	uint64_t oldest = 0;
+	CHECK(ring.OldestCaptureNs(oldest) && oldest == 20 * kDelta);
+
+	// Raised: nothing is freed until the ring holds the new window.
+	ring.SetWindow(25);
+	for (int i = 0; i < 10; ++i) {
+		FrameRing::Reservation r;
+		CHECK(ring.Reserve(t, r));
+		CHECK(PublishTagged(ring, r, 1));
+		t += kDelta;
+	}
+	CHECK_EQ(ring.GetCounts().buffered, 20u);
+	CHECK(ring.OldestCaptureNs(oldest) && oldest == 20 * kDelta); // The frames kept are the same ones.
+	for (int i = 0; i < 10; ++i) {
+		FrameRing::Reservation r;
+		CHECK(ring.Reserve(t, r));
+		CHECK(PublishTagged(ring, r, 1));
+		t += kDelta;
+	}
+	CHECK_EQ(ring.GetCounts().buffered, 25u);
+
+	// Lowered: the next Reserve() frees the frames past it (the newest stay)
+	// and the oldest one left is the window's.
+	ring.SetWindow(5);
+	FrameRing::Reservation r;
+	CHECK(ring.Reserve(t, r));
+	CHECK(PublishTagged(ring, r, 2));
+	CHECK_EQ(ring.GetCounts().buffered, 5u);
+	CHECK_EQ(ring.Arena().GetStats().liveBytes, 5u * 128u);
+	CHECK(ring.OldestCaptureNs(oldest) && oldest == t - 4 * kDelta);
+	FrameRing::ReadView view;
+	CHECK(ring.PinForDisplay(t, 0, view) && view.captureNs == t);
+	ring.Unpin(view);
+}
+
+// A big drop frees at most kMaxEvictionsPerReserve frames per capture, and
+// stops at a frame a reader has pinned (tried again on the next one).
+void TestWindowEvictionBounds()
+{
+	testcheck::g_currentTest = "window eviction bounds";
+	const size_t big = FrameRing::kMaxEvictionsPerReserve * 3;
+	FrameRing ring(big + 10, ArenaConfig());
+	uint64_t t = 0;
+	for (size_t i = 0; i < big; ++i) {
+		FrameRing::Reservation r;
+		CHECK(ring.Reserve(t, r));
+		CHECK(PublishTagged(ring, r, 1));
+		t += kDelta;
+	}
+	CHECK_EQ(ring.GetCounts().buffered, big);
+	ring.SetWindow(2);
+	FrameRing::Reservation r;
+	CHECK(ring.Reserve(t, r));
+	t += kDelta;
+	CHECK_EQ(ring.GetCounts().buffered, big + 1 - FrameRing::kMaxEvictionsPerReserve);
+	ring.MarkDropped(r.index, r.generation);
+
+	// Pin the oldest frame: eviction stops there.
+	FrameRing::ReadView pinned;
+	uint64_t oldest = 0;
+	CHECK(ring.OldestCaptureNs(oldest));
+	CHECK(ring.PinForDisplay(oldest, 0, pinned) && pinned.captureNs == oldest);
+	const size_t before = ring.GetCounts().buffered;
+	CHECK(ring.Reserve(t, r));
+	t += kDelta;
+	ring.MarkDropped(r.index, r.generation);
+	CHECK_EQ(ring.GetCounts().buffered, before + 1);
+	ring.Unpin(pinned);
+	for (int i = 0; i < 4; ++i) {
+		CHECK(ring.Reserve(t, r));
+		t += kDelta;
+		ring.MarkDropped(r.index, r.generation);
+	}
+	CHECK_EQ(ring.GetCounts().buffered, 2u);
+
+	// A frame still being encoded at the old end stops it too.
+	FrameRing small(8, ArenaConfig());
+	FrameRing::Reservation first;
+	CHECK(small.Reserve(0, first)); // Left Reserved: an encoder is a whole window behind.
+	for (int i = 1; i < 6; ++i) {
+		CHECK(small.Reserve(static_cast<uint64_t>(i) * kDelta, r));
+		CHECK(PublishTagged(small, r, 1));
+	}
+	small.SetWindow(2);
+	CHECK(small.Reserve(6 * kDelta, r));
+	CHECK_EQ(small.GetCounts().buffered, 7u);
+	CHECK(PublishTagged(small, first, 1));
+	CHECK(small.Reserve(7 * kDelta, r));
+	CHECK_EQ(small.GetCounts().buffered, 2u);
+}
+
 } // namespace
 
 int main()
@@ -619,5 +735,7 @@ int main()
 	TestPlanDecodeStart();
 	TestChooseDecodeStart();
 	TestRingPlan();
+	TestWindow();
+	TestWindowEvictionBounds();
 	return testcheck::Finish("frame_ring_tests");
 }

@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "buffer-fit.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -817,6 +818,238 @@ void TestStorageClass()
 	CHECK_EQ(violations, 0);
 }
 
+// v1.0.0: the audio rings come out of the budget, never below a quarter of it.
+void TestAudioReserve()
+{
+	g_currentTest = "audio reserve";
+	Input in = MakeInput(1920, 1080, 1920, 1080);
+	in.budgetBytes = 8 * kGiB;
+	CHECK_EQ(trigglow::bufferfit::VideoBudgetBytes(in), 8 * kGiB);
+	in.reservedBytesPerSecond = 384000; // One stereo source at 48 kHz.
+	in.delaySeconds = 600;
+	CHECK_EQ(trigglow::bufferfit::VideoBudgetBytes(in), 8 * kGiB - 384000ULL * 600);
+	in.reservedBytesPerSecond = 100 * kMiB; // Absurd: the floor is a quarter.
+	CHECK_EQ(trigglow::bufferfit::VideoBudgetBytes(in), 2 * kGiB);
+	// Compute() sizes against the reduced budget: a fit that held before is trimmed.
+	Input tight = MakeInput(1280, 720, 1280, 720);
+	tight.delaySeconds = 60;
+	const double frame = static_cast<double>(Nv12FrameBytes(1280, 720)) / 5.0;
+	tight.budgetBytes = static_cast<uint64_t>(frame * static_cast<double>(DesiredFrames(60, 60, 1)) + 1.0);
+	CHECK(Compute(tight).fitsFullDuration);
+	tight.reservedBytesPerSecond = 384000;
+	CHECK(!Compute(tight).fitsFullDuration);
+}
+
+void TestEffectiveSecondsFor()
+{
+	g_currentTest = "effective seconds for";
+	using trigglow::bufferfit::EffectiveSecondsFor;
+	// Every Compute() result agrees with it.
+	for (uint64_t budgetMiB : {64, 256, 1024, 4096, 16384}) {
+		Input in = MakeInput(1920, 1080, 1920, 1080, 1080);
+		in.budgetBytes = budgetMiB * kMiB;
+		in.delaySeconds = 120;
+		const Result r = Compute(in);
+		CHECK_EQ(EffectiveSecondsFor(r.actualFrames, 120, 60, 1, 0), r.effectiveDelaySeconds);
+	}
+	CHECK_EQ(EffectiveSecondsFor(DesiredFrames(30, 60, 1), 30, 60, 1, 0), 30u);
+	CHECK_EQ(EffectiveSecondsFor(0, 30, 60, 1, 0), 0u);
+	CHECK_EQ(EffectiveSecondsFor(1000, 30, 0, 1, 0), 0u);
+	CHECK_EQ(trigglow::bufferfit::CapacityFrames(60, 1, 0), DesiredFrames(600, 60, 1));
+	CHECK_EQ(trigglow::bufferfit::CapacityFrames(60000, 1001, 30), DesiredFrames(600, 60000, 1001, 30));
+}
+
+void TestWindowBytes()
+{
+	g_currentTest = "window bytes";
+	using trigglow::bufferfit::TopSegment;
+	using trigglow::bufferfit::WindowBytes;
+	const double big = static_cast<double>(Nv12FrameBytes(1920, 1080)) / 5.0;
+	const double small = static_cast<double>(Nv12FrameBytes(1280, 720)) / 5.0;
+	const uint64_t interval = 1000;
+	// One segment: every frame at its size.
+	TopSegment one[] = {{0, 1920, 1080}};
+	CHECK_NEAR(WindowBytes(one, 1, 500000, 300, interval, 5.0), 300 * big, 1.0);
+	CHECK_NEAR(WindowBytes(one, 1, 500000, 0, interval, 5.0), 0.0, 0.0);
+	CHECK_NEAR(WindowBytes(nullptr, 0, 500000, 300, interval, 5.0), 0.0, 0.0);
+	// Lowered 100 frames ago: the newest 100 small, the rest big.
+	TopSegment two[] = {{0, 1920, 1080}, {400000, 1280, 720}};
+	CHECK_NEAR(WindowBytes(two, 2, 500000, 300, interval, 5.0), 100 * small + 200 * big, 1.0);
+	// A window inside the newest segment never counts the older one.
+	CHECK_NEAR(WindowBytes(two, 2, 500000, 50, interval, 5.0), 50 * small, 1.0);
+}
+
+Input LiveInput(uint32_t delay)
+{
+	Input in = MakeInput(1920, 1080, 1920, 1080, 720);
+	in.delaySeconds = delay;
+	return in;
+}
+
+trigglow::bufferfit::LiveRing RingFor(const Input &in)
+{
+	const Result r = Compute(in);
+	trigglow::bufferfit::LiveRing ring;
+	ring.windowFrames = r.actualFrames;
+	ring.capacityFrames = trigglow::bufferfit::CapacityFrames(in.fpsNum, in.fpsDen, in.keyframeIntervalFrames);
+	ring.topWidth = r.bufferWidth;
+	ring.topHeight = r.bufferHeight;
+	ring.ringBytes = static_cast<double>(r.actualFrames) *
+			 (static_cast<double>(Nv12FrameBytes(r.bufferWidth, r.bufferHeight)) / in.compressionRatio);
+	return ring;
+}
+
+void TestLiveChange()
+{
+	g_currentTest = "live change";
+	using trigglow::bufferfit::ComputeLiveChange;
+	using trigglow::bufferfit::LiveChange;
+	using trigglow::bufferfit::LiveRing;
+
+	// Lowered: the window shrinks, the size stays, the delay is exact.
+	{
+		Input in = LiveInput(60);
+		const LiveRing ring = RingFor(in);
+		in.delaySeconds = 10;
+		const LiveChange c = ComputeLiveChange(in, ring);
+		CHECK(c.valid);
+		CHECK_EQ(c.windowFrames, DesiredFrames(10, 60, 1));
+		CHECK_EQ(c.effectiveDelaySeconds, 10u);
+		CHECK(c.fitsFullDuration && !c.loweredTop);
+		CHECK_EQ(c.topWidth, ring.topWidth);
+		CHECK_EQ(c.topHeight, ring.topHeight);
+	}
+	// Raised with room to spare: the window grows, the size stays.
+	{
+		Input in = LiveInput(30);
+		const LiveRing ring = RingFor(in);
+		in.delaySeconds = 90;
+		const LiveChange c = ComputeLiveChange(in, ring);
+		CHECK(c.valid && c.fitsFullDuration && !c.loweredTop);
+		CHECK_EQ(c.windowFrames, DesiredFrames(90, 60, 1));
+		CHECK_EQ(c.effectiveDelaySeconds, 90u);
+	}
+	// Raised past what fits at 1080p: the top goes down (never below the 720p
+	// floor) so the frames held plus the extra ones fit the budget.
+	{
+		Input in = LiveInput(60);
+		in.budgetBytes = 4 * kGiB;
+		const LiveRing ring = RingFor(in);
+		CHECK_EQ(ring.topHeight, 1080u); // 60 s of 1080p60 at 5x: ~2.2 GB.
+		in.delaySeconds = 180;
+		const LiveChange c = ComputeLiveChange(in, ring);
+		CHECK(c.valid && c.loweredTop && c.fitsFullDuration);
+		CHECK(c.topHeight < 1080u && c.topHeight >= 720u && c.topHeight % 2 == 0);
+		CHECK(c.topWidth % 8 == 0 && c.topWidth < 1920u);
+		CHECK_EQ(c.windowFrames, DesiredFrames(180, 60, 1));
+		const double extra = static_cast<double>(c.windowFrames - ring.windowFrames) *
+				     (static_cast<double>(Nv12FrameBytes(c.topWidth, c.topHeight)) / 5.0);
+		CHECK(ring.ringBytes + extra <= static_cast<double>(in.budgetBytes));
+		// About the largest such size (the walk starts at the continuous ideal,
+		// so rounding can leave it a few rows short): 16 rows more don't fit.
+		const uint32_t up = c.topHeight + 16;
+		const double extraUp =
+			static_cast<double>(c.windowFrames - ring.windowFrames) *
+			(static_cast<double>(Nv12FrameBytes(trigglow::bufferfit::AlignedWidth(1920, up / 1080.0), up)) /
+			 5.0);
+		CHECK(ring.ringBytes + extraUp > static_cast<double>(in.budgetBytes) || up > 1080u);
+	}
+	// Raised past what even the floor holds: trimmed to whole seconds, never
+	// below the delay already running, at the floor.
+	{
+		Input in = LiveInput(60);
+		in.budgetBytes = 3 * kGiB;
+		const LiveRing ring = RingFor(in);
+		in.delaySeconds = 600;
+		const LiveChange c = ComputeLiveChange(in, ring);
+		CHECK(c.valid && c.loweredTop && !c.fitsFullDuration);
+		CHECK_EQ(c.topHeight, 720u);
+		CHECK_EQ(c.topWidth, 1280u);
+		CHECK(c.effectiveDelaySeconds >= 60u && c.effectiveDelaySeconds < 600u);
+		const double extra = static_cast<double>(c.windowFrames - ring.windowFrames) *
+				     (static_cast<double>(Nv12FrameBytes(1280, 720)) / 5.0);
+		CHECK(ring.ringBytes + extra <= static_cast<double>(in.budgetBytes));
+		CHECK_EQ(c.effectiveDelaySeconds,
+			 trigglow::bufferfit::EffectiveSecondsFor(c.windowFrames, 600, 60, 1, 0));
+	}
+	// Already at the floor with no room: the window doesn't grow, the delay
+	// stays what it was (still never empties).
+	{
+		Input in = LiveInput(60);
+		in.minResolutionHeight = 1080;
+		in.budgetBytes = 2 * kGiB;
+		LiveRing ring = RingFor(in);
+		ring.ringBytes = static_cast<double>(in.budgetBytes);
+		const uint32_t before = trigglow::bufferfit::EffectiveSecondsFor(ring.windowFrames, 60, 60, 1, 0);
+		in.delaySeconds = 120;
+		const LiveChange c = ComputeLiveChange(in, ring);
+		CHECK(c.valid && !c.fitsFullDuration && !c.loweredTop);
+		CHECK_EQ(c.windowFrames, ring.windowFrames);
+		CHECK(c.effectiveDelaySeconds >= before);
+	}
+	// The audio reserve grows with the delay and is set aside too.
+	{
+		Input in = LiveInput(30);
+		in.budgetBytes = 4 * kGiB;
+		const LiveRing ring = RingFor(in);
+		in.delaySeconds = 120;
+		const LiveChange plain = ComputeLiveChange(in, ring);
+		in.reservedBytesPerSecond = 4 * 384000;
+		const LiveChange withAudio = ComputeLiveChange(in, ring);
+		CHECK(withAudio.topHeight <= plain.topHeight);
+		CHECK(withAudio.windowFrames <= plain.windowFrames);
+	}
+	// Capacity bounds the window (600 s at the ring's rate).
+	{
+		Input in = LiveInput(30);
+		LiveRing ring = RingFor(in);
+		ring.capacityFrames = 3000;
+		in.delaySeconds = 600;
+		in.budgetBytes = 64 * kGiB;
+		CHECK(ComputeLiveChange(in, ring).windowFrames <= 3000u);
+	}
+	// Invalid input: the caller resizes instead.
+	{
+		Input in = LiveInput(30);
+		LiveRing ring = RingFor(in);
+		ring.topWidth = 0;
+		CHECK(!ComputeLiveChange(in, ring).valid);
+		ring = RingFor(in);
+		in.delaySeconds = 0;
+		CHECK(!ComputeLiveChange(in, ring).valid);
+	}
+	// A whole session of changes never exceeds the budget: raise and lower in
+	// steps, tracking the bytes the way the filter does (frames at the size
+	// captured when they were taken).
+	{
+		Input in = LiveInput(10);
+		in.budgetBytes = 3 * kGiB;
+		LiveRing ring = RingFor(in);
+		for (uint32_t delay : {60u, 30u, 200u, 5u, 600u, 120u, 300u}) {
+			in.delaySeconds = delay;
+			const LiveChange c = ComputeLiveChange(in, ring);
+			CHECK(c.valid);
+			const double each = static_cast<double>(Nv12FrameBytes(c.topWidth, c.topHeight)) / 5.0;
+			// The worst moment: everything held stays and the extra frames come in.
+			const double peak =
+				c.windowFrames > ring.windowFrames
+					? ring.ringBytes +
+						  static_cast<double>(c.windowFrames - ring.windowFrames) * each
+					: ring.ringBytes;
+			CHECK(peak <= static_cast<double>(in.budgetBytes) + 1.0);
+			CHECK(c.topHeight <= ring.topHeight);
+			// Once settled the ring holds the new window at the new size (an
+			// upper bound when it was lowered: the old frames were larger).
+			ring.ringBytes = std::min(
+				peak, static_cast<double>(c.windowFrames) *
+					      static_cast<double>(Nv12FrameBytes(ring.topWidth, ring.topHeight)) / 5.0);
+			ring.windowFrames = c.windowFrames;
+			ring.topWidth = c.topWidth;
+			ring.topHeight = c.topHeight;
+		}
+	}
+}
+
 } // namespace
 
 int main()
@@ -842,6 +1075,10 @@ int main()
 	TestWidthAlignment();
 	TestHighFloors();
 	TestStorageClass();
+	TestAudioReserve();
+	TestEffectiveSecondsFor();
+	TestWindowBytes();
+	TestLiveChange();
 
 	std::printf("buffer_fit_tests: %d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

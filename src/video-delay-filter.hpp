@@ -185,11 +185,19 @@ public:
 	// ringClass (v0.7.0): what the cycle's ring is sized for (invariant I9)
 	// -- inter assumes 12x and keeps a GOP of slack, intra-gop keeps intra's
 	// 5x with a GOP of slack.
+	// audioBytesPerSecond (v1.0.0): what the delay's audio rings take per second
+	// of delay, set aside from the RAM budget (bufferfit::Input::reservedBytesPerSecond).
 	static BufferFitEstimate EstimateBufferFit(uint32_t requestedDelaySeconds, uint32_t minResolutionHeight,
 						   uint32_t sourceWidth, uint32_t sourceHeight, uint32_t baseWidth,
 						   uint32_t baseHeight, uint32_t outputWidth, uint32_t outputHeight,
 						   uint32_t fpsNum, uint32_t fpsDen, bool capToOutput,
-						   bufferfit::RingClass ringClass);
+						   bufferfit::RingClass ringClass, uint64_t audioBytesPerSecond);
+
+	// v1.0.0: the audio rings' RAM per second of delay for the cycle running
+	// (ObsFrontendBridge sets it when it attaches the audio filters): every
+	// video filter's ring sizing sets it aside from the budget. Any thread.
+	static void SetAudioBytesPerSecond(uint64_t bytesPerSecond);
+	static uint64_t AudioBytesPerSecond();
 
 	// v0.7.0: what the "set_obs_encoders(in ptr encoders)" proc takes (the UI
 	// thread, through ObsFrontendBridge): the families of OBS's active video
@@ -278,6 +286,21 @@ private:
 	// old ring goes to the reaper thread to be freed and a new one fills from empty.
 	// Graphics thread only (it can destroy resolution-sized GPU objects).
 	void EnsureRingSized(uint32_t width, uint32_t height);
+	// v1.0.0: whether two sizing inputs describe the same cycle but for the
+	// delay (geometry, fps, floor, budget, storage class).
+	static bool SameCycleGeometry(const bufferfit::Input &a, const bufferfit::Input &b);
+	// v1.0.0: changes the running ring's delay to in.delaySeconds in place
+	// (bufferfit::ComputeLiveChange()): the window and the playback target
+	// move, the frames stay, and a raise that doesn't fit at the size captured
+	// now lowers that size (never below the floor) or trims the delay. No
+	// buffer_restarted signal: nothing empties. False on invalid input (the
+	// caller resizes). Graphics thread.
+	bool ApplyLiveDelay(const bufferfit::Input &in);
+	// The "get_effective_delay_seconds" proc's graphics task: applies a delay
+	// the dock just pushed right away instead of on the next Render().
+	static void ApplyLiveDelayTask(void *param);
+	// Draws the frame in playbackTextures_ (a hold).
+	void DrawPlaybackFrame(uint32_t sourceWidth, uint32_t sourceHeight);
 	// Ends the current cycle: the pipeline drops queued work and decoded
 	// frames and hands the ring (ours included) to its reaper thread, which
 	// frees it. Graphics thread only; never waits on a worker, never frees it here.
@@ -495,6 +518,21 @@ private:
 	// from anywhere; it's written on the graphics thread.
 	std::atomic<uint32_t> effectiveDelaySeconds_{0};
 	uint64_t ringFrameIntervalNs_ = 0; // frameIntervalNs_ the current ring was sized with.
+	// --- v1.0.0: live delay changes (graphics thread unless noted) ---
+	uint64_t ringWindowFrames_ = 0;    // The ring's retention window (FrameRing::SetWindow()).
+	uint32_t appliedDelaySeconds_ = 0; // The delay the cycle runs for now (requested, not trimmed).
+	// The top a live raise lowered the capture to (0 x 0: none, bufferWidth_ x
+	// bufferHeight_ stands); ApplyEncoderCeiling() starts the ladder there.
+	uint32_t ramTopWidth_ = 0;
+	uint32_t ramTopHeight_ = 0;
+	// When the capture's top size changed this cycle, for the RAM the frames in
+	// the window take (bufferfit::WindowBytes()). At most kMaxTopSegments.
+	std::vector<bufferfit::TopSegment> topSegments_;
+	static constexpr size_t kMaxTopSegments = 8;
+	uint64_t liveChangeGraceUntilNs_ = 0; // See kLiveChangeGraceNs in the .cpp.
+	// A ring exists (written on G): PlannedEffectiveDelaySeconds() (any thread)
+	// then applies the delay on G and returns what the ring really uses.
+	std::atomic<bool> cycleRunning_{false};
 	// Index of the capture cell (now / capture interval) of the last capture.
 	// Render() can be called several times per OBS frame (preview,
 	// projectors, a second canvas, the keep-alive callback...) or slower than

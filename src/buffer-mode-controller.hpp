@@ -74,6 +74,12 @@ struct BufferModeStatus {
 	// changes, never on the other status updates that arrive while Filling
 	// (an overlay toggle or corner change notifies too).
 	uint32_t fillGeneration = 0;
+	// v1.0.0: how long the fill window that fillGeneration started lasts, in
+	// ms from that change -- what the dock's fill timer waits. The applied
+	// delay at Enable and at a refill; only the extra seconds for a live raise
+	// (BufferModeController::SetDelaySeconds()); what's left of the window
+	// when the delay changes while Filling.
+	uint32_t fillWindowMs = 0;
 	// Floor for the RAM reduction of the delayed video's resolution --
 	// VideoDelayFilter never reduces below this for RAM, shortening the ACTUAL
 	// buffered duration instead if delaySeconds doesn't fit the RAM budget at
@@ -98,6 +104,14 @@ using BufferStatusChangedCallback = std::function<void(const BufferModeStatus &)
 
 class BufferModeController {
 public:
+	// v1.0.0: scene mode's delay range (stream mode's too).
+	static constexpr uint32_t kMinDelaySeconds = 1;
+	static constexpr uint32_t kMaxDelaySeconds = bufferfit::kMaxDelaySeconds;
+	// A live raise up to this many seconds holds the delayed picture (and
+	// silences the audio) for those seconds; a bigger one shows the loading
+	// scene for them instead, like Enable.
+	static constexpr uint32_t kHoldRaiseMaxSeconds = 3;
+
 	explicit BufferModeController(ObsFrontendBridge &bridge);
 
 	void SetStatusChangedCallback(BufferStatusChangedCallback callback) { onStatusChanged_ = std::move(callback); }
@@ -133,6 +147,12 @@ public:
 
 	void SetLiveScene(std::string sceneName);
 	void SetLoadingScene(std::string sceneName);
+	// Clamped to [kMinDelaySeconds, kMaxDelaySeconds]. v1.0.0: while
+	// Filling/Active the delay changes in place, the buffer is never emptied
+	// (VideoDelayFilter::ApplyLiveDelay(), AudioDelayLine): lowered, viewers
+	// skip forward at once; raised, the extra seconds build up behind the held
+	// picture (up to kHoldRaiseMaxSeconds) or the loading scene (more), and
+	// Program goes back to the delayed view once they have.
 	void SetDelaySeconds(uint32_t seconds);
 	void SetMinResolutionHeight(uint32_t heightPixels);
 	// Toggles the "Delay Ns" overlay; takes effect immediately if Active.
@@ -313,6 +333,15 @@ private:
 	// included -- in Filling it starts the fill window over).
 	bool BufferRestartsWith(uint32_t previousDelaySeconds, uint32_t previousMinResolutionHeight) const;
 	void ShowLoadingSceneForRefill();
+	// v1.0.0: a new fill window of windowMs from now (fillGeneration +1, the
+	// dock re-arms its timer); readyAtNs_ is when it ends.
+	void StartFillWindow(uint64_t windowMs);
+	// v1.0.0: the applied delay went from `before` to `after` seconds in place
+	// while Filling/Active: moves the end of the fill window by the difference,
+	// or for a raise while Active, shows the loading scene for the extra
+	// seconds (more than kHoldRaiseMaxSeconds).
+	void OnLiveDelayChanged(uint32_t before, uint32_t after);
+	uint64_t readyAtNs_ = 0; // Steady clock: when the current fill window ends.
 	// The scene Program shows while the ring fills: the chosen loading scene,
 	// or the default one with the Trigglow video (empty if neither exists).
 	std::string LoadingSceneToShow() const;

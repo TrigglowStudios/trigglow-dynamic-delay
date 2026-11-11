@@ -101,23 +101,81 @@ void BufferModeController::SetLoadingScene(std::string sceneName)
 
 void BufferModeController::SetDelaySeconds(uint32_t seconds)
 {
-	const uint32_t previousSeconds = status_.delaySeconds;
+	seconds = std::clamp(seconds, kMinDelaySeconds, kMaxDelaySeconds);
+	if (seconds == status_.delaySeconds)
+		return;
+	const uint32_t appliedBefore = AppliedDelaySeconds();
 	status_.delaySeconds = seconds;
-	if (status_.state == BufferModeState::Active) {
-		const bool refill = BufferRestartsWith(previousSeconds, status_.minResolutionHeight);
-		if (refill)
-			ShowLoadingSceneForRefill(); // Before the filter empties its ring.
+	if (status_.state == BufferModeState::Active || status_.state == BufferModeState::Filling) {
+		// v1.0.0: in place, never a refill from empty. The filter applies the
+		// delay on the graphics thread as soon as it's asked what it gives
+		// (the sync below), so video, audio and the dock change together.
 		bridge_.SetBufferFilterDelaySeconds(status_.liveSceneName, seconds);
-		// The filter computes its effective delay from the settings just
-		// pushed (its ring follows on the next Render()), so audio gets the
-		// new value right now. See SyncAudioDelayToVideoEffective's comment.
 		SyncAudioDelayToVideoEffective();
-		if (refill)
-			EnterRefill("delay changed");
+		OnLiveDelayChanged(appliedBefore, AppliedDelaySeconds());
 		UpdateOverlay();
 	}
 	// After the sync: the dock shows the effective seconds it computed.
 	NotifyStatusChanged();
+}
+
+void BufferModeController::StartFillWindow(uint64_t windowMs)
+{
+	readyAtNs_ = SteadyNowNs() + windowMs * 1000000ULL;
+	status_.fillWindowMs = static_cast<uint32_t>(std::min<uint64_t>(windowMs, UINT32_MAX));
+	++status_.fillGeneration; // A new fill window: the dock starts its countdown.
+}
+
+void BufferModeController::OnLiveDelayChanged(uint32_t before, uint32_t after)
+{
+	if (after == before)
+		return;
+	if (status_.state == BufferModeState::Filling) {
+		// The delayed view is ready once its target reaches the frames already
+		// held: every second added waits one more, every second removed one less.
+		const uint64_t nowNs = SteadyNowNs();
+		const int64_t shiftNs = (static_cast<int64_t>(after) - static_cast<int64_t>(before)) * 1000000000LL;
+		const int64_t readyAt = static_cast<int64_t>(readyAtNs_) + shiftNs;
+		if (readyAt <= static_cast<int64_t>(nowNs)) {
+			TRIGGLOW_LOG_INFO(kComponent, "delay %us -> %us while filling: the buffer already holds it",
+					  before, after);
+			OnFillTimerElapsed();
+			return;
+		}
+		const auto remainingMs = static_cast<uint64_t>(readyAt - static_cast<int64_t>(nowNs)) / 1000000ULL;
+		StartFillWindow(remainingMs);
+		SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
+		TRIGGLOW_LOG_INFO(kComponent, "delay %us -> %us while filling: %llums left", before, after,
+				  static_cast<unsigned long long>(remainingMs));
+		return;
+	}
+	if (status_.state != BufferModeState::Active)
+		return;
+	if (after < before) {
+		TRIGGLOW_LOG_INFO(kComponent, "delay lowered live %us -> %us: viewers skip forward, nothing refills",
+				  before, after);
+		return;
+	}
+	const uint32_t extra = after - before;
+	if (extra <= kHoldRaiseMaxSeconds || LoadingSceneToShow().empty()) {
+		// The wrapper stays on Program, holding its last frame (and the audio
+		// silent) while the extra seconds build up. Without any loading scene
+		// that's also what a bigger raise does: never the undelayed scene.
+		TRIGGLOW_LOG_INFO(kComponent, "delay raised live %us -> %us: the picture holds for %us", before, after,
+				  extra);
+		return;
+	}
+	// More than a few seconds: the loading scene covers them, as at Enable,
+	// for the extra seconds only -- every frame already buffered stays.
+	ShowLoadingSceneForRefill();
+	StartFillWindow(static_cast<uint64_t>(extra) * 1000ULL);
+	SetState(BufferModeState::Filling, "Status.AddingDelay",
+		 FormatArgs(Str("Status.AddingDelay"), {std::to_string(extra), std::to_string(after)}));
+	UpdateOverlay();
+	TRIGGLOW_LOG_INFO(kComponent,
+			  "delay raised live %us -> %us: the loading scene shows for the %us that build up, then the "
+			  "delayed view again (nothing was emptied)",
+			  before, after, extra);
 }
 
 void BufferModeController::SetShowOverlay(bool show)
@@ -245,7 +303,7 @@ void BufferModeController::Enable()
 	if (!loadingScene.empty())
 		bridge_.SetCurrentSceneByName(loadingScene);
 
-	++status_.fillGeneration; // A new fill window: the dock starts its countdown.
+	StartFillWindow(static_cast<uint64_t>(AppliedDelaySeconds()) * 1000ULL);
 	SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
 	TRIGGLOW_LOG_INFO(
 		kComponent,
@@ -457,7 +515,7 @@ void BufferModeController::EnterRefill(const char *reason)
 	// A new fill window, so the dock re-arms its fill timer (it only does when
 	// fillGeneration changes): OnFillTimerElapsed() switches back to the
 	// wrapper scene once the new ring is full.
-	++status_.fillGeneration;
+	StartFillWindow(static_cast<uint64_t>(AppliedDelaySeconds()) * 1000ULL);
 	SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
 	TRIGGLOW_LOG_WARN(kComponent, "%s: the video buffer restarted empty -- %s for the next %us while it refills",
 			  reason,
@@ -520,6 +578,8 @@ void BufferModeController::StopDelay(const char *messageKey, bool restoreProgram
 
 	bridge_.SetDelayOverlay(false, 0);
 	status_.effectiveDelaySeconds = 0;
+	status_.fillWindowMs = 0;
+	readyAtNs_ = 0;
 	yieldPending_ = false;
 	bridge_.SetBufferFilterEnabled(status_.liveSceneName, false);
 	bridge_.SetAudioDelayFiltersEnabled(status_.liveSceneName, false);
@@ -567,7 +627,7 @@ void BufferModeController::LoadSettings(uint32_t delaySeconds, uint32_t minResol
 	bufferOutputCap_ = bufferOutputCap;
 	codecWorkers_ = codecWorkers;
 	bufferCodecAuto_ = bufferCodecAuto;
-	status_.delaySeconds = delaySeconds;
+	status_.delaySeconds = std::clamp(delaySeconds, kMinDelaySeconds, kMaxDelaySeconds);
 	status_.minResolutionHeight = minResolutionHeight;
 	status_.liveSceneName = std::move(liveSceneName);
 	status_.loadingSceneName = std::move(loadingSceneName);

@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -581,6 +583,15 @@ bool obs_module_load(void)
 	// A suspended or inactive account (HTTP 403 from the server) blocks it too.
 	g_state->bufferController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI): scene
+	// mode's gate, with the same environment variable as stream mode's.
+	if (const char *skipScene = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE");
+	    skipScene && std::strcmp(skipScene, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: scene mode's account gate is skipped");
+		g_state->bufferController->SetAuthorizationCheck(nullptr);
+	}
+#endif
 
 	g_state->saveSettingsOnExit = LoadBufferSettings(*g_state->bufferController);
 

@@ -33,11 +33,6 @@ constexpr const char *kSettingDelaySeconds = "delay_seconds";
 // Never a stored setting.
 constexpr const char *kPropertyManagedInfo = "trigglow_managed_info";
 
-// Extra headroom on top of configuredDelaySeconds_ worth of frames, so a
-// write can never catch up to a read mid-copy. Cheap (raw PCM, no VRAM
-// concern), so this is generously 1 full second per channel.
-constexpr uint32_t kRingMarginSeconds = 1;
-
 // OBS hands a filter exactly contiguous timestamps from a source that is
 // delivering steadily, so anything past this is a real gap (or rewind), not
 // jitter. Small enough that dropouts don't accumulate into audible A/V drift.
@@ -70,50 +65,6 @@ void AudioDelayFilter::Register()
 
 AudioDelayFilter::AudioDelayFilter(obs_source_t *filterSource) : filterSource_(filterSource) {}
 
-void AudioDelayFilter::EnsureRingSized(uint32_t channels, uint32_t samplesPerSec, uint32_t delaySeconds)
-{
-	if (channels == 0 || samplesPerSec == 0)
-		return;
-
-	uint64_t desiredFrames = static_cast<uint64_t>(delaySeconds) * samplesPerSec +
-				 static_cast<uint64_t>(kRingMarginSeconds) * samplesPerSec;
-	desiredFrames = std::max<uint64_t>(1, desiredFrames);
-
-	bool needsResize = channels != channels_ || samplesPerSec != samplesPerSec_ || ring_.empty() ||
-			   ring_[0].size() != desiredFrames;
-	if (!needsResize)
-		return;
-
-	channels_ = channels;
-	samplesPerSec_ = samplesPerSec;
-	ring_.assign(channels, std::vector<float>(static_cast<size_t>(desiredFrames), 0.0f));
-	writeIndex_ = 0;
-	bufferedFrames_ = 0;
-	haveExpectedTimestamp_ = false;
-}
-
-void AudioDelayFilter::ResetHistory()
-{
-	writeIndex_ = 0;
-	bufferedFrames_ = 0;
-	haveExpectedTimestamp_ = false;
-}
-
-void AudioDelayFilter::WriteSilence(size_t frames)
-{
-	size_t ringLen = ring_.empty() ? 0 : ring_[0].size();
-	if (ringLen == 0 || frames == 0 || frames >= ringLen)
-		return;
-	for (auto &channelRing : ring_) {
-		size_t firstPart = std::min(frames, ringLen - writeIndex_);
-		std::fill_n(channelRing.begin() + static_cast<std::ptrdiff_t>(writeIndex_), firstPart, 0.0f);
-		if (firstPart < frames)
-			std::fill_n(channelRing.begin(), frames - firstPart, 0.0f);
-	}
-	writeIndex_ = (writeIndex_ + frames) % ringLen;
-	bufferedFrames_ = std::min(bufferedFrames_ + frames, ringLen);
-}
-
 obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 {
 	if (!audio || audio->frames == 0)
@@ -129,19 +80,18 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	// delay from the UI thread at any moment.
 	const uint32_t delaySeconds = configuredDelaySeconds_.load(std::memory_order_relaxed);
 
-	EnsureRingSized(channels, sampleRate, delaySeconds);
-	size_t frames = audio->frames;
-	size_t ringLen = ring_.empty() ? 0 : ring_[0].size();
-	if (ringLen == 0 || frames >= ringLen)
-		return audio;
-
+	line_.Configure(channels, sampleRate);
 	if (resetRequested_.exchange(false, std::memory_order_acq_rel))
-		ResetHistory();
+		line_.Reset();
+	// Lowered: skips forward at once; raised: holds (silence) until the extra
+	// seconds have built up -- what the video does (AudioDelayLine).
+	line_.SetDelayFrames(static_cast<uint64_t>(delaySeconds) * sampleRate);
+	const size_t frames = audio->frames;
 
-	// --- Keep the ring on the wall clock, not on "samples received" ---
+	// --- Keep the line on the wall clock, not on "samples received" ---
 	// Sources that stop delivering audio while idle (application/window
 	// audio capture, paused media, browser sources) would otherwise make
-	// this delay stretch beyond the video's: the ring only advanced when
+	// this delay stretch beyond the video's: the line only advanced when
 	// samples arrived. A forward gap is filled with silence; a rewind, or a
 	// gap longer than the whole ring (source restarted), invalidates the
 	// history instead.
@@ -149,19 +99,21 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	if (haveExpectedTimestamp_) {
 		auto drift = static_cast<int64_t>(audio->timestamp) - static_cast<int64_t>(expectedTimestamp_);
 		if (drift > static_cast<int64_t>(kGapToleranceNs)) {
-			uint64_t gapFrames = static_cast<uint64_t>(drift) * sampleRate / 1000000000ULL;
-			bool tooLong = gapFrames >= ringLen - frames;
+			const uint64_t gapFrames = static_cast<uint64_t>(drift) * sampleRate / 1000000000ULL;
+			const uint64_t room = line_.TargetFrames() +
+					      static_cast<uint64_t>(AudioDelayLine::kMarginSeconds) * sampleRate;
+			const bool tooLong = gapFrames >= room;
 			if (tooLong)
-				ResetHistory();
+				line_.Reset();
 			else
-				WriteSilence(static_cast<size_t>(gapFrames));
+				line_.WriteSilence(static_cast<size_t>(gapFrames));
 			if (timelineEventCount_++ < 20)
 				TRIGGLOW_LOG_INFO(kComponent, "\"%s\": %lldms gap in source audio, %s",
 						  obs_source_get_name(filterSource_),
 						  static_cast<long long>(drift / 1000000LL),
 						  tooLong ? "history reset" : "filled with silence");
 		} else if (drift < -static_cast<int64_t>(kGapToleranceNs)) {
-			ResetHistory();
+			line_.Reset();
 			if (timelineEventCount_++ < 20)
 				TRIGGLOW_LOG_INFO(kComponent,
 						  "\"%s\": source timestamp went back %lldms, history reset",
@@ -172,69 +124,21 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	haveExpectedTimestamp_ = true;
 	expectedTimestamp_ = audio->timestamp + chunkNs;
 
-	auto **inData = reinterpret_cast<float **>(audio->data);
+	line_.Write(reinterpret_cast<const float *const *>(audio->data), frames);
 
-	// --- Write: copy this call's samples into the ring, per channel ---
-	for (uint32_t c = 0; c < channels_; ++c) {
-		std::vector<float> &channelRing = ring_[c];
-		size_t firstPart = std::min(frames, ringLen - writeIndex_);
-		if (!inData[c]) {
-			// Missing plane: write silence rather than leaving samples
-			// from a previous lap of the ring to be read back later.
-			std::fill_n(channelRing.begin() + static_cast<std::ptrdiff_t>(writeIndex_), firstPart, 0.0f);
-			if (firstPart < frames)
-				std::fill_n(channelRing.begin(), frames - firstPart, 0.0f);
-			continue;
-		}
-		std::memcpy(channelRing.data() + writeIndex_, inData[c], firstPart * sizeof(float));
-		if (firstPart < frames)
-			std::memcpy(channelRing.data(), inData[c] + firstPart, (frames - firstPart) * sizeof(float));
+	// --- Read: the chunk that is delaySeconds old (silence while filling) ---
+	// Program is on the loading scene while it fills, so that silence is never
+	// actually heard there.
+	outputChunks_.resize(channels);
+	float *out[MAX_AV_PLANES] = {};
+	for (uint32_t c = 0; c < channels && c < MAX_AV_PLANES; ++c) {
+		outputChunks_[c].resize(frames);
+		out[c] = outputChunks_[c].data();
 	}
-	writeIndex_ = (writeIndex_ + frames) % ringLen;
-	bufferedFrames_ = std::min(bufferedFrames_ + frames, ringLen);
+	line_.Read(out, frames);
 
-	// --- Read: whichever `frames`-sized window is delaySeconds old ---
-	uint64_t delayFrames = static_cast<uint64_t>(delaySeconds) * sampleRate;
-	delayFrames = std::min(delayFrames, static_cast<uint64_t>(ringLen - frames));
-	bool haveEnoughHistory = bufferedFrames_ >= delayFrames + frames;
-
-	outputChunks_.resize(channels_);
-	for (auto &chunk : outputChunks_)
-		chunk.resize(frames);
-
-	if (haveEnoughHistory) {
-		size_t readIndex = (writeIndex_ + ringLen * 2 - frames - static_cast<size_t>(delayFrames)) % ringLen;
-		for (uint32_t c = 0; c < channels_; ++c) {
-			std::vector<float> &channelRing = ring_[c];
-			size_t firstPart = std::min(frames, ringLen - readIndex);
-			std::memcpy(outputChunks_[c].data(), channelRing.data() + readIndex, firstPart * sizeof(float));
-			if (firstPart < frames)
-				std::memcpy(outputChunks_[c].data() + firstPart, channelRing.data(),
-					    (frames - firstPart) * sizeof(float));
-		}
-
-		// Coming out of warm-up/reset silence straight into mid-waveform
-		// audio is a hard step, i.e. an audible click. Short fade-in.
-		if (!outputWasActive_) {
-			size_t fadeFrames = std::min<size_t>(frames, std::max<uint32_t>(1, sampleRate / 100));
-			for (auto &chunk : outputChunks_)
-				for (size_t i = 0; i < fadeFrames; ++i)
-					chunk[i] *= static_cast<float>(i) / static_cast<float>(fadeFrames);
-		}
-		outputWasActive_ = true;
-	} else {
-		// Still filling -- silence, same spirit as VideoDelayFilter drawing
-		// nothing while its own buffer warms up. Program is on the loading
-		// scene during this window anyway, so this is never actually heard.
-		for (auto &chunk : outputChunks_)
-			std::fill(chunk.begin(), chunk.end(), 0.0f);
-		outputWasActive_ = false;
-	}
-
-	for (uint32_t c = 0; c < channels_; ++c)
-		output_.data[c] = reinterpret_cast<uint8_t *>(outputChunks_[c].data());
-	for (uint32_t c = channels_; c < MAX_AV_PLANES; ++c)
-		output_.data[c] = nullptr;
+	for (uint32_t c = 0; c < MAX_AV_PLANES; ++c)
+		output_.data[c] = c < channels ? reinterpret_cast<uint8_t *>(outputChunks_[c].data()) : nullptr;
 	output_.frames = static_cast<uint32_t>(frames);
 	// Passthrough, not recomputed: mirrors VideoDelayFilter, which draws old
 	// pixels at the CURRENT instant rather than rewinding a timestamp.

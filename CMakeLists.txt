@@ -24,6 +24,17 @@ option(TRIGGLOW_ALLOW_API_HOST_OVERRIDE "Test builds only: API host from the TRI
 if(TRIGGLOW_ALLOW_API_HOST_OVERRIDE AND DEFINED ENV{CI})
   message(FATAL_ERROR "TRIGGLOW_ALLOW_API_HOST_OVERRIDE is for local test builds only")
 endif()
+# Local end-to-end tests of stream mode in a real OBS only: with
+# TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1 in OBS's environment, stream mode's Enable
+# doesn't need the signed-in free account. A CI build with it ON stops here.
+option(
+  TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+  "Test builds only: skip stream mode's account gate when TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1"
+  OFF
+)
+if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE AND DEFINED ENV{CI})
+  message(FATAL_ERROR "TRIGGLOW_TEST_SKIP_ACCOUNT_GATE is for local test builds only")
+endif()
 
 include(compilerconfig)
 include(defaults)
@@ -271,6 +282,8 @@ if(TRIGGLOW_CORE_ONLY)
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/log-redact.cpp
@@ -330,6 +343,8 @@ else()
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/scene-combo-box.cpp
@@ -394,6 +409,11 @@ else()
 endif()
 
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
+if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
+  message(WARNING "Test build: stream mode's account gate can be skipped. Never publish this build.")
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
+endif()
 
 if(TRIGGLOW_ALLOW_API_HOST_OVERRIDE)
   message(WARNING "Test build: the API host can be changed with TRIGGLOW_API_HOST. Never publish this build.")
