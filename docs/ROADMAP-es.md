@@ -183,6 +183,20 @@ v0.6.1 prevista (cliente HTTP para macOS y Linux) no se publicó; va a continuac
   política del códec), más el códec por hardware sobre el FFmpeg real en builds locales de Windows.
 
 ## Siguiente
+- **Modo escena, v1.0.0 (rama `feat/1.0.0-scene-mode`):** el delay cambia en directo (al bajarlo los
+  espectadores saltan hacia delante al momento; al subirlo la imagen se congela, o sale la escena de
+  carga por encima de 3 s, solo durante los segundos de más; nada se rellena desde cero) y llega a
+  600 s, con los rings de audio contados en el presupuesto de RAM (`docs/SPEC.md` §3.3, §3.10).
+  Cambiar de escena con delay sigue siendo cosa del modo stream (§3.9); el dock lo dice. Pendiente
+  fuera de esa rama: `src/delay-router.cpp` limita a 60 s el `SetDelay`/`AdjustDelay`/presets del
+  modo escena (atajos, obs-websocket, Stream Deck): debería usar
+  `BufferModeController::kMaxDelaySeconds`.
+- **Modo escena siguiendo los cambios de escena: un único ring compartido por todas las escenas**
+  (evaluado el 2026-11-11, `docs/SPEC.md` §3.9). Un filtro de delay en cada escena de primer nivel,
+  solo la escena del Programa (y las fuentes de una transición en curso) capturando en un único ring
+  compartido y dibujando desde él, y filtros de audio que escriben silencio mientras su fuente no
+  está activa. Hace falta donde no puede ir el modo stream (macOS y Linux hasta su relay, Enhanced
+  Broadcasting, SRT, WHIP).
 - **Un cliente HTTP en macOS y Linux** (previsto como v0.6.1, no publicado), para que el inicio de
   sesión (y con él Activar delay), Trigi y los reportes desde OBS funcionen también allí, con el
   inicio de sesión guardado en el llavero o el almacén de secretos del sistema. Hasta entonces, las
@@ -280,7 +294,8 @@ antes de escribir código — ver abajo.
 ## Fuera de alcance por ahora
 - Delay *distinto* por escena — una duración de delay diferente configurada por cada escena.
 - **Seguir los cambios de escena del streamer mientras está delayed, sin un hueco de recarga**
-  (investigado y descartado, 2026-09-08). Un primer intento hacía que la escena wrapper se
+  (investigado y descartado, 2026-09-08; evaluado de nuevo para la v1.0.0 el 2026-11-11, ver abajo y
+  `docs/SPEC.md` §3.9: lo hace el modo stream, y el dock del modo escena lo dice). Un primer intento hacía que la escena wrapper se
   retargeteara a la escena a la que Programa cambiara (primero desde el dock, luego siguiendo
   automáticamente `OBS_FRONTEND_EVENT_SCENE_CHANGED`) — técnicamente correcto, pero cada cambio
   necesariamente volvía a entrar en `Filling` primero, ya que el ring de la escena recién elegida
@@ -301,5 +316,14 @@ antes de escribir código — ver abajo.
   "Rediseño del delay a nivel de output" ya listado en Más adelante — vale la pena revisitarlo solo
   como parte de ese rediseño mayor, no como una adición aislada a la arquitectura actual de filtro
   por-escena.
+  2026-11-11 (v1.0.0): el modo stream es ese delay a nivel de output para RTMP/RTMPS en Windows. Para
+  el modo escena se evaluó retrasar todo el programa con una vista o un lienzo privado, y no es
+  seguro para la 1.0: el frontend de OBS cambia directamente el canal de salida 0 en las
+  transiciones rápidas, las transiciones propias de cada escena y la barra T, sin avisar antes
+  (frames sin delay en cada cambio); sobrescribir la textura principal en un callback de render no
+  cubre las pistas reescaladas de Enhanced Broadcasting; y libobs mezcla el audio desde el árbol del
+  Programa tal como está ahora, así que los filtros de audio por fuente reproducirían el audio con
+  delay de la escena a la que se cambia, filtrando lo que escondía una escena de "ahora vuelvo". El
+  camino es el diseño del ring compartido de Siguiente.
 - Panel web externo como forma principal de control (decisión de producto: todo vive nativo en
   OBS).

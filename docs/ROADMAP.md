@@ -164,6 +164,18 @@ An optimization release: the delay buffer takes about half the RAM on Windows. T
   policy), plus the hardware codec over the real FFmpeg on local Windows builds.
 
 ## Next
+- **Scene mode, v1.0.0 (branch `feat/1.0.0-scene-mode`):** the delay changes live (lowered: viewers
+  skip forward at once; raised: the picture holds, or the loading scene shows above 3 s, only for
+  the extra seconds; nothing refills from empty) and goes up to 600 s, with the audio rings counted
+  in the RAM budget (`docs/SPEC.md` §3.3, §3.10). Switching scenes while delayed stays stream mode's
+  (§3.9); the dock says so. Still to do outside it: `src/delay-router.cpp` clamps scene mode's
+  `SetDelay`/`AdjustDelay`/presets to 60 s (hotkeys, obs-websocket, Stream Deck): it should use
+  `BufferModeController::kMaxDelaySeconds`.
+- **Scene mode following scene switches: one shared ring for every scene** (evaluated 2026-11-11,
+  `docs/SPEC.md` §3.9). A delay filter on each top-level scene, only the Program scene (and a running
+  transition's sources) capturing into and drawing from one shared ring, audio filters writing
+  silence while their source isn't active. Needed where stream mode can't run (macOS and Linux until
+  their relay, Enhanced Broadcasting, SRT, WHIP).
 - **An HTTP client on macOS and Linux** (planned as v0.6.1, not published), so sign-in (and with it
   Enable delay), Trigi and reports from OBS work there too, with the sign-in kept in the system's
   keychain or secret store. Until then the plugin's account features are Windows-only.
@@ -265,7 +277,8 @@ see below.
 ## Out of scope for now
 - Per-scene delay — a *different* delay duration configured per individual scene.
 - **Following the streamer's scene switches while delayed, without a refill gap** (investigated and
-  rejected, 2026-09-08). A first attempt made the wrapper scene retarget to whatever scene Program
+  rejected, 2026-09-08; evaluated again for v1.0.0 on 2026-11-11, see below and `docs/SPEC.md` §3.9:
+  stream mode does it, and scene mode's dock says so). A first attempt made the wrapper scene retarget to whatever scene Program
   switched to (dock-driven, then auto-following `OBS_FRONTEND_EVENT_SCENE_CHANGED`) — technically
   correct, but every switch necessarily re-enters `Filling` first, since the newly-selected scene's
   ring buffer starts empty: our video/audio filters only ever capture ONE source's frames at a time,
@@ -283,5 +296,13 @@ see below.
   "different buffer with no history." That's the "Output-level delay redesign" already listed under
   Later — worth revisiting only as part of that larger redesign, not as a standalone addition to the
   current per-scene-filter architecture.
+  2026-11-11 (v1.0.0): stream mode is that output-level delay for RTMP/RTMPS on Windows. For scene
+  mode, delaying the whole program through a private view or canvas was evaluated and isn't safe for
+  1.0: OBS's frontend swaps output channel 0 directly for quick transitions, transition overrides and
+  the T-bar, with no event first (undelayed frames on every switch); overwriting the main texture in
+  a rendered callback misses Enhanced Broadcasting's rescaled tracks; and libobs mixes the audio from
+  the Program tree as it is now, so per-source audio filters would play the delayed audio of the
+  scene switched to, leaking what a "be right back" scene hid. The shared-ring design under Next is
+  the way forward.
 - External web panel as the main way to control it (product decision: everything lives natively
   in OBS).

@@ -126,7 +126,10 @@ audio-capable leaf source** the stream hears with the live scene on Program: eve
 live scene at any depth (nested scenes and groups included) plus the global audio sources on output
 channels 1+ (Settings > Audio: Desktop Audio, Mic/Aux), one instance per source, each running the same delay-window ring-buffer logic as video, in sample space (`ring_[channel][frame]`).
 Video and audio use the same `delaySeconds`, so both land in sync; when the RAM budget trims the
-video ring, both use the same whole-second effective delay instead (§3.3).
+video ring, both use the same whole-second effective delay instead (§3.3). Since v1.0.0 each filter's
+ring is an `AudioDelayLine` (`src/audio-delay-line.*`, pure, tested): it keeps its history across a
+delay change, skipping forward when the delay is lowered and holding (silence) while a raise builds
+up, in step with the video (§3.3).
 
 ### 3.3. `BufferModeController` — the state machine
 
@@ -253,13 +256,60 @@ the loading scene back on Program (keeping the live scene rendering), re-syncs a
 to `Filling`. `Enable()` and that refill bump `BufferModeStatus::fillGeneration`, and the dock
 re-arms its fill timer only when it changes, so other status updates while filling (the overlay
 toggled, its corner changed) no longer restart the countdown and the switch to the wrapper. For a
-change it makes itself (`SetDelaySeconds()` / `SetMinResolutionHeight()` while `Active`), the
-controller predicts the restart with `EstimateBufferFit()` and switches Program before pushing the
-setting. Without a loading scene the default video scene is shown; only if it can't be made does
+change it makes itself (`SetMinResolutionHeight()` while `Active`; `SetDelaySeconds()` too until
+v1.0.0, which changes the delay in place, below), the controller predicts the restart with
+`EstimateBufferFit()` and switches Program before pushing the setting. Without a loading scene the default video scene is shown; only if it can't be made does
 Program stay on the blank wrapper, never on the undelayed live scene. Since v0.6.0 the dock locks
-the live and loading scenes, the seconds and the minimum quality
+the live and loading scenes and the minimum quality (the seconds too until v1.0.0)
 while `Filling`/`Active` (a disabled control is also out of the tab order), and the filters only
 apply the dock's values (below), so in practice restarts come from OBS video resets.
+
+**v1.0.0: changing the delay live.** A delay change while `Filling`/`Active` no longer restarts the
+buffer:
+- The ring's slot headers are allocated for `bufferfit::kMaxDelaySeconds` (600 s; ~90 bytes a slot,
+  about 3 MB at 60 fps) and `FrameRing::SetWindow()` says how many of them hold frames.
+  `EnsureRingSized()` treats a change of the delay alone (`SameCycleGeometry()`) with
+  `ApplyLiveDelay()`, never a hard resize: no `buffer_restarted`, no refill.
+- **Lowered:** the playback target moves forward at once (the decoder jumps to the newest frame at or
+  before it, or to the next key with the hardware codec), and `Reserve()` frees the frames past the
+  new window, at most 128 per capture (600 → 5 s at 60 fps is freed in about 5 s).
+- **Raised:** every frame stays and the window grows. The target is now older than anything left in
+  the ring, so `DrawDelayed()` keeps redrawing the last frame shown until the extra seconds have
+  built up, and the audio is silent for as long (`AudioDelayLine`, §3.2: the read point stops and
+  the lag grows by what is written); then both carry on from exactly where they stopped. Up to
+  `kHoldRaiseMaxSeconds` (3 s) the wrapper stays on Program holding that frame; above, the
+  controller's `OnLiveDelayChanged()` puts the loading scene up for the extra seconds only
+  (`Status.AddingDelay`, a fill window of `BufferModeStatus::fillWindowMs`) and then the wrapper
+  again. With no loading scene at all the wrapper holds, never the undelayed scene.
+- **While `Filling`:** the end of the fill window (`readyAtNs_`) moves by the difference; a lowered
+  delay the buffer already holds goes `Active` at once.
+- **RAM:** a raise needs room for the extra seconds next to every frame already stored.
+  `bufferfit::ComputeLiveChange()` keeps the capture size if they fit the budget; otherwise it lowers
+  the top of the degradation ladder (`ramTopWidth_`/`ramTopHeight_`; the encoders' ceiling of §3.5
+  can only take it lower), never below the quality floor; if even the floor doesn't hold them, the
+  delay is trimmed to the whole seconds that fit, never below the delay already running (the dock
+  then reads "41 / 60 s" as at Enable). What the stored frames take is estimated by
+  `bufferfit::WindowBytes()` from when the capture size changed (`topSegments_`), each stretch at the
+  size it was captured at. Neither the window's growth nor a lowered size is undone within a cycle:
+  the next Enable sizes afresh.
+- **One value for video and audio:** `get_effective_delay_seconds` applies a pushed delay on the
+  graphics thread right away (`ApplyLiveDelayTask`, `obs_queue_task(..., wait=true)`) and returns
+  what the ring really uses, which `SyncAudioDelayToVideoEffective()` gives the audio filters.
+- **Not load:** after a change (and after the hold of a raise) the decoder catches up to the new
+  target. For 2.5 s past it the degradation policy doesn't evaluate and late frames aren't decode
+  misses (`kLiveChangeGraceNs`), and the hold keeps asking the pipeline for the due frame so the
+  decoder keeps its place instead of restarting from a key as after a pause. Without both, a raise
+  put the buffer one rung down in the live test.
+- The dock's seconds stay editable while the delay runs and apply on Enter or when the field loses
+  focus (`setKeyboardTracking(false)`), so typing "300" doesn't go through 3 and 30 on air.
+
+Checked in a portable OBS 33.0.1 (1080p60 canvas and output, `hevc_amf` storage, streaming to a
+local `ffmpeg -listen 1 ... -c copy out.flv`): 10 → 5 s skipped forward at once; 5 → 7 s held 2 s;
+7 → 20 s showed the loading scene, lowered to 15 s during it and was back on the delayed view after
+the 3 s left; 15 → 60 s showed the loading scene for 45 s; 60 → 1 s at once. Program never showed
+the live scene (about 350 samples, one every 0.25 s); the delays read on screen (the clip's clock,
+live source against Program) were 9.93, 4.95, 14.97, 59.97 and 0.95 s; the received FLV ran 198 s,
+11,888 frames, no timestamp gap over 50 ms, and decoded without errors.
 
 **v0.6.0: the dock is the only place to set the delay.** The "(auto)" filters' own properties used
 to let anyone bypass the plugin (90 s in the video filter's dialog put video at 90 s and audio at
@@ -283,11 +333,11 @@ Known limitation: deleting an "(auto)" delay filter by hand while the delay is o
 the wrapper then shows the live scene with no filter, undelayed, until the user disables and
 re-enables the delay from the dock (`Enable()` recreates the filter).
 
-Known limitation, already present before v0.6.0: the plugin doesn't watch Program while the delay is
-`Active`. If the user (or a Stream Deck/obs-websocket action) switches Program to the live scene
-itself instead of the wrapper, the live scene is shown and streamed directly, without delay, since
-the video filter sits on the wrapper scene. Program must stay on the scene the plugin chose while
-the delay runs; changing scenes means turning the delay off first.
+Known limitation: the plugin doesn't watch Program while the delay is `Active`. The video filter
+sits on the live scene's own source (the wrapper nests it), so the live scene shown directly is still
+delayed, but any other scene the user (or a Stream Deck/obs-websocket action) switches Program to is
+streamed live. Since v1.0.0 the dock says so while the delay runs (`Dock.SceneSwitch.Note`):
+switching scenes while delayed needs stream mode. §3.9 explains why scene mode doesn't do it in 1.0.
 
 ### 3.4. Freeing the RAM ring on Disable
 
@@ -314,8 +364,8 @@ The graphics thread never frees the arena (hundreds of MB, tens of ms) nor waits
 
 The user picks two things, both fully free choices, never restricted:
 
-- **Delay (seconds)** — 1 to 60 in the dock's spinner (a UI sanity cap; the real limit is the RAM
-  math below).
+- **Delay (seconds)** — 1 to 600 in the dock's spinner (60 until v1.0.0, §3.10), also the controller's
+  clamp; the real limit is the RAM math below.
 - **Minimum quality** — 480p / 720p / 1080p / 1440p (2K) / 2160p (4K). The floor for the RAM
   reduction below: rather than store the delayed video below this height, the plugin stores fewer
   seconds. Since v0.6.0 it never raises the buffer above OBS's output resolution, though (rule 1
@@ -468,8 +518,13 @@ RAM-limited). `buffer_fit_tests` also covers the 1440p and 2160p floors (a 1440p
 floor stays 2560x1440 and trims the delay to the whole seconds that fit). Seven more suites cover
 the rest of the OBS-free code: `ui_tokens_tests` (WCAG contrast on OBS 31's palettes),
 `auto_names_tests` (§3.7), `overlay_layout_tests` (§3.6), `frame_arena_tests`, `frame_ring_tests`
-and `degradation_policy_tests` (§4.6, §4.7), and `pipeline_stress_tests` (§4.6). Off by default, so
-plugin packaging is unchanged. Two ways to build them (`tests/CMakeLists.txt`):
+and `degradation_policy_tests` (§4.6, §4.7), and `pipeline_stress_tests` (§4.6). Since v1.0.0
+`buffer_fit_tests` also covers the audio reserve, `WindowBytes()` and `ComputeLiveChange()` (lowered,
+raised with room, raised past the size, trimmed at the floor, no room at all, the capacity, invalid
+input, and a session of raises and lowers that never passes the budget), `frame_ring_tests` the
+retention window (eviction bounds, a pinned or encoding slot stopping it), and
+`audio_delay_line_tests` the audio delay line of §3.2. Off by default, so plugin packaging is
+unchanged. Two ways to build them (`tests/CMakeLists.txt`):
 
 ```
 # From the plugin's own build (same compiler flags as the plugin):
@@ -674,6 +729,93 @@ reply (HTTP code, length, action), refused, unavailable, rate limited, HTTP erro
 `[support]` ticket created (with or without the log). Never the token, the link, codes or secret,
 conversation or ticket IDs, a ticket's access key, the text of questions or answers, the technical
 data, an email or a name, or absolute paths.
+
+### 3.9. v1.0.0: switching scenes while delayed — evaluated, stream mode only in 1.0
+
+The product owner wants scene switching while delayed in 1.0. Stream mode does it (it delays the
+encoded stream, every scene). For scene mode the idea evaluated was to delay the whole program
+instead of one scene: the wrapper shows a delayed capture of a private view or canvas (`obs_view`,
+OBS 31 canvases) that renders whatever the streamer switches to, so a switch only changes what goes
+into the buffer. It isn't safe for 1.0, for three reasons, all in OBS 31.1.1's own source:
+
+1. **Channel 0 belongs to the frontend.** What the stream encodes is the main canvas's output
+   channel 0, which OBS's frontend sets to its transition. It swaps that source directly, with no
+   event first: `OBSBasic::OverrideTransition()` calls `obs_set_output_source(0, …)` for Studio
+   Mode's quick transitions, per-scene transition overrides and the T-bar
+   (`frontend/widgets/OBSBasic_Transitions.cpp` lines 99-105, 237-245, 328-333, 708-716), and
+   `OBS_FRONTEND_EVENT_SCENE_CHANGED` arrives after a switch has started. A wrapper, a private view
+   or a canvas only gets what the plugin puts there: the moment the streamer switches, channel 0
+   renders the new scene and the stream gets it undelayed until the plugin reacts. A private view
+   that mirrors Program renders every frame twice and still needs Program to stay on the wrapper,
+   which is exactly what a switch undoes.
+2. **Overwriting the main texture doesn't cover every output.** `obs_add_main_rendered_callback()`
+   runs right after `obs_view_render()` with the mix's texture still bound
+   (`libobs/obs-video.c` lines 170-211), so a callback could store that frame and draw the delayed
+   one over it, whatever was switched. But it runs for every mix of every canvas with nothing to
+   tell them apart, it relies on undocumented ordering, and a GPU-rescaled mix (every Enhanced
+   Broadcasting track) renders the view again instead of reusing the main texture whenever its color
+   space differs (`can_reuse_mix_texture()`): those tracks would go out undelayed, and Enhanced
+   Broadcasting is one of the cases scene mode exists for.
+3. **Audio leaks what the switch hid.** libobs builds the mix every tick from the active tree of
+   each view's channels (`libobs/obs-audio.c` lines 495-517): a scene's sources join or leave the
+   mix the moment Program changes, and a per-source audio filter delays the samples, not whether the
+   source is heard (filters can't sit on a scene or a transition at all, §3.2). A whole-program
+   delay built on per-source filters plays, for `delay` seconds after a switch, the delayed audio of
+   the scene switched to: going from a "be right back" scene back to the game plays the game audio
+   of the last `delay` seconds the streamer hid behind it (a queue pop, a lobby). That is a leak of
+   exactly what switching scenes is used to hide.
+
+The closest design, for after 1.0: **one shared ring for every scene.** A delay filter on each
+top-level scene, where only the scene on Program (and the A and B sources of a running transition)
+captures into one shared ring and draws from it, and nested scenes or Preview-only renders pass
+through. A switch then only changes what goes into the ring, with no refill. For audio each
+source's filter writes silence while its source isn't active, so a scene switched to stays silent
+for `delay` seconds instead of leaking, and a scene switched away from loses its own audio `delay`
+seconds early (a gap, never a leak). Open: scenes and sources created while delayed (attached on
+`source_create` before they can be shown), transitions stored as a cut, Studio Mode showing the
+Program scene in Preview, groups, and the cost of a filter per scene. A multi-week change with its
+own testing, not something to rush into 1.0.
+
+For 1.0 the dock shows `Dock.SceneSwitch.Note` while the delay runs: keep the delayed view on
+Program, and use stream mode to switch scenes while delayed.
+
+### 3.10. v1.0.0: delays up to 600 s, and their RAM
+
+The dock and the controller take 1 to 600 s (`BufferModeController::kMaxDelaySeconds`; 60 until
+v1.0.0). Nothing else changes in the sizing (§3.5): the budget, the output and encoder ceilings, the
+quality floor and then the duration. Two additions:
+- The audio rings come out of the budget. Each delayed audio source keeps raw float PCM, 384 KB a
+  second for stereo at 48 kHz: 23 MB at 60 s but 230 MB at 600 s. `ObsFrontendBridge` counts the
+  audio filters it attaches (`AudioBytesPerSecondFor()`) and every sizing sets `delay x` that aside
+  (`bufferfit::Input::reservedBytesPerSecond`, `VideoBudgetBytes()`, never below a quarter of the
+  budget), the dock's estimate included.
+- `AudioDelayLine` grows its ring when the delay needs more room (keeping the history) and gives the
+  room back once a lowered delay has settled, at least 10 s of samples past it.
+
+Measured in the portable OBS of §3.3 (Windows 11, 31 GB RAM so a 15.5 GB budget, AMD Radeon RX 7800
+XT, OBS 33.0.1, 1080p60 canvas and output, the live scene a looping 1080p60 clip of `testsrc2` with
+light noise and a 1 kHz beep, stereo, streaming x264 6 Mbps to a local ffmpeg). Each run is a fresh
+OBS: streaming with the delay off, then Enable, then 15 s after the buffer is full. "Private" is the
+OBS process's private bytes over the same OBS streaming with the delay off; "arena" is the
+`pipeline check` line's committed bytes (the stored frames) and `ratio` its measured compression:
+
+| Storage | Delay | Captured at | Arena (`ratio`) | Private | Working set |
+|---|---|---|---|---|---|
+| `hevc_amf` | 120 s | 1280x720@30 (rung 4, see below) | 160 MB (61.6x) | +515 MB | +354 MB |
+| `hevc_amf` | 300 s | 1920x1080@60 | 816 MB (66.7x) | +1,210 MB | +1,074 MB |
+| MJPEG | 120 s | 1920x1080@60 | 576 MB (38.0x) | +771 MB | +705 MB |
+| MJPEG | 300 s | 1920x1080@60 | 1,424 MB (37.9x) | +1,692 MB | +1,613 MB |
+
+The machine was shared with about twenty other OBS instances from parallel test sessions, and in
+the 120 s hardware run the AMF encoder's latency (p95 up to 26 ms) sent the buffer down the
+degradation ladder to its last rung before it filled. At the 300 s run's 1080p60 rate (2.7 MB of
+arena a second) 120 s would be about 330 MB of arena, roughly +720 MB private. Beyond the arena,
+the private bytes hold the audio ring (46 MB at 120 s, 115 MB at 300 s for this one stereo
+source), the raw and decoded frame pools and the codecs (about 200-400 MB in all, more with the
+hardware codec's D3D11 surfaces). The assumed ratios (5x MJPEG, 12x hardware) keep the estimate on
+the safe side: these 300 s rings were 11.2 GB and 4.7 GB by the estimate, 1.4 GB and 0.8 GB for
+real. After Disable the process keeps 150-270 MB over the baseline (heap and driver memory the
+reaper's frees don't return at once); a second Enable reuses it.
 
 ## 4. v0.3.0: real MJPEG compression of the RAM ring
 
