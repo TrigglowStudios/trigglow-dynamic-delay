@@ -117,8 +117,8 @@ mode worse (`StreamDelayController::CheckObsSettings`):
   Stream).
 - Hotkeys (OBS Settings > Hotkeys): Toggle, Enable, Disable (names unchanged), Back to live,
   Delay +5 s, Delay -5 s, Dump, Preset 1-3. They go through `DelayRouter`: stream mode when it
-  handles the controls, scene mode otherwise (there, +/-5 and presets change the seconds for the
-  next Enable, clamped to 1-60, and a preset also turns the delay on; Dump does nothing).
+  handles the controls, scene mode otherwise (there too the seconds change live, 1-600, and a preset also turns the delay
+  on; Dump does nothing).
 - obs-websocket 5, vendor `trigglow-dynamic-delay`: `GetStatus`, `EnableDelay`, `DisableDelay`,
   `ToggleDelay`, `SkipToLive`, `SetDelay {seconds}`, `AdjustDelay {delta}`, `DumpDelay`,
   `ApplyPreset {index}` (0-2); event `StatusChanged`. For the Trigglow Stream Deck plugin; details

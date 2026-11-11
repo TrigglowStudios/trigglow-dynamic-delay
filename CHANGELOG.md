@@ -25,6 +25,11 @@ sign-in are kept.
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
   - The dock shows where your stream goes and its state, the RAM used and the bitrate.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
+- **Scene mode changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
+  once; raise it and the picture holds (or the loading scene shows, above 3 s) only for the extra
+  seconds. The buffer never starts again from empty. Before, you had to turn the delay off to
+  change it, and the most was 60 s. To switch scenes while delayed, use stream mode; the dock
+  says so.
 - **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
   "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
   in a file only your user can read.

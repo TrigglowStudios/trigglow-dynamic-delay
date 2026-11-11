@@ -126,9 +126,8 @@ modo stream (`StreamDelayController::CheckObsSettings`):
   escena, segundos guardados (10-600), envío al parar, la insignia.
 - Atajos (`Ajustes → Atajos` de OBS): Activar/desactivar, Activar, Desactivar (mismos nombres que
   antes), Volver al directo, Delay +5 s, Delay -5 s, Borrar, Preset 1-3. Pasan por `DelayRouter`:
-  al modo stream cuando este lleva los controles, al modo escena si no (ahí, +/-5 y los presets
-  cambian los segundos del siguiente Activar, limitados a 1-60, un preset además activa el delay, y
-  Borrar no hace nada).
+  al modo stream cuando este lleva los controles, al modo escena si no (ahí los segundos también
+  cambian en directo, 1-600, un preset además activa el delay, y Borrar no hace nada).
 - obs-websocket 5, vendor `trigglow-dynamic-delay`: `GetStatus`, `EnableDelay`, `DisableDelay`,
   `ToggleDelay`, `SkipToLive`, `SetDelay {seconds}`, `AdjustDelay {delta}`, `DumpDelay`,
   `ApplyPreset {index}` (0-2); evento `StatusChanged`. Para el plugin de Stream Deck de Trigglow;

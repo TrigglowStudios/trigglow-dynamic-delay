@@ -282,6 +282,8 @@ if(TRIGGLOW_CORE_ONLY)
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/log-redact.cpp
@@ -341,6 +343,8 @@ else()
       src/encoder-check.hpp
       src/audio-delay-filter.cpp
       src/audio-delay-filter.hpp
+      src/audio-delay-line.cpp
+      src/audio-delay-line.hpp
       src/hardware-info.cpp
       src/hardware-info.hpp
       src/scene-combo-box.cpp

@@ -79,10 +79,10 @@ haga falta, `requestData`:
 | `DisableDelay` | — | quita el delay |
 | `ToggleDelay` | — | activa o quita |
 | `SkipToLive` | — | vuelve al directo: quita el delay |
-| `SetDelay` | `{"seconds": 45}` | fija los segundos: modo stream 1-600 (en directo), modo escena 1-60 (para el siguiente Activar). 0 o menos se ignora |
+| `SetDelay` | `{"seconds": 45}` | fija los segundos: 1-600, en directo en los dos modos. 0 o menos se ignora |
 | `AdjustDelay` | `{"delta": -5}` | suma los segundos (en negativo, los baja), con los mismos rangos |
 | `DumpDelay` | — | modo stream: los segundos que los espectadores aún no han visto no se envían nunca; `dumped` es false cuando no había nada que descartar (delay quitado, sin emitir o modo escena) |
-| `ApplyPreset` | `{"index": 0}` | preset 1 (`0`), 2 (`1`) o 3 (`2`): sus segundos, con el delay activado. El modo escena toma los segundos hasta 60 y activa |
+| `ApplyPreset` | `{"index": 0}` | preset 1 (`0`), 2 (`1`) o 3 (`2`): sus segundos, con el delay activado. Igual en el modo escena |
 
 El `responseData` de cada respuesta lleva `ok: true` y el estado:
 

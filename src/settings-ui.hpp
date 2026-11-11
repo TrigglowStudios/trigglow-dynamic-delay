@@ -146,7 +146,9 @@ private:
 	// window -- when BufferModeStatus::fillGeneration changes while Filling --
 	// for the seconds that window has to fill (same pattern DelayController's
 	// own apply watchdog used).
-	void ArmFillTimer(uint32_t seconds);
+	// v1.0.0: in ms (BufferModeStatus::fillWindowMs): a live raise fills only
+	// its extra seconds, a change while Filling what's left of the window.
+	void ArmFillTimer(uint32_t milliseconds);
 	void DisarmFillTimer();
 
 	// Live "18 s left" countdown + progress bar shown while Filling --
@@ -241,13 +243,18 @@ private:
 	SceneComboBox *liveSceneCombo_ = nullptr;
 	SceneComboBox *loadingSceneCombo_ = nullptr;
 	QSpinBox *secondsSpin_ = nullptr;
-	// "Turn the delay off to change it.": shown under the delay | quality row
-	// while both are locked (Filling, Active).
+	// "Turn the delay off to change the scenes or the minimum quality.": shown
+	// under the delay | quality row while those are locked (Filling, Active).
+	// v1.0.0: the seconds stay editable, the delay changes live.
 	QWidget *delayLockedRow_ = nullptr;
 	QLabel *delayLockedIcon_ = nullptr;
-	// (field, lock): the lock drawn inside the live/loading scene pickers, the
-	// seconds and the quality while they're locked (Filling, Active), where
-	// their arrows were.
+	// v1.0.0: while the delay runs, that switching scenes needs stream mode
+	// (scene mode delays the live scene only).
+	QWidget *sceneSwitchRow_ = nullptr;
+	QLabel *sceneSwitchIcon_ = nullptr;
+	// (field, lock): the lock drawn inside the live/loading scene pickers and
+	// the quality while they're locked (Filling, Active), where their arrows
+	// were.
 	std::vector<std::pair<QWidget *, FieldIcon *>> fieldLocks_;
 	// "Calidad minima" -- floor on the delayed video's resolution; see
 	// BufferModeStatus::minResolutionHeight / VideoDelayFilter::EnsureRingSized.
@@ -311,7 +318,8 @@ private:
 	// counts down FROM.
 	QTimer *fillProgressTimer_ = nullptr;
 	QElapsedTimer fillElapsed_;
-	uint32_t fillTotalSeconds_ = 0;
+	uint32_t fillTotalSeconds_ = 0; // Rounded up, for the "12 / 30 s" text.
+	uint32_t fillTotalMs_ = 0;
 	// The fill window fillTimer_ is armed for (BufferModeStatus::fillGeneration);
 	// fillArmed_ is false whenever the timer is disarmed.
 	uint32_t armedFillGeneration_ = 0;

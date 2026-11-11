@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -79,7 +80,20 @@ struct Input {
 	// the frame due always stays in the ring (invariant I4,
 	// storage-codec.hpp).
 	uint32_t keyframeIntervalFrames = 0;
+	// v1.0.0: RAM the delay's AUDIO rings take per second of delay (raw PCM,
+	// one ring per delayed audio source), taken out of budgetBytes before the
+	// video ring is sized: delaySeconds x this. Nothing at 60 s (23 MB per
+	// stereo source) but 230 MB per source at 600 s. 0 = none.
+	uint64_t reservedBytesPerSecond = 0;
 };
+
+// v1.0.0: the longest delay scene mode takes (the dock, the controller and
+// the ring's slot capacity), like stream mode's relay::kMaxDelaySeconds.
+constexpr uint32_t kMaxDelaySeconds = 600;
+
+// The video budget once the audio rings are taken out (reservedBytesPerSecond
+// x delaySeconds), never below a quarter of budgetBytes.
+uint64_t VideoBudgetBytes(const Input &in);
 
 // v0.7.0 storage classes (fixed per delay cycle: invariant I9,
 // storage-codec.hpp). The assumed ratio only decides how many seconds fit when
@@ -150,5 +164,72 @@ uint64_t DesiredFrames(uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen, 
 uint64_t SlackFrames(uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen, uint32_t keyframeIntervalFrames = 0);
 uint64_t FrameIntervalNs(uint32_t fpsNum, uint32_t fpsDen); // 1e9 * den / num; 0 if num == 0.
 uint64_t Nv12FrameBytes(uint32_t width, uint32_t height);   // width * height * 3 / 2.
+
+// The whole seconds a ring of `frames` slots delays by (Result::
+// effectiveDelaySeconds): the span minus the slack, floored, never above
+// delaySeconds; without the slack if that leaves 0.
+uint32_t EffectiveSecondsFor(uint64_t frames, uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen,
+			     uint32_t keyframeIntervalFrames);
+
+// --- v1.0.0: changing the delay of a running ring in place ---
+//
+// The ring's slot headers are allocated once per cycle for kMaxDelaySeconds
+// (CapacityFrames(), ~90 bytes each: 3 MB at 60fps), and a retention WINDOW
+// says how many of them hold frames. A live delay change only moves the
+// window and the playback target: lowering it skips forward at once (the
+// frames past the new window are freed), raising it keeps every frame and
+// the picture holds until the extra seconds have built up. Nothing is thrown
+// away, so nothing refills from empty.
+//
+// Raising needs RAM for the extra seconds while every frame already in the
+// ring stays. When they don't fit at the size captured now, the capture size
+// (the degradation ladder's top) is lowered, never below the quality floor --
+// the frames already stored keep their size and age out over the old delay;
+// if even the floor doesn't fit, the delay is trimmed to the whole seconds
+// that do (the dock shows "41 / 60 s", as at Enable). Neither the window nor
+// the top ever goes back up within a cycle: the next Enable sizes afresh.
+
+// Slots a ring needs to change its delay in place up to kMaxDelaySeconds.
+uint64_t CapacityFrames(uint32_t fpsNum, uint32_t fpsDen, uint32_t keyframeIntervalFrames);
+
+// One stretch of the running cycle captured at most at one size: from fromNs
+// (capture time) until the next segment's fromNs, or now. A cycle starts
+// with one segment at the ring's size; each live change that lowers the
+// capture size adds one.
+struct TopSegment {
+	uint64_t fromNs = 0;
+	uint32_t width = 0;
+	uint32_t height = 0;
+};
+
+// Estimated bytes of the frames a window of windowFrames slots ending at nowNs
+// holds (the newest windowFrames frames, one per intervalNs): each frame at
+// its segment's size, divided by ratio. Frames older than the first segment
+// count at its size. Conservative: frames the degradation ladder captured
+// smaller still count at their segment's size.
+double WindowBytes(const TopSegment *segments, size_t count, uint64_t nowNs, uint64_t windowFrames, uint64_t intervalNs,
+		   double ratio);
+
+struct LiveRing {
+	uint64_t windowFrames = 0;   // Slots retained now.
+	uint64_t capacityFrames = 0; // Slots the ring has (CapacityFrames()).
+	uint32_t topWidth = 0;       // Largest size captured from now on (the ladder's top).
+	uint32_t topHeight = 0;
+	double ringBytes = 0.0; // WindowBytes() of the window now.
+};
+
+struct LiveChange {
+	bool valid = false;        // False for invalid input: resize the ring instead.
+	uint64_t windowFrames = 0; // The new retention window.
+	uint32_t topWidth = 0;     // The ladder's top from now on (<= LiveRing's).
+	uint32_t topHeight = 0;
+	uint32_t effectiveDelaySeconds = 0; // What video and audio delay by from now on.
+	bool fitsFullDuration = true;       // effectiveDelaySeconds == in.delaySeconds.
+	bool loweredTop = false;            // The top went down so the extra seconds fit.
+};
+
+// The in-place change of a running ring to in.delaySeconds. `in` is the
+// ring's own Input (geometry, fps, floor, budget, class) with the new delay.
+LiveChange ComputeLiveChange(const Input &in, const LiveRing &ring);
 
 } // namespace trigglow::bufferfit

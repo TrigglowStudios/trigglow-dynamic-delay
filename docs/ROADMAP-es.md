@@ -220,6 +220,11 @@ la CI, pero aún no se han usado en un directo).
 - **El nuevo diseño de Trigglow** en el dock, una placa de overlay nueva, el nuevo logo de Dynamic
   Delay, el vídeo de carga "Poniendo delay" por defecto y sin la etiqueta "Beta".
 - **Traducciones**: portugués (Brasil) y chino (simplificado), además de inglés y español.
+- **El modo escena cambia el delay en directo y llega a 600 s**: al bajarlo, los espectadores saltan
+  hacia delante al momento; al subirlo, la imagen se congela (o sale la escena de carga por encima de
+  3 s) solo durante los segundos de más; nada se rellena desde cero. Los rings de audio cuentan en el
+  presupuesto de RAM (`docs/SPEC.md` §3.3, §3.10). Cambiar de escena con delay sigue siendo cosa del
+  modo stream (§3.9); el dock lo dice.
 
 ## Siguiente
 - **Probar el modo stream en directo en plataformas reales** antes de darlo por verificado: Twitch
@@ -231,6 +236,12 @@ la CI, pero aún no se han usado en un directo).
   pila TLS para RTMPS), así que esas versiones solo tienen el modo escena. Hace falta avformat con
   RTMP y TLS en el build de FFmpeg de Linux y un FFmpeg para macOS, y luego el mismo relay.
 - **Enhanced Broadcasting, SRT, RIST y WHIP en el modo stream.** Hoy esos directos pasan al modo
+- **Modo escena siguiendo los cambios de escena: un único ring compartido por todas las escenas**
+  (evaluado el 2026-11-11, `docs/SPEC.md` §3.9). Un filtro de delay en cada escena de primer nivel,
+  solo la escena del Programa (y las fuentes de una transición en curso) capturando en un único ring
+  compartido y dibujando desde él, y filtros de audio que escriben silencio mientras su fuente no
+  está activa. Hace falta donde no puede ir el modo stream (Enhanced Broadcasting, SRT, WHIP, y
+  macOS y Linux hasta que llegue su relay).
   escena: Enhanced Broadcasting son varias pistas en una salida multipista, y SRT, RIST y WHIP no
   son RTMP, así que el relay necesitaría otro emisor para cada uno.
 - **Firma de código** (emitida por una CA, Windows y macOS): la solución de verdad para el aviso de
@@ -311,5 +322,13 @@ mientras el delay está activo.
   de RAM y GPU por el número de escenas. El modo stream lo resuelve (retrasa el stream ya compuesto
   y codificado, así que un cambio de escena es parte de una única señal continua), y ahí el delay
   por escena cubre "un delay distinto por escena".
+- **Retrasar todo el programa en el modo escena con una vista o un lienzo privado** (evaluado el
+  2026-11-11 para la v1.0.0, `docs/SPEC.md` §3.9). No es seguro: el frontend de OBS cambia
+  directamente el canal de salida 0 en las transiciones rápidas, las transiciones propias de cada
+  escena y la barra T, sin avisar antes (frames sin delay en cada cambio); sobrescribir la textura
+  principal en un callback de render no cubre las pistas reescaladas de Enhanced Broadcasting; y
+  libobs mezcla el audio desde el árbol del Programa tal como está ahora, así que los filtros de
+  audio por fuente reproducirían el audio con delay de la escena a la que se cambia, filtrando lo que
+  escondía una escena de "ahora vuelvo". El camino es el ring compartido de Siguiente.
 - Panel web externo como forma principal de control (decisión de producto: todo vive nativo en
   OBS).

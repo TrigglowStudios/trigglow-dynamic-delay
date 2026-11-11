@@ -666,8 +666,8 @@ drops frames (a repeated frame on screen) instead of growing.
   `Delay preset 1` to `3` (translated when OBS is in another language; in Spanish,
   `Trigglow: Activar/desactivar Dynamic Delay`…).
 - The hotkeys go to stream mode when it handles the current or next stream, to scene mode
-  otherwise. In scene mode `Dump` does nothing, and `Delay +5 s` / `-5 s` change the seconds for
-  the next Enable (1–60), not a delay that is already on.
+  otherwise. In scene mode `Dump` does nothing; `Delay +5 s` / `-5 s` change the delay live in both modes
+  (1–600).
 - Try the dock button first to rule out an issue with the plugin's own configuration (e.g. no live
   scene chosen, which also blocks the hotkey's Enable/Toggle from doing anything), as opposed to the
   hotkey/Stream Deck binding itself.

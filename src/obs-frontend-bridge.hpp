@@ -594,6 +594,9 @@ private:
 	// its own strong reference, released when the vector goes away, so a
 	// child removed from the scene meanwhile can't be freed under the caller.
 	std::vector<OBSSourceAutoRelease> GetAudioCapableChildren(const std::string &liveSceneName) const;
+	// v1.0.0: the RAM `sources` audio delay filters take per second of delay
+	// (OBS's channels x sample rate x 4 bytes each).
+	static uint64_t AudioBytesPerSecondFor(size_t sources);
 
 	FrontendEventHandler handler_;
 	OverlayImageProvider overlayImageProvider_;

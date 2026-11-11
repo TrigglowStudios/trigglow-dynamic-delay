@@ -509,14 +509,18 @@ void TrigglowDelayDock::BuildUi()
 	auto *delayColumn = new QVBoxLayout();
 	delayColumn->setSpacing(5);
 	secondsSpin_ = new QSpinBox(this);
-	secondsSpin_->setRange(1, 60);
+	// v1.0.0: up to 600 s, and editable while the delay runs (it changes
+	// live). Typed values apply on Enter or when the field loses focus, not on
+	// every digit: "300" must not pass through 3 and 30 on a live stream.
+	secondsSpin_->setRange(static_cast<int>(BufferModeController::kMinDelaySeconds),
+			       static_cast<int>(BufferModeController::kMaxDelaySeconds));
+	secondsSpin_->setKeyboardTracking(false);
 	secondsSpin_->setSuffix(T("Dock.Delay.Suffix"));
 	secondsSpin_->setValue(static_cast<int>(bufferController_.GetStatus().delaySeconds));
 	secondsSpin_->setToolTip(T("Dock.Delay.Tooltip"));
 	secondsSpin_->setAccessibleName(T("Dock.Delay.Label"));
 	delayColumn->addWidget(makeEyebrow(T("Dock.Delay.Label"), secondsSpin_));
 	delayColumn->addWidget(secondsSpin_);
-	addFieldLock(secondsSpin_);
 	tuningRow->addLayout(delayColumn, /*stretch=*/1);
 
 	auto *qualityColumn = new QVBoxLayout();
@@ -541,9 +545,10 @@ void TrigglowDelayDock::BuildUi()
 
 	configLayout->addLayout(tuningRow);
 
-	// While the delay runs (Filling, Active) the seconds are locked like the
-	// quality: changing them would resize the buffer under a live stream.
-	// This line says why, visibly, not only in a tooltip (RefreshFromStatus).
+	// While the delay runs (Filling, Active) the scenes and the quality are
+	// locked: changing them would restart the buffer under a live stream. The
+	// seconds aren't (v1.0.0: the delay changes in place). This line says so,
+	// visibly, not only in a tooltip (RefreshFromStatus).
 	delayLockedRow_ = new QWidget(configCard);
 	{
 		auto *lockedLayout = new QHBoxLayout(delayLockedRow_);
@@ -558,6 +563,24 @@ void TrigglowDelayDock::BuildUi()
 	}
 	delayLockedRow_->setVisible(false);
 	configLayout->addWidget(delayLockedRow_);
+
+	// v1.0.0: scene mode delays the live scene only. Switching Program to
+	// another scene while the delay runs would show that scene live, so the
+	// dock says what to do instead, while it runs (RefreshFromStatus).
+	sceneSwitchRow_ = new QWidget(configCard);
+	{
+		auto *switchLayout = new QHBoxLayout(sceneSwitchRow_);
+		switchLayout->setContentsMargins(0, 2, 0, 0);
+		switchLayout->setSpacing(6);
+		sceneSwitchIcon_ = MakeIconLabel(sceneSwitchRow_, kInlineIconSize);
+		auto *switchText = new QLabel(T("Dock.SceneSwitch.Note"), sceneSwitchRow_);
+		switchText->setWordWrap(true);
+		SetRole(switchText, "hint", ui::FontRole::Hint);
+		switchLayout->addWidget(sceneSwitchIcon_, 0, Qt::AlignTop);
+		switchLayout->addWidget(switchText, 1);
+	}
+	sceneSwitchRow_->setVisible(false);
+	configLayout->addWidget(sceneSwitchRow_);
 
 	// The RAM estimate, live-updated by RefreshFitEstimate() whenever
 	// secondsSpin_/minResolutionCombo_ change -- see that method and
@@ -927,6 +950,7 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(updateIcon_, ui::IconId::Download, QStringLiteral("warning"), kAccountIconSize);
 	SetIcon(updateExternalIcon_, ui::IconId::ExternalLink, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(delayLockedIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(sceneSwitchIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(healthIcon_, ui::IconId::Sliders, QStringLiteral("warning"), kInlineIconSize);
 	for (const auto &[field, lock] : fieldLocks_)
 		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
@@ -977,6 +1001,8 @@ void TrigglowDelayDock::RefreshFitEstimate()
 								     : locale.toString(estimate.actualSeconds, 'f', 1);
 		const BufferModeState state = bufferController_.GetStatus().state;
 		const bool locked = state == BufferModeState::Filling || state == BufferModeState::Active;
+		// Advice to lower the seconds still applies while it runs (v1.0.0:
+		// they change live); only the quality is locked then.
 		SetIcon(fitIcon_, ui::IconId::AlertTriangle, QStringLiteral("warning"), kInlineIconSize);
 		fitLabel_->setTextFormat(Qt::PlainText);
 		fitLabel_->setText(T(locked ? "Dock.Fit.TrimmedLocked" : "Dock.Fit.Trimmed")
@@ -1002,7 +1028,7 @@ void TrigglowDelayDock::OnStatusChanged(const BufferModeStatus &status)
 	// hold the effective delay when the RAM budget trimmed it.
 	if (!fillArmed_ || status.fillGeneration != armedFillGeneration_) {
 		armedFillGeneration_ = status.fillGeneration;
-		ArmFillTimer(AppliedDelaySeconds(status));
+		ArmFillTimer(status.fillWindowMs > 0 ? status.fillWindowMs : AppliedDelaySeconds(status) * 1000U);
 	}
 }
 
@@ -1085,7 +1111,6 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 	// seconds says how to unlock them -- also what screen readers hear.
 	liveSceneCombo_->setEnabled(!busy);
 	loadingSceneCombo_->setEnabled(!busy);
-	secondsSpin_->setEnabled(!busy);
 	minResolutionCombo_->setEnabled(!busy);
 	for (const auto &[field, lock] : fieldLocks_) {
 		ui::SetStyleProperty(field, "tgLocked", busy ? QStringLiteral("true") : QStringLiteral("false"));
@@ -1093,6 +1118,7 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 		field->setAccessibleDescription(busy ? T("Dock.Delay.Locked") : QString());
 	}
 	delayLockedRow_->setVisible(busy);
+	sceneSwitchRow_->setVisible(busy);
 	// Also requires a live scene chosen -- previously Enable was clickable
 	// with no scene selected, which just bounced back into an Error state
 	// ("Elige primero una escena en directo") instead of preventing the
@@ -1424,15 +1450,16 @@ void TrigglowDelayDock::RefreshAccountUi()
 	RefreshFromStatus(bufferController_.GetStatus());
 }
 
-void TrigglowDelayDock::ArmFillTimer(uint32_t seconds)
+void TrigglowDelayDock::ArmFillTimer(uint32_t milliseconds)
 {
 	if (!fillTimer_)
 		return;
-	fillTimer_->setInterval(static_cast<int>(seconds) * 1000);
+	fillTimer_->setInterval(static_cast<int>(std::min<uint32_t>(milliseconds, INT32_MAX)));
 	fillTimer_->start();
 	fillArmed_ = true;
 
-	fillTotalSeconds_ = seconds;
+	fillTotalMs_ = milliseconds;
+	fillTotalSeconds_ = (milliseconds + 999) / 1000;
 	fillElapsed_.start();
 	if (fillProgressTimer_)
 		fillProgressTimer_->start(250);
@@ -1450,12 +1477,12 @@ void TrigglowDelayDock::DisarmFillTimer()
 
 void TrigglowDelayDock::UpdateFillProgress()
 {
-	if (!fillBar_ || fillTotalSeconds_ == 0)
+	if (!fillBar_ || fillTotalMs_ == 0)
 		return;
 	// Only touches the bar and its two texts, never the tones -- RefreshFromStatus
 	// already set the amber Filling look once and owns it; this just shows
 	// how much of that same status has elapsed.
-	const qint64 totalMs = static_cast<qint64>(fillTotalSeconds_) * 1000;
+	const qint64 totalMs = static_cast<qint64>(fillTotalMs_);
 	const qint64 elapsedMs = std::clamp<qint64>(fillElapsed_.elapsed(), 0, totalMs);
 	fillBar_->setRange(0, static_cast<int>(totalMs));
 	fillBar_->setValue(static_cast<int>(elapsedMs));

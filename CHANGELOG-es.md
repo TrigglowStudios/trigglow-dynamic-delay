@@ -27,6 +27,11 @@ inicio de sesión se mantienen.
     usan el modo escena.
   - El dock muestra adónde va tu directo y su estado, la RAM usada y el bitrate.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+- **El modo escena también cambia el delay en directo, hasta 600 s.** Bájalo y los espectadores
+  saltan hacia delante al momento; súbelo y la imagen se congela (o sale la escena de carga, por
+  encima de 3 s) solo durante los segundos de más. El buffer nunca vuelve a empezar desde cero.
+  Antes había que quitar el delay para cambiarlo, y el máximo era 60 s. Para cambiar de escena con
+  el delay activado, usa el modo stream; el dock lo dice.
 - **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
   "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
   La sesión se guarda en un archivo que solo puede leer tu usuario.

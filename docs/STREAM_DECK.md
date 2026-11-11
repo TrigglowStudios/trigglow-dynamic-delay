@@ -75,10 +75,10 @@ needed, `requestData`:
 | `DisableDelay` | — | delay off |
 | `ToggleDelay` | — | on/off |
 | `SkipToLive` | — | back to live: delay off |
-| `SetDelay` | `{"seconds": 45}` | sets the seconds: stream mode 1-600 (live), scene mode 1-60 (for the next Enable). 0 or less is ignored |
+| `SetDelay` | `{"seconds": 45}` | sets the seconds: 1-600, live in both modes. 0 or less is ignored |
 | `AdjustDelay` | `{"delta": -5}` | adds the seconds (negative lowers them), same ranges |
 | `DumpDelay` | — | stream mode: the seconds viewers haven't seen are never sent; `dumped` is false when there was nothing to drop (delay off, not streaming, or scene mode) |
-| `ApplyPreset` | `{"index": 0}` | preset 1 (`0`), 2 (`1`) or 3 (`2`): its seconds, delay on. Scene mode takes the seconds up to 60 and enables |
+| `ApplyPreset` | `{"index": 0}` | preset 1 (`0`), 2 (`1`) or 3 (`2`): its seconds, delay on. Same in scene mode |
 
 Every answer's `responseData` has `ok: true` and the status:
 

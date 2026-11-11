@@ -147,7 +147,10 @@ de audio hoja individual** dentro de la escena en directo (micrófono, audio de 
 instancia por fuente, cada una ejecutando la misma lógica de ring buffer con ventana de delay que el
 vídeo, en espacio de muestras (`ring_[channel][frame]`). El vídeo y el audio usan el mismo
 `delaySeconds`, así que ambos llegan sincronizados; cuando el presupuesto de RAM recorta el ring de
-vídeo, ambos usan en su lugar el mismo delay efectivo en segundos enteros (§3.3).
+vídeo, ambos usan en su lugar el mismo delay efectivo en segundos enteros (§3.3). Desde la v1.0.0
+el ring de cada filtro es un `AudioDelayLine` (`src/audio-delay-line.*`, puro, con pruebas): conserva
+su historial al cambiar el delay, salta hacia delante cuando se baja y se queda en silencio mientras
+se acumula una subida, al mismo paso que el vídeo (§3.3).
 
 ### 3.3. `BufferModeController` — la máquina de estados
 
@@ -286,14 +289,67 @@ Programa (manteniendo la escena en directo renderizando), resincroniza el audio 
 `Filling`. `Enable()` y ese rellenado incrementan `BufferModeStatus::fillGeneration`, y el dock solo
 rearma su temporizador de llenado cuando cambia, así que otras actualizaciones de estado durante el
 llenado (activar o desactivar el overlay, cambiar su esquina) ya no reinician la cuenta atrás ni el
-paso a la escena contenedora. Para un cambio que hace el propio controlador (`SetDelaySeconds()` /
-`SetMinResolutionHeight()` en `Active`), predice el reinicio con `EstimateBufferFit()` y cambia el
-Programa antes de enviar el ajuste. Sin escena de carga se muestra la escena del vídeo por defecto;
+paso a la escena contenedora. Para un cambio que hace el propio controlador (`SetMinResolutionHeight()` en `Active`;
+también `SetDelaySeconds()` hasta la v1.0.0, que cambia el delay sin reiniciar, abajo), predice el
+reinicio con `EstimateBufferFit()` y cambia el Programa antes de enviar el ajuste. Sin escena de carga se muestra la escena del vídeo por defecto;
 solo si no se puede crear se queda el Programa en la escena contenedora en blanco, nunca en la
 escena en directo sin delay. Desde la v0.6.0 el dock bloquea las
-escenas en directo y de carga, los segundos y la calidad mínima en `Filling`/`Active` (un control
-deshabilitado también sale del orden de tabulación), y los filtros solo aplican los valores del dock
-(abajo), así que en la práctica los reinicios vienen de resets de vídeo de OBS.
+escenas en directo y de carga y la calidad mínima (también los segundos hasta la v1.0.0) en
+`Filling`/`Active` (un control deshabilitado también sale del orden de tabulación), y los filtros
+solo aplican los valores del dock (abajo), así que en la práctica los reinicios vienen de resets de
+vídeo de OBS.
+
+**v1.0.0: cambiar el delay en directo.** Cambiar el delay en `Filling`/`Active` ya no reinicia el
+buffer:
+- Las cabeceras de los slots del ring se reservan para `bufferfit::kMaxDelaySeconds` (600 s; ~90
+  bytes por slot, unos 3 MB a 60 fps) y `FrameRing::SetWindow()` dice cuántas guardan frames.
+  `EnsureRingSized()` trata un cambio solo del delay (`SameCycleGeometry()`) con
+  `ApplyLiveDelay()`, nunca con un redimensionado duro: sin `buffer_restarted` ni rellenado.
+- **Al bajarlo:** el objetivo de reproducción avanza al instante (el decodificador salta al frame
+  más nuevo en o antes de él, o a la siguiente clave con el códec por hardware), y `Reserve()` libera
+  los frames que quedan fuera de la nueva ventana, como mucho 128 por captura (de 600 a 5 s a 60 fps
+  se liberan en unos 5 s).
+- **Al subirlo:** se conservan todos los frames y la ventana crece. El objetivo es ahora más antiguo
+  que todo lo que queda en el ring, así que `DrawDelayed()` sigue redibujando el último frame
+  mostrado hasta que se acumulan los segundos de más, y el audio está en silencio el mismo tiempo
+  (`AudioDelayLine`, §3.2: el punto de lectura se para y el retardo crece con lo que se escribe);
+  después ambos siguen justo donde se pararon. Hasta `kHoldRaiseMaxSeconds` (3 s) la escena
+  contenedora sigue en el Programa con ese frame congelado; por encima, `OnLiveDelayChanged()` del
+  controlador pone la escena de carga solo durante los segundos de más (`Status.AddingDelay`, una
+  ventana de llenado de `BufferModeStatus::fillWindowMs`) y después vuelve a la contenedora. Sin
+  ninguna escena de carga se congela la contenedora, nunca la escena sin delay.
+- **En `Filling`:** el final de la ventana de llenado (`readyAtNs_`) se mueve la diferencia; un delay
+  más bajo que el buffer ya contiene pasa a `Active` al momento.
+- **RAM:** subir necesita sitio para los segundos de más junto a todos los frames ya guardados.
+  `bufferfit::ComputeLiveChange()` mantiene el tamaño de captura si caben en el presupuesto; si no,
+  baja la parte de arriba de la escalera de degradación (`ramTopWidth_`/`ramTopHeight_`; el techo de
+  los codificadores de §3.5 solo puede bajarla más), nunca por debajo del suelo de calidad; si ni con
+  el suelo caben, el delay se recorta a los segundos enteros que caben, nunca por debajo del delay
+  que ya corría (el dock muestra entonces "41 / 60 s" como al Activar). Lo que ocupan los frames
+  guardados lo estima `bufferfit::WindowBytes()` según cuándo cambió el tamaño de captura
+  (`topSegments_`), cada tramo al tamaño con el que se capturó. Ni el crecimiento de la ventana ni un
+  tamaño rebajado se deshacen dentro de un ciclo: el siguiente Activar dimensiona desde cero.
+- **Un único valor para vídeo y audio:** `get_effective_delay_seconds` aplica en el hilo gráfico al
+  momento un delay recién enviado (`ApplyLiveDelayTask`, `obs_queue_task(..., wait=true)`) y devuelve
+  el que usa de verdad el ring, que `SyncAudioDelayToVideoEffective()` da a los filtros de audio.
+- **No es carga:** tras un cambio (y tras la pausa de una subida) el decodificador se pone al día con
+  el nuevo objetivo. Durante los 2,5 s siguientes la política de degradación no evalúa y los frames
+  tardíos no cuentan como fallos de decodificación (`kLiveChangeGraceNs`), y durante la pausa se
+  sigue pidiendo el frame debido al pipeline para que el decodificador no pierda su sitio y no
+  reinicie desde una clave como tras una pausa. Sin ambas cosas, en la prueba en directo una subida
+  bajó el buffer un escalón.
+- Los segundos del dock siguen editables con el delay en marcha y se aplican al pulsar Intro o al
+  salir del campo (`setKeyboardTracking(false)`), así que escribir "300" no pasa por 3 y 30 en
+  directo.
+
+Comprobado en un OBS 33.0.1 portable (lienzo y salida 1080p60, almacenamiento `hevc_amf`, emitiendo
+a un `ffmpeg -listen 1 ... -c copy out.flv` local): de 10 a 5 s saltó hacia delante al momento; de 5
+a 7 s se congeló 2 s; de 7 a 20 s mostró la escena de carga, se bajó a 15 s mientras tanto y volvió a
+la vista con delay tras los 3 s que quedaban; de 15 a 60 s mostró la escena de carga 45 s; de 60 a
+1 s al momento. El Programa no mostró nunca la escena en directo (unas 350 muestras, una cada
+0,25 s); los delays leídos en pantalla (el reloj del clip, fuente en directo frente al Programa)
+fueron 9,93, 4,95, 14,97, 59,97 y 0,95 s; el FLV recibido duró 198 s, 11.888 frames, ningún salto de
+marca de tiempo de más de 50 ms, y se decodificó sin errores.
 
 **v0.6.0: el dock es el único sitio donde se elige el delay.** Las propiedades de los propios
 filtros "(auto)" permitían saltarse el plugin (90 s en el diálogo del filtro de vídeo dejaban el
@@ -319,12 +375,12 @@ Limitación conocida: borrar a mano un filtro de delay "(auto)" con el delay en 
 — la escena contenedora muestra entonces la escena en directo sin filtro, sin delay, hasta que el
 usuario desactiva y vuelve a activar el delay desde el dock (`Enable()` vuelve a crear el filtro).
 
-Limitación conocida, que ya existía antes de la v0.6.0: el plugin no vigila el Programa con el delay
-en `Active`. Si el usuario (o una acción de Stream Deck u obs-websocket) cambia el Programa a la
-propia escena en directo en vez de a la escena contenedora, la escena en directo se muestra y se
-emite tal cual, sin delay, porque el filtro de vídeo está en la escena contenedora. El Programa tiene
-que quedarse en la escena que eligió el plugin mientras el delay está en marcha; para cambiar de
-escena hay que desactivar antes el delay.
+Limitación conocida: el plugin no vigila el Programa con el delay en `Active`. El filtro de vídeo
+está en la propia fuente de la escena en directo (la contenedora la anida), así que la escena en
+directo mostrada tal cual sigue con delay, pero cualquier otra escena a la que el usuario (o una
+acción de Stream Deck u obs-websocket) cambie el Programa se emite en directo. Desde la v1.0.0 el dock
+lo dice mientras el delay está en marcha (`Dock.SceneSwitch.Note`): cambiar de escena con delay
+necesita el modo stream. §3.9 explica por qué el modo escena no lo hace en la 1.0.
 
 ### 3.4. Liberar el ring de RAM al hacer Disable
 
@@ -353,8 +409,8 @@ sistema — el hilo liberador la libera milisegundos después. El hilo gráfico 
 
 El usuario elige dos cosas, ambas de libre elección, nunca restringidas:
 
-- **Delay (segundos)** — de 1 a 60 en el spinner del dock (un límite de cordura de la interfaz; el
-  límite real es la aritmética de RAM de abajo).
+- **Delay (segundos)** — de 1 a 600 en el spinner del dock (60 hasta la v1.0.0, §3.10), también el
+  límite del controlador; el límite real es la aritmética de RAM de abajo.
 - **Calidad mínima** — 480p / 720p / 1080p / 1440p (2K) / 2160p (4K). El suelo para la reducción por
   RAM de abajo: antes que guardar el vídeo retrasado por debajo de esta altura, el plugin guarda
   menos segundos. Eso sí, desde la v0.6.0 nunca eleva el buffer por encima de la resolución de
@@ -526,8 +582,13 @@ suelos 1440p y 2160p (una salida 1440p con un suelo 1440p se queda en 2560x1440 
 los segundos enteros que caben). Otras siete suites cubren el resto del código sin OBS:
 `ui_tokens_tests` (contraste WCAG en las paletas de OBS 31), `auto_names_tests` (§3.7),
 `overlay_layout_tests` (§3.6), `frame_arena_tests`, `frame_ring_tests` y `degradation_policy_tests`
-(§4.6, §4.7), y `pipeline_stress_tests` (§4.6). Desactivados por defecto, así que el empaquetado del
-plugin no cambia. Dos formas de compilarlos (`tests/CMakeLists.txt`):
+(§4.6, §4.7), y `pipeline_stress_tests` (§4.6). Desde la v1.0.0 `buffer_fit_tests` cubre además la
+reserva de audio, `WindowBytes()` y `ComputeLiveChange()` (bajada, subida con sitio, subida por
+encima del tamaño, recorte en el suelo, sin sitio, la capacidad, entrada no válida, y una sesión de
+subidas y bajadas que nunca pasa del presupuesto), `frame_ring_tests` la ventana de retención
+(límites del desalojo, un slot fijado o codificándose que lo detiene), y `audio_delay_line_tests` la
+línea de delay de audio de §3.2. Desactivados por defecto, así que el empaquetado del plugin no
+cambia. Dos formas de compilarlos (`tests/CMakeLists.txt`):
 
 ```
 # Desde el build del propio plugin (mismos flags de compilación que el plugin):
@@ -762,6 +823,101 @@ reply (código HTTP, longitud, acción), refused, unavailable, rate limited, err
 `[support]` ticket created (con o sin el log). Nunca el token, el enlace, los códigos ni el secreto,
 IDs de conversaciones o de tickets, la clave de acceso de un ticket, el texto de las preguntas o las
 respuestas, los datos técnicos, un email o un nombre, ni rutas absolutas.
+
+### 3.9. v1.0.0: cambiar de escena con delay — evaluado, solo en modo stream en la 1.0
+
+El product owner quiere poder cambiar de escena con delay en la 1.0. El modo stream lo hace (retrasa
+el stream ya codificado, todas las escenas). Para el modo escena se evaluó retrasar todo el programa
+en vez de una escena: la contenedora muestra una captura con delay de una vista o un lienzo privado
+(`obs_view`, lienzos de OBS 31) que renderiza lo que el streamer elija, así que cambiar de escena
+solo cambia lo que entra en el buffer. No es seguro para la 1.0, por tres motivos, todos en el propio
+código de OBS 31.1.1:
+
+1. **El canal 0 es del frontend.** Lo que codifica el stream es el canal de salida 0 del lienzo
+   principal, que el frontend de OBS pone en su transición. La cambia directamente, sin avisar
+   antes: `OBSBasic::OverrideTransition()` llama a `obs_set_output_source(0, …)` en las transiciones
+   rápidas del Modo Estudio, las transiciones propias de cada escena y la barra T
+   (`frontend/widgets/OBSBasic_Transitions.cpp` líneas 99-105, 237-245, 328-333, 708-716), y
+   `OBS_FRONTEND_EVENT_SCENE_CHANGED` llega cuando el cambio ya ha empezado. Una contenedora, una
+   vista privada o un lienzo solo reciben lo que pone el plugin: en cuanto el streamer cambia, el
+   canal 0 renderiza la escena nueva y el stream la recibe sin delay hasta que el plugin reaccione.
+   Una vista privada que copie el Programa renderiza cada frame dos veces y aun así necesita que el
+   Programa siga en la contenedora, que es justo lo que deshace un cambio de escena.
+2. **Sobrescribir la textura principal no cubre todas las salidas.**
+   `obs_add_main_rendered_callback()` se ejecuta justo después de `obs_view_render()` con la textura
+   de la mezcla aún enlazada (`libobs/obs-video.c` líneas 170-211), así que un callback podría
+   guardar ese frame y dibujar encima el que tiene delay, se cambie lo que se cambie. Pero se ejecuta
+   para cada mezcla de cada lienzo sin nada que las distinga, depende de un orden no documentado, y
+   una mezcla reescalada en la GPU (cada pista de Enhanced Broadcasting) vuelve a renderizar la vista
+   en vez de reutilizar la textura principal cuando su espacio de color es distinto
+   (`can_reuse_mix_texture()`): esas pistas saldrían sin delay, y Enhanced Broadcasting es uno de los
+   casos para los que existe el modo escena.
+3. **El audio filtra lo que el cambio escondía.** libobs monta la mezcla en cada tick a partir del
+   árbol activo de los canales de cada vista (`libobs/obs-audio.c` líneas 495-517): las fuentes de
+   una escena entran o salen de la mezcla en cuanto cambia el Programa, y un filtro de audio por
+   fuente retrasa las muestras, no si la fuente se oye (los filtros ni siquiera pueden ir en una
+   escena o una transición, §3.2). Un delay de todo el programa hecho con filtros por fuente
+   reproduce, durante `delay` segundos tras un cambio, el audio con delay de la escena a la que se
+   cambió: volver de una escena de "ahora vuelvo" al juego reproduce el audio del juego de los
+   últimos `delay` segundos que el streamer escondió detrás (una cola que salta, un lobby). Es
+   filtrar justo lo que se esconde al cambiar de escena.
+
+El diseño más cercano, para después de la 1.0: **un único ring compartido por todas las escenas.**
+Un filtro de delay en cada escena de primer nivel, donde solo la escena en el Programa (y las fuentes
+A y B de una transición en curso) capturan en un único ring compartido y dibujan desde él, y las
+escenas anidadas o los renders solo de la Vista previa pasan tal cual. Cambiar de escena solo cambia
+lo que entra en el ring, sin rellenado. Para el audio, el filtro de cada fuente escribe silencio
+mientras su fuente no está activa, así que una escena a la que se cambia queda en silencio `delay`
+segundos en vez de filtrar nada, y una escena de la que se sale pierde su propio audio `delay`
+segundos antes (un hueco, nunca una filtración). Pendiente: escenas y fuentes creadas con el delay en
+marcha (filtro en `source_create`, antes de que se puedan mostrar), transiciones guardadas como
+corte, el Modo Estudio mostrando la escena del Programa en la Vista previa, los grupos, y el coste de
+un filtro por escena. Un cambio de varias semanas con sus propias pruebas, nada que meter con prisa
+en la 1.0.
+
+En la 1.0 el dock muestra `Dock.SceneSwitch.Note` mientras el delay está en marcha: deja la vista
+con delay en el Programa y usa el modo stream para cambiar de escena con delay.
+
+### 3.10. v1.0.0: delays de hasta 600 s, y su RAM
+
+El dock y el controlador aceptan de 1 a 600 s (`BufferModeController::kMaxDelaySeconds`; 60 hasta
+la v1.0.0). El dimensionado (§3.5) no cambia: presupuesto, techos de salida y de codificadores,
+suelo de calidad y después duración. Dos novedades:
+- Los rings de audio salen del presupuesto. Cada fuente de audio con delay guarda PCM float en
+  bruto, 384 KB por segundo en estéreo a 48 kHz: 23 MB a 60 s pero 230 MB a 600 s.
+  `ObsFrontendBridge` cuenta los filtros de audio que añade (`AudioBytesPerSecondFor()`) y cada
+  dimensionado reserva `delay x` eso (`bufferfit::Input::reservedBytesPerSecond`,
+  `VideoBudgetBytes()`, nunca por debajo de un cuarto del presupuesto), también la estimación del
+  dock.
+- `AudioDelayLine` agranda su ring cuando el delay necesita más sitio (conservando el historial) y
+  devuelve el sitio cuando un delay rebajado se ha asentado, si sobran al menos 10 s de muestras.
+
+Medido en el OBS portable de §3.3 (Windows 11, 31 GB de RAM así que 15,5 GB de presupuesto, AMD
+Radeon RX 7800 XT, OBS 33.0.1, lienzo y salida 1080p60, la escena en directo un clip 1080p60 en bucle
+de `testsrc2` con algo de ruido y un pitido de 1 kHz, estéreo, emitiendo x264 a 6 Mbps a un ffmpeg
+local). Cada prueba es un OBS nuevo: emitiendo con el delay apagado, después Activar, y 15 s después
+de llenarse el buffer. "Privada" es la memoria privada del proceso de OBS sobre el mismo OBS emitiendo
+con el delay apagado; "arena" son los bytes reservados de la línea `pipeline check` (los frames
+guardados) y `ratio` su compresión medida:
+
+| Almacenamiento | Delay | Capturado a | Arena (`ratio`) | Privada | Working set |
+|---|---|---|---|---|---|
+| `hevc_amf` | 120 s | 1280x720@30 (escalón 4, ver abajo) | 160 MB (61,6x) | +515 MB | +354 MB |
+| `hevc_amf` | 300 s | 1920x1080@60 | 816 MB (66,7x) | +1.210 MB | +1.074 MB |
+| MJPEG | 120 s | 1920x1080@60 | 576 MB (38,0x) | +771 MB | +705 MB |
+| MJPEG | 300 s | 1920x1080@60 | 1.424 MB (37,9x) | +1.692 MB | +1.613 MB |
+
+La máquina estaba compartida con unas veinte instancias de OBS de otras sesiones de prueba, y en la
+prueba de 120 s por hardware la latencia del codificador AMF (p95 de hasta 26 ms) bajó el buffer
+hasta el último escalón de la degradación antes de llenarse. Al ritmo 1080p60 de la prueba de 300 s
+(2,7 MB de arena por segundo), 120 s serían unos 330 MB de arena, unos +720 MB de memoria privada.
+Además de la arena, la memoria privada incluye el ring de audio (46 MB a 120 s, 115 MB a 300 s para
+esta única fuente estéreo), los pools de frames sin comprimir y decodificados y los códecs (entre
+200 y 400 MB en total, más con las superficies D3D11 del códec por hardware). Los ratios supuestos
+(5x MJPEG, 12x hardware) dejan la estimación del lado seguro: estos rings de 300 s eran 11,2 GB y
+4,7 GB según la estimación, 1,4 GB y 0,8 GB de verdad. Tras Desactivar, el proceso conserva
+150-270 MB sobre la base (memoria del heap y del driver que las liberaciones del hilo de limpieza no
+devuelven al momento); un nuevo Activar la reutiliza.
 
 ## 4. v0.3.0: compresión real MJPEG del ring de RAM
 

@@ -715,9 +715,8 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
   `Delay +5 s`, `Delay -5 s`, `Borrar lo que aún no se ha emitido` y `Preset de delay 1` a `3`
   (traducidos según el idioma de OBS; con OBS en inglés, `Trigglow: Toggle Dynamic Delay`…).
 - Los atajos van al modo stream cuando este se encarga del directo actual o del siguiente, y al
-  modo escena en los demás casos. En modo escena `Borrar` no hace nada, y `Delay +5 s` / `-5 s`
-  cambian los segundos para la próxima vez que actives el delay (1–60), no un delay que ya esté
-  activo.
+  modo escena en los demás casos. En modo escena `Borrar` no hace nada; `Delay +5 s` / `-5 s` cambian el delay en directo en
+  los dos modos (1–600).
 - Prueba primero el botón del dock para descartar que sea un problema de configuración del plugin en
   sí (por ejemplo, que no haya ninguna escena en directo elegida, lo cual también bloquea que la
   hotkey de Activar o Activar/desactivar haga algo), y no de la asignación de la hotkey/Stream Deck.

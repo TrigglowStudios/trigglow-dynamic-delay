@@ -115,17 +115,21 @@ The plugin simply buffers fewer seconds than requested at your chosen quality ra
 dropping below it; lowering the seconds or the quality floor gets you back to the full requested
 duration.
 
-**Why can't I change the delay while it's on?**
-Since v0.6.0 the scenes, the delay seconds and the minimum quality are locked while the delay is
-preparing or on, with a line that says "Turn the delay off to change it." Before, the seconds stayed
-editable and every keystroke resized the buffer in the middle of a live stream. Turn the delay off,
-change it and turn it on again; it fills again for the new number of seconds.
+**Can I change the delay while it's on?**
+Yes, since v1.0.0, in both modes. In stream mode the new delay applies at the next keyframe. In
+scene mode, lowering it skips viewers forward at once, and raising it holds the picture (or shows
+the loading scene above 3 s) only while the extra seconds build up; the buffer is never emptied.
+Typed values apply on Enter or when the field loses focus, so "300" never passes through 3 and 30.
+The scenes and the minimum quality stay locked while scene mode's delay runs: turn the delay off to
+change them.
 
 **What's the maximum delay it supports?**
-The dock's spinner accepts 1–60 seconds as a UI sanity range. The real ceiling is whatever fits
+600 seconds (10 minutes) in both modes. Stream mode keeps the already-encoded stream, about 45 MB
+per minute at 6 Mbps, so 600 s fits almost anywhere. In scene mode the real ceiling is whatever fits
 your machine's detected RAM budget (roughly half of total system RAM, floored at 1GB and capped at
-24GB) at your chosen quality — if 60s at your chosen quality doesn't fit, the dock's live estimate
-will tell you before you enable it, and the plugin buffers as many seconds as actually fit instead.
+24GB) at your chosen quality — if the seconds at your chosen quality don't fit, the dock's live
+estimate will tell you before you enable it, and the plugin buffers as many seconds as actually fit
+instead.
 
 **Does it compress the buffer? Does that lower quality?**
 Yes. It only changes how the buffered frames are kept in memory: the quality floor you pick (480p to

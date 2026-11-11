@@ -194,6 +194,10 @@ a live stream yet).
 - **Trigglow's new design** in the dock, a new overlay plate, the new Dynamic Delay logo, the
   default "Adding delay" loading video, no more "Beta" tag.
 - **Translations**: Portuguese (Brazil) and Chinese (Simplified), next to English and Spanish.
+- **Scene mode changes the delay live and goes up to 600 s**: lowered, viewers skip forward at once;
+  raised, the picture holds (or the loading scene shows above 3 s) only for the extra seconds;
+  nothing refills from empty. The audio rings count in the RAM budget (`docs/SPEC.md` §3.3, §3.10).
+  Switching scenes while delayed stays stream mode's (§3.9); the dock says so.
 
 ## Next
 - **Run stream mode live on real platforms** before calling it verified: Twitch (RTMP), Kick
@@ -204,6 +208,11 @@ a live stream yet).
   without a TLS stack for RTMPS), so those builds only have scene mode. Needs avformat with RTMP
   and TLS in the Linux FFmpeg build and an FFmpeg for macOS, then the same relay.
 - **Enhanced Broadcasting, SRT, RIST and WHIP in stream mode.** Today those streams fall back to
+- **Scene mode following scene switches: one shared ring for every scene** (evaluated 2026-11-11,
+  `docs/SPEC.md` §3.9). A delay filter on each top-level scene, only the Program scene (and a running
+  transition's sources) capturing into and drawing from one shared ring, audio filters writing
+  silence while their source isn't active. Needed where stream mode can't run (Enhanced
+  Broadcasting, SRT, WHIP, and macOS and Linux until their relay ships).
   scene mode: Enhanced Broadcasting is several tracks on one multitrack output, and SRT, RIST and
   WHIP aren't RTMP, so the relay would need another sender for each.
 - **Code signing** (CA-issued, Windows and macOS): the real fix for the SmartScreen warning and
@@ -278,5 +287,12 @@ output sees the delayed picture while the delay is on.
   "never cuts" promise; buffering every scene in advance would multiply the RAM and GPU cost by the
   scene count. Stream mode solves it (it delays the composited, encoded stream, so a scene switch
   is part of one continuous signal) and delay by scene covers "a different delay per scene" there.
+- **Delaying the whole program in scene mode through a private view or canvas** (evaluated
+  2026-11-11 for v1.0.0, `docs/SPEC.md` §3.9). Not safe: OBS's frontend swaps output channel 0
+  directly for quick transitions, transition overrides and the T-bar, with no event first
+  (undelayed frames on every switch); overwriting the main texture in a rendered callback misses
+  Enhanced Broadcasting's rescaled tracks; and libobs mixes the audio from the Program tree as it
+  is now, so per-source audio filters would play the delayed audio of the scene switched to,
+  leaking what a "be right back" scene hid. The shared ring under Next is the way forward.
 - External web panel as the main way to control it (product decision: everything lives natively
   in OBS).

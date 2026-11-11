@@ -124,18 +124,21 @@ Recibes un aviso claro en el dock *antes* de activarlo — nunca falla en silenc
 plugin simplemente guarda menos segundos de los pedidos a la calidad elegida en vez de bajar nunca
 de esa calidad; bajar los segundos o la calidad mínima te devuelve al tiempo completo pedido.
 
-**¿Por qué no puedo cambiar el delay mientras está activo?**
-Desde la v0.6.0 las escenas, los segundos de delay y la calidad mínima se bloquean mientras el delay
-se prepara o está activo, con una línea que dice "Desactiva el delay para cambiarlo." Antes, los
-segundos seguían editables y cada tecla redimensionaba el buffer en pleno directo. Desactiva el
-delay, cámbialo y vuelve a activarlo; se llena de nuevo con los segundos nuevos.
+**¿Puedo cambiar el delay con el delay activado?**
+Sí, desde la v1.0.0, en los dos modos. En el modo stream el delay nuevo se aplica en el siguiente
+keyframe. En el modo escena, al bajarlo los espectadores saltan hacia delante al momento, y al
+subirlo la imagen se congela (o sale la escena de carga por encima de 3 s) solo mientras se juntan
+los segundos de más; el buffer nunca se vacía. Lo que escribes se aplica al pulsar Intro o al salir
+del campo, así que "300" nunca pasa por 3 y 30. Las escenas y la calidad mínima siguen bloqueadas
+mientras el delay del modo escena está activo: desactívalo para cambiarlas.
 
 **¿Cuánto delay máximo soporta?**
-El spinner del dock acepta 1–60 segundos como rango de sensatez de la interfaz. El límite real es
-lo que quepa en el presupuesto de RAM detectado en tu máquina (aproximadamente la mitad de la RAM
-total del sistema, con un suelo de 1GB y un techo de 24GB) a la calidad elegida — si 60s a tu
-calidad elegida no caben, la estimación en vivo del dock te lo dirá antes de activarlo, y el plugin
-guardará tantos segundos como quepan de verdad en su lugar.
+600 segundos (10 minutos) en los dos modos. El modo stream guarda el stream ya codificado, unos
+45 MB por minuto a 6 Mbps, así que 600 s caben casi en cualquier equipo. En el modo escena el límite
+real es lo que quepa en el presupuesto de RAM detectado en tu máquina (aproximadamente la mitad de
+la RAM total del sistema, con un suelo de 1GB y un techo de 24GB) a la calidad elegida — si los
+segundos a tu calidad elegida no caben, la estimación en vivo del dock te lo dirá antes de
+activarlo, y el plugin guardará tantos segundos como quepan de verdad en su lugar.
 
 **¿Comprime el buffer? ¿Eso baja la calidad?**
 Sí. Solo cambia cómo se guardan en memoria los frames del buffer: la calidad mínima que elijas (de
