@@ -89,11 +89,12 @@ clave** en 2 s en `Ajustes → Salida` (modo de salida Avanzado). La comprobaci�
 el directo, así que el aviso se actualiza en el siguiente directo.
 
 ### Subir el delay no se aplica al momento
-Hasta **Guardar para subidas al instante** (120 s por defecto) el plugin ya tiene los segundos que
-necesita. Por encima, el historial todavía no llega tan atrás: el envío espera hasta que el keyframe
-más antiguo guardado tenga la antigüedad necesaria, así que la imagen de los espectadores se queda
-parada durante la diferencia. Si piensas hacer subidas grandes, sube "Guardar para subidas al
-instante" antes de salir en directo (cuesta el bitrate por esos segundos de RAM).
+El plugin guarda los últimos 600 s, así que una subida es al instante en cuanto el directo lleva ese
+tiempo. Al principio de un directo el historial todavía no llega tan atrás: el envío espera hasta que
+el keyframe más antiguo guardado tenga la antigüedad necesaria, así que la imagen de los
+espectadores se queda parada durante la diferencia. Si la línea **Subidas al instante** del dock dice
+"guardados en RAM" (no se pudo usar el disco en este directo), el plugin solo guarda hasta tu delay o tu preset
+o regla por escena más alto: pon un preset con lo máximo a lo que pienses subir.
 
 ### "El Retardo de emisión propio de OBS … está activado"
 `Ajustes → Avanzado → Retardo de la transmisión` suma su retardo fijo encima del de Dynamic Delay, y retiene

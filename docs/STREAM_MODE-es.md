@@ -15,18 +15,64 @@ el stream. Su RAM es el buffer a una calidad cercana a la de origen: de ~190 MB 
 30-60 s (tabla del README).
 
 El modo stream guarda los paquetes que el propio encoder de OBS ha producido para el stream y los
-envía más tarde. No se decodifica ni se vuelve a codificar nada; la CPU solo copia bytes. La RAM es
-el bitrate del stream por los segundos guardados:
+envía más tarde. No se decodifica ni se vuelve a codificar nada; la CPU solo copia bytes. El
+historial es el bitrate del stream por los segundos guardados (45 MB por minuto a 6 Mbps), y casi
+todo espera en un archivo temporal cifrado en el disco, así que la RAM que ocupa es más o menos la
+misma con cualquier delay (ver Memoria y disco).
 
-| Bitrate | 30 s | 60 s | 120 s (lo guardado por defecto) | 600 s |
-|---|---|---|---|---|
-| 3 Mbps | 11 MB | 22 MB | 45 MB | 225 MB |
-| 6 Mbps | 22 MB | 45 MB | 90 MB | 450 MB |
-| 8 Mbps | 30 MB | 60 MB | 120 MB | 600 MB |
+## Memoria y disco
 
-Las herramientas que reenvían el stream fuera de OBS funcionan igual. Una cifra de "0-15 MB" para
-una de ellas solo puede ser su consumo base o un delay casi nulo: un stream de 6 Mbps guardado
-durante 60 s son 45 MB, lo guarde quien lo guarde.
+- **Almacenamiento contiguo.** Los bytes de los paquetes van seguidos en bloques de 1 MiB
+  (`PayloadStore`, `payload-store.*`), un registro por paquete: sus flags, sus datos laterales y su
+  contenido, exactamente lo que devolvió el demuxer de FFmpeg, así que la plataforma recibe los
+  mismos bytes. Los metadatos del planificador son 48 bytes por paquete. Antes, cada paquete era
+  una reserva de memoria propia de FFmpeg, que costaba un 10-13 % encima del historial (abajo: +490
+  MB de RAM para 446 MB de historial, +106 MB para 93 MB).
+- **El volcado a disco.** En RAM solo quedan los segundos más recientes (4 s más dos intervalos de
+  fotogramas clave: el directo y los delays cortos nunca tocan el disco, y bajar el delay empalma
+  dentro de la RAM) y lo que cada destino va a enviar a continuación (3 s por delante). Los bloques
+  llenos más antiguos van a un archivo temporal y su RAM se libera. Un bloque que un destino está a
+  punto de enviar se vuelve a leer en el hilo de E/S propio del relay antes de que toque, nunca con
+  el bloqueo que usan los emisores; un emisor cuyos bytes aún no han vuelto espera en vez de enviar.
+- **Cifrado.** AES-256 en modo contador, con una clave y un nonce aleatorios creados para cada
+  directo y guardados solo en la memoria de OBS; el contador sale del número del bloque, que nunca
+  se repite. El AES es el del sistema: CNG (bcrypt) en Windows, CommonCrypto en macOS y el OpenSSL
+  que el build de Linux ya enlaza para RTMPS. Ninguna dependencia nueva.
+- **Dónde y cuánto tiempo.** En la carpeta temporal del sistema (en Linux, `$TMPDIR`, `/var/tmp` o
+  `/tmp`, la primera que no sea un tmpfs en RAM), un archivo `trigglow-dd-spill-*.tmp`. Se borra al terminar el directo, y también si
+  OBS se cierra de golpe: se borra al cerrarse en Windows y se desvincula nada más crearlo en Linux y
+  macOS. El siguiente directo borra cualquiera que haya dejado un corte de luz. El espacio liberado se
+  reutiliza y el archivo se recorta cuando el historial encoge.
+- **Uso de disco.** El bitrate por 600 s mientras emites en modo stream (unos 450 MB a 6 Mbps, 600
+  MB a 8 Mbps), escritos y, con delays más largos que la ventana de RAM, leídos de nuevo al bitrate
+  del stream. El volcado siempre deja 1 GiB libre en ese disco.
+- **Cuando no se puede usar el disco** (no hay sitio, falla una escritura o una lectura, un bloque
+  tarda más de 2 s, o hay 48 bloques esperando a escribirse), el volcado se detiene para ese
+  directo: lo que hay en disco se vuelve a leer y el historial se queda en RAM, como antes del
+  volcado, con el bitrate por los segundos guardados (ver Cambiar el delay en directo). Queda en el
+  log y el directo sigue. Solo se descarta un bloque que no se pueda volver a leer, con sus
+  paquetes; los destinos vuelven a empalmar en el siguiente keyframe.
+
+Medido con `tests/relay_harness.cpp` (el relay en su propio proceso, con ffmpeg haciendo de OBS y
+de plataforma; bytes privados por encima del proceso antes del directo, 18,9-21,1 MB) con un
+stream x264 de 6,2 Mbps (1280x720 a 30 fps, B-frames, keyframes cada 2 s, AAC a 160 kbps), Windows
+11, 2026-11-11:
+
+| Delay | Historial guardado (antes / ahora) | RAM antes | Solo bloques contiguos | RAM ahora | de ella, el historial | En disco ahora |
+|---|---|---|---|---|---|---|
+| 10 s | 127 s, 93 MB / 607 s, 446 MB | +106 MB | +96 MB | +13 MB | 11 MB | 440 MB |
+| 120 s | 127 s, 93 MB / 607 s, 446 MB | +103 MB | +96 MB | +15 MB | 13 MB | 440 MB |
+| 600 s | 607 s, 446 MB / 607 s, 446 MB | +490 MB | +453 MB | +13 MB | 12 MB | 440 MB |
+| 600 s, solo RAM (sin volcado) | 607 s, 446 MB | | | +454 MB | 449 MB | 0 |
+
+"+N MB" es cuánto creció el proceso (bytes privados) respecto a sí mismo antes del directo. "Antes"
+es el relay sin estos cambios, con "Guardar para subidas al instante" en su valor por defecto (120
+s); "Solo bloques contiguos" es el primer cambio sin el volcado a disco. Dentro de OBS, el historial
+es lo único del modo stream que crece con el delay.
+
+Las herramientas que reenvían el stream fuera de OBS guardan los mismos bytes: un stream de 6 Mbps
+guardado durante 60 s son 45 MB, estén donde estén. El modo stream los guarda en disco, cifrados, y
+en RAM solo lo que está a punto de enviarse.
 
 ## Cómo funciona
 
@@ -40,7 +86,8 @@ durante 60 s son 45 MB, lo guarde quien lo guarde.
 3. Apunta **esa salida** al relay con un servicio `rtmp_custom` privado. El servicio guardado del
    streamer no se toca; OBS lo vuelve a poner en la salida en cada arranque.
 4. OBS publica en el relay; el relay separa el FLV (sin decodificar) en `PacketHistory`
-   (`packet-delay-core.*`) y marca cada paquete con su hora de llegada.
+   (`packet-delay-core.*`) y marca cada paquete con su hora de llegada. Sus bytes van al
+   `PayloadStore` del historial y, cuando tienen más de unos segundos, al archivo de volcado cifrado.
 5. El `SinkScheduler` del emisor envía el paquete *p* cuando `now >= arrival(p) + delay`,
    remultiplexado a FLV por RTMP/RTMPS (TLS según el sistema, ver Plataformas), y la conexión con
    la plataforma se abre cuando toca enviar el primer paquete (un directo que empieza con delay
@@ -48,11 +95,11 @@ durante 60 s son 45 MB, lo guarde quien lo guarde.
 
 ### Plataformas
 
-| | FFmpeg | TLS para RTMPS |
-|---|---|---|
-| Windows | el build compartido LGPL de BtbN (`avformat-63.dll` junto al plugin) | SChannel |
-| Linux | el build estático LGPL del plugin, enlazado dentro | el OpenSSL 3 del sistema (`libssl.so.3`, dinámico; una dependencia del paquete) |
-| macOS | el build estático LGPL del plugin, enlazado dentro, universal (arm64, x86_64) | Secure Transport (Security.framework) |
+| | FFmpeg | TLS para RTMPS | AES del volcado a disco |
+|---|---|---|---|
+| Windows | el build compartido LGPL de BtbN (`avformat-63.dll` junto al plugin) | SChannel | CNG (bcrypt) |
+| Linux | el build estático LGPL del plugin, enlazado dentro | el OpenSSL 3 del sistema (`libssl.so.3`, dinámico; una dependencia del paquete) | el mismo OpenSSL (`libcrypto.so.3`) |
+| macOS | el build estático LGPL del plugin, enlazado dentro, universal (arm64, x86_64) | Secure Transport (Security.framework) | CommonCrypto |
 
 El FFmpeg de Linux y macOS sale de `.github/scripts/build-ffmpeg.sh` con el pin `ffmpeg-source` de
 buildspec.json (tag firmado, commit fijado), y solo con lo que necesita el relay: el demuxer y el
@@ -71,10 +118,14 @@ stream continuo: sin reconexión ni cabecera nueva. El paso es el intervalo de f
 (se recomiendan 2 s); el dock avisa cuando está en automático o pasa de 4 s (ver Comprobación de
 ajustes).
 
-El historial siempre llega `max(delay, guardado)` segundos atrás más dos intervalos de fotogramas
-clave, así que subir el delay hasta "Guardar para subidas al instante" (120 s por defecto) no
-necesita esperar. Si pides más de lo que tiene el historial, el emisor espera hasta que el keyframe
-guardado más antiguo tenga la antigüedad suficiente (`SpliceInfo::shortHistory`).
+Con el volcado a disco, el historial siempre llega 600 s atrás (el máximo del delay) más dos
+intervalos de fotogramas clave más 1 s: cuesta disco, no RAM, y cualquier subida en directo es al
+instante en cuanto el directo lleva ese tiempo. Solo en RAM (si no se pudo usar el disco) llega el
+delay o el preset o la regla por escena con delay más alto, lo que sea mayor, más el mismo margen
+(`KeepSeconds()` y `RetentionNs()` en `packet-delay-core.hpp`). La línea "Subidas al instante" del
+dock dice cuál se aplica. Si pides más de lo que tiene el historial (al principio de un directo, o
+por encima de los presets solo en RAM), el emisor espera hasta que el keyframe guardado más antiguo
+tenga la antigüedad suficiente (`SpliceInfo::shortHistory`).
 
 ### Problemas de red
 
@@ -139,8 +190,10 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 ## Controles
 
 - Dock: activar/quitar, volver al directo, segundos (1-600, +/-5), borrar, tres presets, delay por
-  escena, segundos guardados (10-600), envío al parar, la insignia, adónde va el directo (solo
-  lectura: `Ajustes → Emisión` de OBS).
+  escena, hasta dónde una subida es al instante (solo lectura; sustituye al ajuste "Guardar para
+  subidas al instante", cuyo `keep_seconds` guardado se sigue leyendo y escribiendo sin cambios),
+  envío al parar, la insignia, adónde va el directo (solo lectura: `Ajustes → Emisión` de OBS). Las
+  estadísticas muestran la RAM y el disco que ocupa el historial.
 - Atajos (`Ajustes → Atajos` de OBS): Activar/desactivar, Activar, Desactivar (mismos nombres que
   antes), Volver al directo, Delay +5 s, Delay -5 s, Borrar, Preset 1-3. Pasan por `DelayRouter`:
   al modo stream cuando este lleva los controles, al modo escena si no (ahí los segundos también
@@ -187,7 +240,7 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
     presets, `SetDelay`, `AdjustDelay`, quitar y activar, 3-40 s): cada uno medido a menos de
     0,04 s del delay pedido, una sola conexión con la plataforma todo el tiempo, timestamps
     continuos.
-  - Delays largos con "Guardar para subidas al instante" a 600 s: 300, 120 y 600 s mantenidos al
+  - Delays largos con "Guardar para subidas al instante" a 600 s (antes de sustituirlo): 300, 120 y 600 s mantenidos al
     frame (medidos 300,0, 120,1 y 600,0 s), y de vuelta a 30 s en directo. Subir por encima del
     historial guardado (30 -> 300 s a los 76 s de directo, 120 -> 600 s a los 436 s) espera: no
     llega nada (ni vídeo ni audio) a la plataforma durante los segundos que faltan (232,6 s y
@@ -195,10 +248,12 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
     mantuvo la conexión; una plataforma real puede cortar una publicación que no envía nada
     durante minutos (no comprobado). Cuando el directo ya lleva los segundos guardados, las subidas
     son repeticiones al instante.
-  - RAM: el historial es el bitrate del stream por los segundos guardados (192 MB para 605 s a
-    2,66 Mbps; ahí deja de crecer). El working set de OBS creció lo que ocupa el historial más
-    ~15 % (693 -> 906 MB) y volvió a su tamaño en reposo tras el directo. Los +275 MB al empezar a
-    emitir son del propio OBS (igual con el modo stream desactivado).
+  - RAM, antes del volcado a disco y del almacenamiento contiguo: el historial es el bitrate del
+    stream por los segundos guardados (192 MB para 605 s a 2,66 Mbps; ahí deja de crecer). El
+    working set de OBS creció lo que ocupa el historial más ~15 % (693 -> 906 MB) y volvió a su
+    tamaño en reposo tras el directo. Los +275 MB al empezar a emitir son del propio OBS (igual con
+    el modo stream desactivado). No se ha vuelto a medir en un OBS real desde entonces (ver la tabla
+    de Memoria y disco para el relay por sí solo).
   - 12 ciclos de arrancar y parar, la mitad con todos los núcleos ocupados: OBS siempre llegó al
     relay (listener listo en 5-50 ms).
   - La puerta de cuenta gratuita rechaza Activar, los presets y Activar/desactivar sin sesión
@@ -214,10 +269,32 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
   llegara al relay, o una plataforma caída, dejaba el envío al parar sin terminar nunca; la espera
   de 150 ms al listener es ahora una comprobación de que escucha (si no, el directo sale sin el
   relay; en Linux y macOS sigue siendo una espera fija de 150 ms).
+- Almacenamiento contiguo, volcado a disco y su retención (2026-11-11), Windows 11, con
+  `tests/relay_harness.cpp` y un stream x264 de 6,2 Mbps con B-frames (`-bf 2 -g 60`, CBR, AAC):
+  - Tests unitarios: `payload_store_tests` (bloques y recorte; la máquina de estados del volcado
+    con un disco simulado: ida y vuelta, recorte y truncado, una escritura fallida, una lectura
+    fallida, un disco lento, cola acumulada, archivo lleno), `spill_file_tests` (el vector NIST SP
+    800-38A CTR-AES256, ida y vuelta, nada del texto en claro en disco, un flujo de clave distinto
+    por bloque y por archivo, borrado al cerrar, truncado, archivos que quedaron) y la retención y
+    los enganches del volcado en `packet_delay_core_tests`. Los tres también compilan sin avisos y
+    pasan en Linux (GCC 13, OpenSSL 3, un contenedor Ubuntu 24.04).
+  - Cambios en directo `4:3,10:8,18:2,24:0` y una subida a 300 s leída de vuelta del disco
+    (`5:10,330:300,360:20,375:0`): cada paquete enviado es idéntico byte a byte a un paquete del
+    origen (sha256, tamaño y flags, `ffprobe -show_packets -show_data_hash`), los empalmes caen en
+    los mismos keyframes que con el relay antes del cambio, DTS de vídeo estrictamente creciente,
+    ningún hueco de más de 200 ms, se decodifica limpio. Dos ejecuciones en tiempo real nunca
+    coinciden paquete a paquete, ni siquiera dos del mismo build (el audio que se salta alrededor de
+    un empalme y el frame tras el que va dependen de lo que tocaba en ese instante), así que las
+    salidas se compararon con el origen.
+  - Un volcado limitado a 70 MB volvió a la RAM al llenarse (queda en el log), leyó de vuelta los
+    bloques volcados y siguió; la salida siguió idéntica byte a byte y sin huecos. Matar el proceso
+    a mitad de directo borró su archivo de volcado al instante.
 - Aún sin probar: una plataforma real (Twitch por RTMP, Kick por RTMPS, YouTube con HEVC por
-  enhanced RTMP) mirando su reproductor, el dock a mano, y OBS reconectando al relay a mitad de
-  directo (el relay escucha una sola vez: si se cae la conexión de OBS con él, el directo termina
-  en vez de continuar).
+  enhanced RTMP) mirando su reproductor, el dock a mano (también la línea nueva "Subidas al
+  instante"), el volcado dentro de un OBS real, el volcado en marcha en macOS (aquí no se compila) y
+  Linux (solo tests unitarios), un disco lento (USB, HDD) o casi lleno en la práctica, y OBS
+  reconectando al relay a mitad de directo (el relay escucha una sola vez: si se cae la conexión de
+  OBS con él, el directo termina en vez de continuar).
 - El relay y la integración con OBS compilan en Windows, Linux y macOS. En Linux, el relay en sí
   funcionó de extremo a extremo con `tests/relay_harness.cpp` (ffmpeg haciendo de OBS y de
   plataforma) contra el FFmpeg estático del plugin: RTMP y RTMPS (certificado y nombre de host

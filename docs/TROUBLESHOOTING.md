@@ -85,10 +85,11 @@ interval is 8 s…"). Set **Keyframe Interval** to 2 s in `Settings → Output` 
 mode). The check runs when the stream starts, so the warning updates on the next stream.
 
 ### Raising the delay doesn't take effect at once
-Up to **Keep for instant raises** (120 s by default) the plugin already holds the seconds it needs.
-Above that, the history doesn't reach back far enough yet: the sender holds until the oldest kept
-keyframe is old enough, so viewers' picture pauses for the difference. Raise "Keep for instant
-raises" before going live if you plan big raises (it costs the bitrate times those seconds of RAM).
+The plugin keeps the last 600 s, so a raise is instant once the stream has run that long. Early in
+a stream the history doesn't reach back far enough yet: the sender holds until the oldest kept
+keyframe is old enough, so viewers' picture pauses for the difference. If the dock's **Instant
+raises** line says "kept in RAM" (the disk couldn't be used for this stream), the plugin keeps only up
+to your delay or highest preset or scene rule: set a preset to the most you plan to raise to.
 
 ### "OBS's own Stream Delay … is on"
 `Settings → Advanced → Stream Delay` adds its fixed delay on top of Dynamic Delay's, and holds
