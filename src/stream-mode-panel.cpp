@@ -25,7 +25,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -134,6 +133,21 @@ QString FontCss(const QString &family, double basePt, double delta, int weight)
 	const double size = std::max(7.5, std::round((basePt + delta) * 2.0) / 2.0);
 	css += QStringLiteral("font-size: %1pt; font-weight: %2;").arg(size, 0, 'f', 1).arg(weight);
 	return css;
+}
+
+// The streamer's OBS service as Settings > Stream names it: the service
+// ("Twitch") or, for a custom server, its host.
+QString ObsServiceName()
+{
+	obs_service_t *service = obs_frontend_get_streaming_service(); // Not a new reference.
+	if (!service)
+		return {};
+	obs_data_t *settings = obs_service_get_settings(service);
+	QString name = QString::fromUtf8(obs_data_get_string(settings, "service"));
+	if (name.isEmpty())
+		name = QString::fromStdString(relay::HostOf(obs_data_get_string(settings, "server")));
+	obs_data_release(settings);
+	return name;
 }
 
 void OnFrontendEvent(enum obs_frontend_event event, void *data)
@@ -327,9 +341,6 @@ void StreamModePanel::BuildUi()
 		auto *layout = new QVBoxLayout(moreCard);
 		layout->setContentsMargins(6, 6, 6, 6);
 		layout->setSpacing(0);
-		destSection_ = AddSection(layout, Tr("Stream.Destinations"), false);
-		BuildDestinations(qobject_cast<QVBoxLayout *>(destSection_->body->layout()));
-		layout->addWidget(MakeDivider(moreCard));
 		rulesSection_ = AddSection(layout, Tr("Stream.Rules"), false);
 		BuildRules(qobject_cast<QVBoxLayout *>(rulesSection_->body->layout()));
 		layout->addWidget(MakeDivider(moreCard));
@@ -387,6 +398,25 @@ QFrame *StreamModePanel::BuildStatusCard()
 	detailLabel_->setWordWrap(true);
 	detailLabel_->setProperty("tgRole", QStringLiteral("muted"));
 	body->addWidget(detailLabel_);
+
+	// Where the stream goes: read only, the streamer's own OBS service, with
+	// the relay's state and rate while it runs.
+	sendsRow_ = new QWidget(statusCard_);
+	{
+		auto *layout = new QHBoxLayout(sendsRow_);
+		layout->setContentsMargins(0, 4, 0, 0);
+		layout->setSpacing(8);
+		sendsLabel_ = new QLabel(sendsRow_);
+		sendsLabel_->setWordWrap(true);
+		sendsLabel_->setToolTip(Tr("Stream.SendsToHelp"));
+		SetRole(sendsLabel_, "hint", ui::FontRole::Hint);
+		sendsState_ = new QLabel(sendsRow_);
+		SetRole(sendsState_, "chip", ui::FontRole::Chip);
+		sendsState_->setVisible(false);
+		layout->addWidget(sendsLabel_, 1);
+		layout->addWidget(sendsState_, 0, Qt::AlignVCenter);
+	}
+	body->addWidget(sendsRow_);
 
 	statsLabel_ = new QLabel(statusCard_);
 	statsLabel_->setWordWrap(true);
@@ -579,59 +609,6 @@ void StreamModePanel::SetSectionOpen(Section &section, bool open)
 void StreamModePanel::BuildWarnings(QVBoxLayout *body)
 {
 	warningsLayout_ = body;
-}
-
-void StreamModePanel::BuildDestinations(QVBoxLayout *body)
-{
-	QWidget *host = body->parentWidget();
-	auto *help = new QLabel(Tr("Stream.Dest.Help"), host);
-	help->setWordWrap(true);
-	SetRole(help, "hint", ui::FontRole::Hint);
-	body->addWidget(help);
-
-	destList_ = new QVBoxLayout();
-	destList_->setSpacing(6);
-	body->addLayout(destList_);
-
-	body->addSpacing(4);
-	auto addField = [this, host, body](QLineEdit *&field, const char *labelKey) {
-		field = new QLineEdit(host);
-		field->setAccessibleName(Tr(labelKey));
-		auto *label = new QLabel(Tr(labelKey), host);
-		SetRole(label, "eyebrow", ui::FontRole::Eyebrow);
-		label->setBuddy(field);
-		body->addWidget(label);
-		body->addWidget(field);
-	};
-	addField(destName_, "Stream.Dest.Name");
-	destName_->setPlaceholderText(Tr("Stream.Dest.NamePlaceholder"));
-	addField(destServer_, "Stream.Dest.Server");
-	destServer_->setPlaceholderText(QStringLiteral("rtmps://"));
-	destServer_->setToolTip(Tr("Stream.Dest.Invalid"));
-	// Right under the server field, only after a click on Add with a bad address.
-	destInvalid_ = new QLabel(Tr("Stream.Dest.Invalid"), host);
-	destInvalid_->setWordWrap(true);
-	SetRole(destInvalid_, "hint", ui::FontRole::Hint);
-	destInvalid_->setProperty("tgTone", QStringLiteral("danger"));
-	destInvalid_->setVisible(false);
-	body->addWidget(destInvalid_);
-	addField(destKey_, "Stream.Dest.Key");
-	destKey_->setEchoMode(QLineEdit::Password);
-	connect(destServer_, &QLineEdit::textChanged, this, [this] {
-		ui::SetStyleProperty(destServer_, "tgInvalid", QStringLiteral("false"));
-		destInvalid_->setVisible(false);
-	});
-
-	destAdd_ = new QPushButton(Tr("Stream.Dest.Add"), host);
-	destAdd_->setProperty("tgVariant", QStringLiteral("secondary"));
-	destAdd_->setProperty("tgSize", QStringLiteral("large"));
-	destAdd_->setFocusPolicy(Qt::TabFocus);
-	destAdd_->setIconSize(kButtonIconBox);
-	SetRole(destAdd_, "button", ui::FontRole::Button);
-	body->addSpacing(2);
-	body->addWidget(destAdd_);
-	connect(destAdd_, &QPushButton::clicked, this, &StreamModePanel::AddDestination);
-	connect(destKey_, &QLineEdit::returnPressed, this, &StreamModePanel::AddDestination);
 }
 
 void StreamModePanel::BuildRules(QVBoxLayout *body)
@@ -921,7 +898,7 @@ QString StreamModePanel::ExtraStyleSheet() const
 	s << QStringLiteral("QPushButton[tgVariant=\"icon\"]:focus { border: 2px solid %1; }").arg(focus);
 
 	s << QStringLiteral(
-		     "QLabel[tgRole=\"tag\"][tgTone=\"danger\"] { color: %1; background-color: %2; border-color: "
+		     "QLabel[tgRole=\"tag\"][tgTone=\"danger\"], QLabel[tgRole=\"chip\"][tgTone=\"danger\"] { color: %1; background-color: %2; border-color: "
 		     "%1; }")
 			.arg(c(t.dangerText), c(t.dangerTint));
 	return s.join(QLatin1Char('\n'));
@@ -1013,15 +990,12 @@ void StreamModePanel::ApplyIcons()
 	SetButtonIcon(dumpButton_, ui::IconId::Scissors, text);
 	SetButtonIcon(cutButton_, ui::IconId::X, text);
 	SetButtonIcon(signInButton_, ui::IconId::ExternalLink, ui::ToQColor(t.onGradient), Qt::AlignRight);
-	SetButtonIcon(destAdd_, ui::IconId::Plus, text);
 	SetButtonIcon(addRule_, ui::IconId::Plus, text);
 	for (const std::unique_ptr<Section> &section : sections_)
 		SetSectionOpen(*section, section->open);
 	if (sceneToggle_)
 		SetButtonIcon(sceneToggle_, sceneOpen_ ? ui::IconId::ChevronDown : ui::IconId::ChevronRight, text);
 	const QColor muted = ui::ToQColor(t.textMuted);
-	for (const DestinationRow &row : destRows_)
-		SetButtonIcon(row.remove, ui::IconId::Trash, muted, Qt::AlignCenter);
 	for (const RuleRow &row : ruleRows_)
 		SetButtonIcon(row.remove, ui::IconId::Trash, muted, Qt::AlignCenter);
 	for (auto &[icon, label] : warningRows_)
@@ -1170,7 +1144,7 @@ void StreamModePanel::AddRuleRow(const std::string &scene, int action, int secon
 	connect(row.remove, &QPushButton::clicked, this, [this, card] { RemoveRuleRow(card); });
 
 	row.remove->setAccessibleName(Tr("Stream.Rules.RemoveName").arg(row.scene->currentText()));
-	row.remove->setToolTip(Tr("Stream.Dest.Remove"));
+	row.remove->setToolTip(Tr("Stream.Rules.Remove"));
 	if (themeApplied_) {
 		SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(theme_.tokens.textMuted), Qt::AlignCenter);
 		for (QWidget *w : row.card->findChildren<QLabel *>())
@@ -1218,162 +1192,25 @@ void StreamModePanel::RulesChanged()
 	SettingsChanged();
 }
 
-// ---- Destinations ----------------------------------------------------------
+// ---- Where the stream goes ------------------------------------------------
 
-void StreamModePanel::AddDestination()
+void StreamModePanel::RefreshDestination(const StreamDelayStatus &status)
 {
-	const QString server = destServer_->text().trimmed();
-	if (!(server.startsWith(QStringLiteral("rtmp://")) || server.startsWith(QStringLiteral("rtmps://")))) {
-		ui::SetStyleProperty(destServer_, "tgInvalid", QStringLiteral("true"));
-		destInvalid_->setVisible(true);
-		destServer_->setFocus(Qt::OtherFocusReason);
+	const bool running = (status.engaged || status.state == StreamDelayState::Draining) &&
+			     !status.relay.sinks.empty();
+	QString name = running ? QString::fromStdString(status.relay.sinks.front().name) : QString();
+	if (name.isEmpty())
+		name = ObsServiceName();
+	sendsLabel_->setText(name.isEmpty() ? Tr("Stream.SendsTo.Default") : Tr("Stream.SendsTo").arg(name));
+	sendsState_->setVisible(running);
+	if (!running)
 		return;
-	}
-	std::vector<ExtraDestination> extras = controller_.ExtraDestinations();
-	ExtraDestination extra;
-	extra.name = destName_->text().trimmed().toStdString();
-	extra.server = server.toStdString();
-	extra.key = destKey_->text().trimmed().toStdString();
-	extras.push_back(extra);
-	controller_.SetExtraDestinations(std::move(extras));
-	destName_->clear();
-	destServer_->clear();
-	destKey_->clear();
-	SettingsChanged();
-	Refresh();
-}
-
-void StreamModePanel::RemoveDestination(int index)
-{
-	std::vector<ExtraDestination> extras = controller_.ExtraDestinations();
-	if (index < 0 || static_cast<size_t>(index) >= extras.size())
-		return;
-	extras.erase(extras.begin() + index);
-	controller_.SetExtraDestinations(std::move(extras));
-	SettingsChanged();
-	Refresh();
-	destName_->setFocus(Qt::TabFocusReason);
-}
-
-void StreamModePanel::RefreshDestinations(const StreamDelayStatus &status)
-{
-	struct Entry {
-		QString name;
-		QString sub;
-		QString state;
-		QString stateTone;
-		QString error;
-		int extraIndex = -1; // Removable when >= 0.
-	};
-	std::vector<Entry> entries;
-	const auto &extras = controller_.ExtraDestinations();
-	const bool live = status.engaged || status.state == StreamDelayState::Draining;
-	if (live && !status.relay.sinks.empty()) {
-		// Sink 0 is the streamer's own OBS service, then the extras in order.
-		const bool mapsToExtras = status.relay.sinks.size() == 1 + extras.size();
-		for (size_t i = 0; i < status.relay.sinks.size(); ++i) {
-			const relay::SinkStatus &sink = status.relay.sinks[i];
-			Entry e;
-			e.name = i == 0 ? Tr("Stream.Dest.Primary") : QString::fromStdString(sink.name);
-			e.state = SinkStateText(sink.state);
-			e.stateTone = SinkStateTone(sink.state);
-			e.sub = sink.state == relay::SinkState::Live
-					? QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps")
-					: Megabytes(sink.bytesSent) + QStringLiteral(" MB");
-			if (!sink.error.empty() && sink.state != relay::SinkState::Live)
-				e.error = QString::fromStdString(sink.error);
-			if (i > 0 && mapsToExtras)
-				e.extraIndex = static_cast<int>(i - 1);
-			entries.push_back(std::move(e));
-		}
-	} else {
-		Entry primary;
-		primary.name = Tr("Stream.Dest.Primary");
-		primary.sub = Tr("Stream.Dest.PrimaryHelp");
-		entries.push_back(std::move(primary));
-		for (size_t i = 0; i < extras.size(); ++i) {
-			const ExtraDestination &extra = extras[i];
-			Entry e;
-			const QString host = QString::fromStdString(relay::HostOf(extra.server));
-			e.name = extra.name.empty() ? host : QString::fromStdString(extra.name);
-			e.sub = host;
-			e.extraIndex = static_cast<int>(i);
-			entries.push_back(std::move(e));
-		}
-	}
-
-	if (entries.size() != destRows_.size()) {
-		for (const DestinationRow &row : destRows_) {
-			row.card->hide();
-			row.card->deleteLater();
-		}
-		destRows_.clear();
-		QWidget *host = destList_->parentWidget();
-		for (size_t i = 0; i < entries.size(); ++i) {
-			DestinationRow row;
-			row.card = new QFrame(host);
-			row.card->setProperty("tgCard", QStringLiteral("inset"));
-			auto *layout = new QHBoxLayout(row.card);
-			layout->setContentsMargins(10, 6, 6, 6);
-			layout->setSpacing(8);
-			auto *texts = new QVBoxLayout();
-			texts->setSpacing(1);
-			row.name = new QLabel(row.card);
-			row.name->setWordWrap(true);
-			SetRole(row.name, "strong", ui::FontRole::Strong);
-			row.sent = new QLabel(row.card);
-			row.sent->setWordWrap(true);
-			SetRole(row.sent, "dataHint", ui::FontRole::DataHint);
-			row.error = new QLabel(row.card);
-			row.error->setWordWrap(true);
-			SetRole(row.error, "hint", ui::FontRole::Hint);
-			row.error->setProperty("tgTone", QStringLiteral("danger"));
-			texts->addWidget(row.name);
-			texts->addWidget(row.sent);
-			texts->addWidget(row.error);
-			row.state = new QLabel(row.card);
-			SetRole(row.state, "tag", ui::FontRole::Tag);
-			row.remove = new QPushButton(row.card);
-			row.remove->setProperty("tgVariant", QStringLiteral("icon"));
-			row.remove->setFocusPolicy(Qt::TabFocus);
-			row.remove->setIconSize(QSize(kInlineIconSize, kInlineIconSize));
-			row.remove->setCursor(Qt::PointingHandCursor);
-			row.remove->setToolTip(Tr("Stream.Dest.Remove"));
-			QPushButton *remove = row.remove;
-			connect(row.remove, &QPushButton::clicked, this,
-				[this, remove] { RemoveDestination(remove->property("tgIndex").toInt()); });
-			layout->addLayout(texts, 1);
-			layout->addWidget(row.state, 0, Qt::AlignVCenter);
-			layout->addWidget(row.remove, 0, Qt::AlignVCenter);
-			if (themeApplied_) {
-				ui::ApplyFont(row.name, ui::FontRole::Strong, theme_.basePt);
-				ui::ApplyFont(row.sent, ui::FontRole::DataHint, theme_.basePt);
-				ui::ApplyFont(row.error, ui::FontRole::Hint, theme_.basePt);
-				ui::ApplyFont(row.state, ui::FontRole::Tag, theme_.basePt);
-				SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(theme_.tokens.textMuted),
-					      Qt::AlignCenter);
-			}
-			destList_->addWidget(row.card);
-			destRows_.push_back(row);
-		}
-	}
-	for (size_t i = 0; i < entries.size(); ++i) {
-		const Entry &e = entries[i];
-		DestinationRow &row = destRows_[i];
-		row.name->setText(e.name);
-		row.sent->setText(e.sub);
-		row.sent->setVisible(!e.sub.isEmpty());
-		row.error->setText(e.error);
-		row.error->setVisible(!e.error.isEmpty());
-		row.state->setText(e.state);
-		row.state->setVisible(!e.state.isEmpty());
-		ui::SetStyleProperty(row.state, "tgTone", e.stateTone);
-		row.remove->setProperty("tgIndex", e.extraIndex);
-		row.remove->setVisible(e.extraIndex >= 0);
-		row.remove->setAccessibleName(Tr("Stream.Dest.RemoveName").arg(e.name));
-	}
-	destSection_->count->setText(QString::number(1 + extras.size()));
-	destSection_->count->setVisible(!extras.empty());
+	const relay::SinkStatus &sink = status.relay.sinks.front();
+	QString state = SinkStateText(sink.state);
+	if (sink.state == relay::SinkState::Live)
+		state += QStringLiteral(" · ") + QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps");
+	sendsState_->setText(state);
+	ui::SetStyleProperty(sendsState_, "tgTone", SinkStateTone(sink.state));
 }
 
 // ---- Refresh ---------------------------------------------------------------
@@ -1661,7 +1498,7 @@ void StreamModePanel::Refresh()
 
 	RefreshStatus(status);
 	RefreshAccount();
-	RefreshDestinations(status);
+	RefreshDestination(status);
 	RefreshWarnings(status);
 	RefreshPresetChips(status.delaySeconds);
 	RefreshModeLines(status);

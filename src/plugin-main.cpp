@@ -341,8 +341,9 @@ QString ModuleConfigPath(const char *file)
 	return path;
 }
 
-// Stream mode settings. The extra destinations' stream keys are kept here the
-// same way OBS keeps the streamer's own key in its service.json.
+// Stream mode settings. The stream goes only to the streamer's own OBS service;
+// a "destinations" array left by a 1.0 pre-release is ignored and dropped on
+// the next save.
 void LoadStreamSettings(trigglow::StreamDelayController &controller)
 {
 	const QString path = ModuleConfigPath(kStreamSettingsFile);
@@ -391,27 +392,9 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		obs_data_array_release(array);
 	}
 	controller.SetSceneRules(std::move(rules));
-	std::vector<trigglow::ExtraDestination> extras;
-	if (obs_data_array_t *array = obs_data_get_array(data, "destinations")) {
-		const size_t count = obs_data_array_count(array);
-		for (size_t i = 0; i < count; ++i) {
-			obs_data_t *item = obs_data_array_item(array, i);
-			trigglow::ExtraDestination extra;
-			extra.name = obs_data_get_string(item, "name");
-			extra.server = obs_data_get_string(item, "server");
-			extra.key = obs_data_get_string(item, "key");
-			extra.enabled = !obs_data_has_user_value(item, "enabled") || obs_data_get_bool(item, "enabled");
-			obs_data_release(item);
-			if (!extra.server.empty())
-				extras.push_back(std::move(extra));
-		}
-		obs_data_array_release(array);
-	}
-	controller.SetExtraDestinations(std::move(extras));
 	obs_data_release(data);
-	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us, %zu extra destination(s))",
-			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds(),
-			  controller.ExtraDestinations().size());
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us)",
+			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds());
 }
 
 void SaveStreamSettings(const trigglow::StreamDelayController &controller)
@@ -440,18 +423,6 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	}
 	obs_data_set_array(data, "scene_rules", rules);
 	obs_data_array_release(rules);
-	obs_data_array_t *array = obs_data_array_create();
-	for (const trigglow::ExtraDestination &extra : controller.ExtraDestinations()) {
-		obs_data_t *item = obs_data_create();
-		obs_data_set_string(item, "name", extra.name.c_str());
-		obs_data_set_string(item, "server", extra.server.c_str());
-		obs_data_set_string(item, "key", extra.key.c_str());
-		obs_data_set_bool(item, "enabled", extra.enabled);
-		obs_data_array_push_back(array, item);
-		obs_data_release(item);
-	}
-	obs_data_set_array(data, "destinations", array);
-	obs_data_array_release(array);
 	obs_data_save_json_safe(data, path.toUtf8().constData(), "tmp", "bak");
 	obs_data_release(data);
 }

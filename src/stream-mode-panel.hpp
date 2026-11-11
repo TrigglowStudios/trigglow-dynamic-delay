@@ -44,7 +44,6 @@ class QCheckBox;
 class QComboBox;
 class QFrame;
 class QLabel;
-class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTimer;
@@ -103,15 +102,6 @@ private:
 		QWidget *body = nullptr;
 		bool open = false;
 	};
-	// One destination in the list: name, state chip, what it sent, remove.
-	struct DestinationRow {
-		QFrame *card = nullptr;
-		QLabel *name = nullptr;
-		QLabel *state = nullptr;
-		QLabel *sent = nullptr;
-		QLabel *error = nullptr;
-		QPushButton *remove = nullptr;
-	};
 	// One scene rule: scene, action, seconds, remove.
 	struct RuleRow {
 		QFrame *card = nullptr;
@@ -127,7 +117,6 @@ private:
 	QFrame *BuildDelayCard();
 	Section *AddSection(QVBoxLayout *parent, const QString &title, bool open);
 	void SetSectionOpen(Section &section, bool open);
-	void BuildDestinations(QVBoxLayout *body);
 	void BuildRules(QVBoxLayout *body);
 	void BuildPresets(QVBoxLayout *body);
 	void BuildOptions(QVBoxLayout *body);
@@ -135,12 +124,10 @@ private:
 
 	void RefreshStatus(const StreamDelayStatus &status);
 	void RefreshAccount();
-	void RefreshDestinations(const StreamDelayStatus &status);
+	void RefreshDestination(const StreamDelayStatus &status);
 	void RefreshWarnings(const StreamDelayStatus &status);
 	void RefreshPresetChips(uint32_t delaySeconds);
 	void RefreshModeLines(const StreamDelayStatus &status);
-	void AddDestination();
-	void RemoveDestination(int index);
 	void AddRuleRow(const std::string &scene, int action, int seconds);
 	void RemoveRuleRow(QFrame *card);
 	void RulesChanged();
@@ -195,6 +182,9 @@ private:
 	QWidget *ruleRow_ = nullptr;
 	QLabel *ruleIcon_ = nullptr;
 	QLabel *ruleLabel_ = nullptr;
+	QWidget *sendsRow_ = nullptr;
+	QLabel *sendsLabel_ = nullptr;
+	QLabel *sendsState_ = nullptr;
 
 	// Account card: only when turning the delay on needs a sign-in.
 	QFrame *accountCard_ = nullptr;
@@ -220,21 +210,12 @@ private:
 	// Sections.
 	std::vector<std::unique_ptr<Section>> sections_;
 	Section *warningsSection_ = nullptr;
-	Section *destSection_ = nullptr;
 	Section *rulesSection_ = nullptr;
 	int lastWarningCount_ = 0;
 
 	QWidget *warningsList_ = nullptr;
 	QVBoxLayout *warningsLayout_ = nullptr;
 	std::vector<std::pair<QLabel *, QLabel *>> warningRows_; // (icon, text)
-
-	QVBoxLayout *destList_ = nullptr;
-	std::vector<DestinationRow> destRows_;
-	QLineEdit *destName_ = nullptr;
-	QLineEdit *destServer_ = nullptr;
-	QLineEdit *destKey_ = nullptr;
-	QLabel *destInvalid_ = nullptr;
-	QPushButton *destAdd_ = nullptr;
 
 	QVBoxLayout *rulesList_ = nullptr;
 	std::vector<RuleRow> ruleRows_;
