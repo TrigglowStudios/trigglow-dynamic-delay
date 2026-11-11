@@ -1,9 +1,22 @@
 """Minimal RTMP peers for measuring the stream mode relay (tests only).
 
-  python -I rtmp_peers.py sink PORT OUT.flv [CHUNK]
-      A "platform": accepts one publisher on 127.0.0.1:PORT, answers the
+  python -I rtmp_peers.py sink PORT OUT.flv [CHUNK] [MODE]
+      A "platform": accepts a publisher on 127.0.0.1:PORT, answers the
       handful of commands a publisher sends, announces CHUNK (default 4096)
-      as its chunk size, and writes what it receives to OUT.flv.
+      as its chunk size, and writes what it receives to OUT.flv. It prints
+      whether the publisher's handshake carried FFmpeg's (Flash Player's)
+      digest, its flashVer, the chunk size it announced and the largest
+      chunk it sent. MODE:
+        pings    also sends a ping request every 2 s and a 4-byte window
+                 acknowledgement size (the publisher must acknowledge);
+                 prints how many pings were answered
+        kick     10 s into the first connection, an error status
+                 (NetStream.Publish.Failed) and a close; takes the
+                 publisher's next connections (OUT.2.flv, ...)
+        dropown  closes any connection whose connect says "FMSc" (the
+                 relay's own RTMP, OBS's flashVer) without an answer; takes
+                 the next connections (the relay falls back to FFmpeg's
+                 client, "Lavf")
   python -I rtmp_peers.py publish URL KEY SRC.flv
       An "OBS": publishes SRC.flv in real time (like ffmpeg -re) the way OBS's
       librtmp does: 4096-byte chunks, one send per chunk.
@@ -13,6 +26,8 @@ mirrors whatever the server announces, so ffmpeg on both ends makes the relay
 read and write 128-byte chunks: about 6000 of them per second at 6 Mbps. OBS
 and the big ingest servers use 4096 or more. docs/STREAM_MODE.md, "CPU".
 """
+import hashlib
+import hmac
 import socket
 import struct
 import sys
@@ -44,7 +59,7 @@ def amf_obj(d):
 
 
 def amf_read(b, i):
-    """One AMF0 value at b[i]: (value, next index). Objects are skipped."""
+    """One AMF0 value at b[i]: (value, next index)."""
     t = b[i]
     if t == 0:
         return struct.unpack('>d', b[i + 1:i + 9])[0], i + 9
@@ -57,12 +72,14 @@ def amf_read(b, i):
         return None, i + 1
     if t in (3, 8):
         i += 1 if t == 3 else 5
+        obj = {}
         while True:
             n = struct.unpack('>H', b[i:i + 2])[0]
+            key = b[i + 2:i + 2 + n].decode('utf-8', 'replace')
             i += 2 + n
             if n == 0 and b[i] == 9:
-                return {}, i + 1
-            _, i = amf_read(b, i)
+                return obj, i + 1
+            obj[key], i = amf_read(b, i)
     raise ValueError('amf type %d' % t)
 
 
@@ -73,6 +90,7 @@ class Conn:
         self.buf = bytearray()
         self.in_chunk = 128
         self.out_chunk = 128
+        self.max_chunk = 0  # Largest chunk payload read.
         self.prev = {}  # csid -> [ts, length, type, stream, delta]
         self.partial = {}  # csid -> bytearray
         self.lock = threading.Lock()
@@ -125,6 +143,7 @@ class Conn:
                     p[0] += p[4]
             part = self.partial.setdefault(csid, bytearray())
             n = min(self.in_chunk, p[1] - len(part))
+            self.max_chunk = max(self.max_chunk, n)
             part += self.take(n)
             if len(part) >= p[1]:
                 payload = bytes(part)
@@ -175,18 +194,58 @@ def parse_command(payload):
 
 
 # ------------------------------------------------------------------ sink --
-def sink(port, out_path, chunk):
+PLAYER_KEY = b'Genuine Adobe Flash Player 001'
+
+
+def c1_digest_ok(c1):
+    """FFmpeg's client (and Flash Player) sign C1 with an HMAC at an offset
+    bytes 8-11 select (rtmpproto.c, rtmp_handshake_imprint_with_digest)."""
+    pos = sum(c1[8:12]) % 728 + 12
+    want = hmac.new(PLAYER_KEY, c1[:pos] + c1[pos + 32:], hashlib.sha256).digest()
+    return want == c1[pos:pos + 32]
+
+
+def sink(port, out_path, chunk, mode=''):
     ls = socket.socket()
     ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ls.bind(('127.0.0.1', port))
     ls.listen(1)
     print('LISTENING', port, flush=True)
-    s, _ = ls.accept()
+    n = 0
+    while True:
+        if n > 0:
+            if mode not in ('kick', 'dropown'):
+                break
+            ls.settimeout(30)
+        try:
+            s, _ = ls.accept()
+        except socket.timeout:
+            break
+        n += 1
+        serve(s, out_path if n == 1 else '%s.%d.flv' % (out_path[:-4], n), chunk, mode, n)
+
+
+def serve(s, out_path, chunk, mode, n):
+    pings = mode == 'pings'
     s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     c = Conn(s)
     c0c1 = c.take(1537)
+    print('CONN %d HANDSHAKE version=%d digest=%s' % (n, c0c1[0], 'ok' if c1_digest_ok(c0c1[1:]) else 'none'),
+          flush=True)
     s.sendall(b'\x03' + bytes(1536) + c0c1[1:])
     c.take(1536)
+    pongs = set()
+    pinged = [0]
+    acks = [0]
+    stop = threading.Event()
+
+    def pinger():
+        while not stop.wait(2.0):
+            pinged[0] += 1
+            try:
+                c.send_message(2, 4, 0, 0, struct.pack('>HI', 6, pinged[0]))
+            except OSError:
+                return
     out = open(out_path, 'wb')
     out.write(b'FLV\x01\x05\x00\x00\x00\x09\x00\x00\x00\x00')
     tags = 0
@@ -196,7 +255,13 @@ def sink(port, out_path, chunk):
             if mtype == 20:
                 name, txn, args = parse_command(payload)
                 if name == 'connect':
-                    c.send_message(2, 5, 0, 0, struct.pack('>I', 5000000))
+                    flash = args[0].get('flashVer', '') if args and isinstance(args[0], dict) else ''
+                    print('CONN %d CONNECT flashVer=%r' % (n, flash), flush=True)
+                    if mode == 'dropown' and 'FMSc' in flash:
+                        print('CONN %d DROPPED' % n, flush=True)
+                        break
+                    # With pings, a tiny window: the publisher must acknowledge.
+                    c.send_message(2, 5, 0, 0, struct.pack('>I', 4 if pings else 5000000))
                     c.send_message(2, 6, 0, 0, struct.pack('>IB', 5000000, 2))
                     c.set_chunk(chunk)
                     command(c, 0, '_result', txn, amf_obj({'fmsVer': 'FMS/3,0,1,123', 'capabilities': 31}),
@@ -207,11 +272,23 @@ def sink(port, out_path, chunk):
                 elif name == 'publish':
                     command(c, stream, 'onStatus', 0, amf_null(),
                             amf_obj({'level': 'status', 'code': 'NetStream.Publish.Start', 'description': 'ok'}))
+                    if pings:
+                        threading.Thread(target=pinger, daemon=True).start()
                 elif name in ('releaseStream', 'FCPublish'):
                     command(c, 0, '_result', txn, amf_null(), amf_null())
                 elif name in ('deleteStream', 'FCUnpublish', 'closeStream'):
                     pass
+            elif mtype == 4 and len(payload) >= 6 and struct.unpack('>H', payload[:2])[0] == 7:
+                pongs.add(struct.unpack('>I', payload[2:6])[0])
+            elif mtype == 3:
+                acks[0] += 1
             elif mtype in (8, 9, 18):
+                if mode == 'kick' and n == 1 and mtype != 18 and ts >= 10000:
+                    command(c, stream, 'onStatus', 0, amf_null(),
+                            amf_obj({'level': 'error', 'code': 'NetStream.Publish.Failed', 'description': 'kicked'}))
+                    print('CONN %d KICKED at ts=%d' % (n, ts), flush=True)
+                    time.sleep(0.2)
+                    break
                 if mtype == 18 and payload.startswith(amf_str('@setDataFrame')):
                     payload = payload[len(amf_str('@setDataFrame')):]
                 out.write(bytes([mtype]) + len(payload).to_bytes(3, 'big') + (ts & 0xFFFFFF).to_bytes(3, 'big') +
@@ -220,8 +297,11 @@ def sink(port, out_path, chunk):
                 tags += 1
     except (EOFError, ConnectionError, OSError):
         pass
+    stop.set()
     out.close()
-    print('SINK DONE tags=%d' % tags, flush=True)
+    s.close()
+    print('CONN %d SINK DONE tags=%d chunk_in=%d max_chunk=%d pings=%d pongs=%d acks=%d' %
+          (n, tags, c.in_chunk, c.max_chunk, pinged[0], len(pongs), acks[0]), flush=True)
 
 
 # --------------------------------------------------------------- publish --
@@ -306,6 +386,7 @@ def publish(url, key, src):
 
 if __name__ == '__main__':
     if sys.argv[1] == 'sink':
-        sink(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 4096)
+        sink(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 4096,
+             sys.argv[5] if len(sys.argv) > 5 else '')
     else:
         publish(sys.argv[2], sys.argv[3], sys.argv[4])

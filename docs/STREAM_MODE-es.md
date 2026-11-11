@@ -19,7 +19,7 @@ envía más tarde. No se decodifica ni se vuelve a codificar nada; la CPU solo c
 historial es el bitrate del stream por los segundos guardados (45 MB por minuto a 6 Mbps), y casi
 todo espera en un archivo temporal cifrado en el disco, así que la RAM que ocupa es más o menos la
 misma con cualquier delay (ver Memoria y disco). Su CPU es de 1 a 1,5 s por minuto de stream con
-Twitch, Kick o Facebook, y unos 10 más por cada destino de YouTube (ver CPU).
+Twitch, Kick, Facebook o YouTube (ver CPU).
 
 ## Memoria y disco
 
@@ -77,49 +77,81 @@ en RAM solo lo que está a punto de enviarse.
 
 ## CPU
 
-La CPU del relay es casi toda del sistema operativo moviendo los bytes de RTMP por los sockets, y
-cuánta depende del tamaño de los chunks RTMP a cada lado, que el relay no elige:
+La CPU del relay es casi toda del sistema operativo moviendo los bytes de RTMP por los sockets, así
+que lo que cuenta es cuántas lecturas y escrituras necesita el stream a cada lado:
 
 - **Desde OBS.** OBS envía chunks de 4096 bytes, una escritura por chunk (`obs-outputs`:
   `rtmp-stream.c` pone `m_outChunkSize = 4096`; librtmp escribe cada chunk con su cabecera). A 6
   Mbps el listener de FFmpeg del relay lee unos 190 chunks por segundo.
-- **Hacia la plataforma.** El cliente RTMP de FFmpeg (FFmpeg 9.0.2, `rtmppkt.c`) escribe cada chunk
-  con dos llamadas a `send()` (el chunk y luego la cabecera de un byte del siguiente), cada una tras
-  un `select()`. Empieza con chunks de 128 bytes y solo cambia al tamaño que anuncia el servidor.
-  Twitch, Kick (Amazon IVS) y Facebook anuncian 4096 bytes al conectar el relay; YouTube (RTMP y
-  RTMPS) no anuncia nada, así que FFmpeg se queda en 128 bytes: unos 6000 chunks y 12.000 envíos
-  diminutos por segundo a 6 Mbps. FFmpeg no tiene opción para cambiarlo.
+- **Hacia la plataforma.** El relay tiene su propia capa RTMP para los destinos `rtmp://` y
+  `rtmps://` (`src/rtmp-wire.*`, `src/rtmp-publisher.*`). Anuncia chunks de 4096 bytes a todos los
+  servidores, como OBS, y escribe cada lote de paquetes que toca enviar en unas pocas escrituras
+  grandes (de hasta 32 KB, a través del buffer de E/S de FFmpeg), anuncie el servidor el tamaño que
+  anuncie. El muxer FLV de FFmpeg sigue construyendo las etiquetas (cabeceras de códec, RTMP
+  mejorado) y la conexión sigue siendo el TCP o el TLS de FFmpeg (SChannel en Windows, con sus
+  comprobaciones de nombre de host y certificado), así que solo es nuevo el troceado RTMP de en
+  medio. El handshake, `connect` (con el `flashVer` de OBS), `releaseStream`, `FCPublish`,
+  `createStream` y `publish` siguen al cliente de FFmpeg.
+- **Antes** (el modo stream hasta este cambio), el stream lo enviaba el cliente RTMP de FFmpeg
+  (FFmpeg 9.0.2, `rtmppkt.c`). Escribe cada chunk con dos llamadas a `send()` (el chunk y luego la
+  cabecera de un byte del siguiente), cada una tras un `select()`, y se queda en chunks de 128 bytes
+  salvo que el servidor anuncie un tamaño. Twitch, Kick (Amazon IVS) y Facebook anuncian 4096 bytes
+  al conectar el relay; YouTube (RTMP y RTMPS) no anuncia nada, así que FFmpeg se quedaba en 128
+  bytes: unos 6000 chunks y 12.000 envíos diminutos por segundo a 6 Mbps, unos 10 s de CPU por
+  minuto por cada destino de YouTube. FFmpeg no tiene opción ni API pública para cambiarlo.
+
+Los mensajes del servidor (peticiones de ping, acuses de recibo, un estado de error) los lee el
+propio hilo del destino entre escrituras, nunca durante una: la conexión pasa a no bloqueante solo
+para esa lectura, como mucho cada 100 ms (cada 250 ms si no se está enviando nada), que es lo que
+hace el propio cliente de FFmpeg tras cada escritura. Se responden los pings, se envían los acuses
+según la ventana del servidor, y un estado de error (o que el servidor cierre) termina la conexión,
+que se reconecta como cualquier otro fallo. avio.h no tiene llamada para ese cambio, así que el
+relay pone el indicador a través de los primeros campos del contexto de conexión de FFmpeg, tras
+comprobar que lo es (su nombre de clase, la URL con la que se abrió, sus indicadores).
+
+El cliente de FFmpeg sigue para otras URL y como respaldo: si esa comprobación falla (un FFmpeg
+compilado de otra forma), o si un servidor corta dos veces seguidas la preparación RTMP del relay
+antes de `publish` (cierra, no responde o envía algo ilegible; una parada, un error de red o un
+rechazo no cuentan), ese destino usa el cliente de FFmpeg el resto del stream, y el log lo dice. Un
+servidor que cuelga justo después de `publish` se toma como una clave de stream incorrecta, no como
+un fallo del RTMP del relay (Twitch, YouTube y Kick cierran la conexión con una clave incorrecta,
+también con el cliente de FFmpeg); el error ahora lo dice.
 
 Medido con `tests/relay_harness.cpp` (el relay en su propio proceso; CPU solo de ese proceso) y los
-pares de `tools/relay-cpu/` (`rtmp_peers.py` publica como OBS y hace de plataforma), un stream x264
-de 6,2 Mbps (1920x1080 30 fps, CBR, `-g 60 -bf 2`, AAC 160 kbps), 300 s, con el delay puesto cuando
-el stream de OBS llega al relay. Windows 11, Ryzen 7 7700X, 11-11-2026. Segundos de CPU por minuto
-de stream mientras OBS y el destino envían a la vez (entre paréntesis, ciclos de CPU exactos, en
-millones por segundo):
+pares de `tools/relay-cpu/` (`rtmp_peers.py` publica como OBS y hace de plataforma, que anuncia 4096
+bytes o nada), un stream x264 de 6,2 Mbps (1920x1080 30 fps, CBR, `-g 60 -bf 2`, AAC 160 kbps),
+300 s, con el delay puesto cuando el stream de OBS llega al relay. Windows 11, Ryzen 7 7700X,
+11-11-2026, cuatro relays a la vez. Segundos de CPU por minuto de stream mientras OBS y el destino
+envían a la vez (entre paréntesis, ciclos de CPU exactos, en millones por segundo; los segundos de
+CPU son el muestreo de Windows por tic de reloj, los ciclos son la cifra más estable):
 
-| Delay | Antes: ffmpeg como OBS y como plataforma (el montaje del benchmark) | OBS, plataforma que anuncia 4096 bytes (Twitch, Kick, Facebook) | OBS, plataforma que no anuncia nada (YouTube) |
-|---|---|---|---|
-| 0 s | 12,4 s | 0,9 s (88) | 11,1 s (772) |
-| 10 s | 12,9 s | 1,4 s (91) | 10,2 s (769) |
-| 120 s | 11,9 s | 1,6 s (97) | 10,4 s (778) |
-| 120 s, solo OBS (antes de que pase el delay) | 3,7 s | 0,7 s (41) | 0,7 s (39) |
-| 120 s, solo envío (vaciando tras parar) | 8,5 s | 0,9 s (73) | 9,6 s (693) |
+| Delay | Antes, plataforma que anuncia 4096 bytes (Twitch, Kick, Facebook) | Antes, plataforma que no anuncia nada (YouTube) | Ahora, 4096 bytes | Ahora, nada (YouTube) |
+|---|---|---|---|---|
+| 0 s | 0,9 s (88) | 11,1 s (772) | 1,0 s (78) | 0,6 s (74) |
+| 10 s | 1,4 s (91) | 10,2 s (769) | 1,5 s (77) | 0,9 s (76) |
+| 120 s | 1,6 s (97) | 10,4 s (778) | 1,6 s (86) | 0,9 s (90) |
+| 120 s, solo OBS (antes de que pase el delay) | 0,7 s (41) | 0,7 s (39) | 0,9 s (46) | 0,3 s (54) |
+| 120 s, solo envío (vaciando tras parar) | 0,9 s (73) | 9,6 s (693) | 0,9 s (57) | 0,8 s (56) |
 
-El código del relay es el mismo en las tres columnas. Los 14-20 s de CPU por minuto de
-`docs/BENCHMARK-buffer-storage.md` salían de usar ffmpeg como OBS y como plataforma: el servidor
-RTMP de ffmpeg anuncia 128 bytes y el cliente de ffmpeg lo copia, así que los dos sockets del relay
-llevaban chunks de 128 bytes (el hilo de entrada se despertaba unas 10.000 veces por segundo). Con
-OBS y Twitch, Kick o Facebook, el modo stream gasta de 1 a 1,5 s de CPU por minuto de stream (un 2-3
-% de un núcleo). Cada destino de YouTube suma unos 10 (una sexta parte de un núcleo).
+La versión anterior, ejecutada otra vez junto a estas (10 s, sin tamaño anunciado): 11,2 s (832).
+Con la plataforma enviando además una petición de ping cada 2 s y una ventana de acuses de 4 bytes
+(10 s, sin tamaño anunciado): 1,3 s (83), los 153 pings respondidos. Así que el modo stream gasta
+ahora de 1 a 1,5 s de CPU por minuto de stream (un 2-3 % de un núcleo) con Twitch, Kick, Facebook o
+YouTube; un destino de YouTube ya no suma una sexta parte de un núcleo.
 
-Lo que se comprobó y no es el coste:
+Los 14-20 s de CPU por minuto de `docs/BENCHMARK-buffer-storage.md` salían de usar ffmpeg como OBS y
+como plataforma: el servidor RTMP de ffmpeg anuncia 128 bytes y el cliente de ffmpeg lo copia, así
+que los dos sockets del relay llevaban chunks de 128 bytes (el hilo de entrada se despertaba unas
+10.000 veces por segundo; 12-13 s de CPU por minuto con el cliente de FFmpeg enviando).
+
+Lo que se comprobó y no es el coste (con el cliente de FFmpeg enviando):
 
 - **Los hilos del propio relay.** Muestreados por hilo (muestras de pila, `QueryThreadCycleTime`,
   cambios de contexto, 60 s con delay 10, pares tipo OBS y plataforma de 4096 bytes): el envío, 70
   millones de ciclos por segundo, el 85 % en el kernel dentro de `send()`/`select()`; el listener,
   46 millones, un tercio en el kernel; el hilo de E/S del volcado, 5 millones. Todo el tiempo en
   modo usuario junto (incluidos el demuxer y el muxer de FFmpeg) es de unos 0,4 s de CPU por
-  minuto. Con una plataforma de 128 bytes, solo el envío son unos 700 millones de ciclos por
+  minuto. Con una plataforma de 128 bytes, solo el envío eran unos 700 millones de ciclos por
   segundo, el 96 % en el kernel.
 - **Esperas.** No hay esperas activas: `condition_variable::wait_for` de MSVC redondea hacia arriba
   a milisegundos enteros, cada envío duerme hasta que toca su siguiente paquete (100-200
@@ -130,14 +162,13 @@ Lo que se comprobó y no es el coste:
   muestras.
 - **`TCP_NODELAY` desactivado** en el socket del destino (Nagle junta las escrituras pequeñas de
   FFmpeg): de 9,8 a 8,3 s de CPU por minuto con chunks de 128 bytes, sin cambio con 4096. No
-  compensa la latencia extra, así que sigue activado.
+  compensa la latencia extra, así que sigue activado (con las escrituras grandes del relay da igual
+  en un sentido u otro).
 
-Sin hacer: enviar a YouTube al coste de OBS exige que el relay escriba los chunks RTMP él mismo
-(anunciar 4096 bytes, una escritura por chunk o por lote) en vez del cliente de FFmpeg; FFmpeg no
-tiene opción ni API pública para ello. Después habría que comprobarlo con las plataformas reales.
-Tampoco se midió: RTMPS hacia un servidor de 128 bytes, donde cada una de esas escrituras pequeñas
-es además su propio registro TLS; YouTube con una clave de stream válida (la sonda solo conectó, y
-publicó con una clave no válida: sin tamaño de chunk en ningún caso).
+Sin hacer: una plataforma real con una clave de stream válida (Twitch, YouTube y Kick, RTMP y
+RTMPS; ver Estado de la verificación). RTMPS hacia un servidor que no anuncia nada ya no necesita
+una medida aparte: el relay hace las mismas escrituras grandes, y por tanto los mismos pocos
+registros TLS, con cualquier servidor.
 
 ## Cómo funciona
 
@@ -361,6 +392,24 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
   vídeo estrictamente creciente, ningún salto de DTS de más de 200 ms (el mayor: 34 ms en vídeo, 96
   ms en audio), decodifica sin errores. El tamaño de chunk de los ingest públicos se leyó con un
   connect RTMP anónimo (sin clave de stream, sin publicar nada).
+- La capa RTMP propia del relay (11-11-2026, Windows 11): `rtmp_wire_tests` (AMF0 en los dos
+  sentidos, chunks escritos y leídos de vuelta a 128, 4096 y 60000 bytes, alimentados byte a byte,
+  cabeceras comprimidas de un servidor intercaladas, Set Chunk Size, Abort, marcas de tiempo
+  extendidas, entrada malformada y aleatoria, etiquetas FLV a mensajes con `@setDataFrame`, URL de
+  servidor). Con `tests/relay_harness.cpp` y los pares tipo OBS, contra una plataforma que anuncia
+  4096 bytes y otra que no anuncia nada: las pruebas estables a 0, 10 y 120 s, los cambios en
+  directo `4:3,10:8,18:2,24:0`, una subida de 10 a 300 s en t=200 (190 s repetidos desde el
+  volcado), una plataforma que hace ping cada 2 s con una ventana de acuses de 4 bytes (153 de 153
+  pings respondidos), una plataforma que termina el stream con un estado de error a los 10 s (el
+  relay reconectó 2 s después) y otra que corta el RTMP del relay tras `connect` (dos veces, y luego
+  siguió el cliente de FFmpeg). La plataforma vio el digest de handshake que envía el cliente de
+  FFmpeg, y chunks de 4096 bytes del relay. Cada salida: cada paquete idéntico byte a byte a un
+  paquete del origen (sha256), DTS de vídeo estrictamente creciente, ningún salto de DTS de más de
+  200 ms (el mayor: 34 ms en vídeo, 91 ms en audio), decodifica sin errores. Contra los ingest
+  reales con una clave no válida (`invalid-probe`, sin publicar nada): Twitch (RTMP y RTMPS), YouTube
+  (RTMP y RTMPS) y Kick (RTMPS) completaron el TLS, el handshake, `connect` y `createStream`, y
+  cerraron la conexión tras `publish`, igual que con el cliente de FFmpeg. Aún sin probar: un stream
+  con una clave válida en cualquiera de ellos.
 - Aún sin probar: una plataforma real (Twitch por RTMP, Kick por RTMPS, YouTube con HEVC por
   enhanced RTMP) mirando su reproductor, el dock a mano (también la línea nueva "Subidas al
   instante"), el volcado dentro de un OBS real, el volcado en marcha en macOS (aquí no se compila) y

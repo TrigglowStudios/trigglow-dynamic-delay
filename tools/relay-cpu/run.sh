@@ -8,7 +8,8 @@
 # 4096-byte chunks: Twitch, Kick, Facebook), "obs128" (same publisher,
 # platform announcing nothing: 128-byte chunks, like YouTube), or "ffmpeg"
 # (ffmpeg -re as OBS and ffmpeg -listen as the platform: 128-byte chunks both
-# ways). SCRIPT, KEEP, MAX, SPILLMB: relay_harness's arguments. Work files go to
+# ways). SINK_EXTRA=pings|kick|dropown: the platform's MODE (rtmp_peers.py).
+# SCRIPT, KEEP, MAX, SPILLMB: relay_harness's arguments. Work files go to
 # $WORK (default /e/dd-cpu-work): logs/NAME.log (the harness's status lines),
 # out/NAME.flv (what the platform received).
 NAME=$1 SRC=$2 SCRIPT=$3 KEEP=$4 MAX=$5 SPILL=$6 PORT=$7 HD=$8 PEERS=$9
@@ -21,7 +22,7 @@ if [ "$PEERS" = ffmpeg ]; then
 		-map 0 -c copy -f flv "$O/$NAME.flv" > "$L/$NAME.listener.log" 2>&1 &
 	sleep 2
 else
-	python -I "$P" sink "$PORT" "$O/$NAME.flv" "${PEERS#obs}" > "$L/$NAME.listener.log" 2>&1 &
+	python -I "$P" sink "$PORT" "$O/$NAME.flv" "${PEERS#obs}" ${SINK_EXTRA:-} > "$L/$NAME.listener.log" 2>&1 &
 	sleep 1
 fi
 LPID=$!
