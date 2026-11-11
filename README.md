@@ -245,7 +245,8 @@ contains the `obs-trigglow-dynamic-delay` folder) and restart OBS. Don't copy an
    enable it.
 2. In the dock, pick your **live scene** (required — the scene with your real content) and,
    optionally, a **loading scene** to show while the buffer fills instead of staying on the
-   undelayed live scene. Set **Delay (seconds)** (1–60) and the **minimum quality** floor (480p,
+   undelayed live scene (if you choose none, a Trigglow "Adding delay" video shows: "Trigglow
+   (default)" in the picker). Set **Delay (seconds)** (1–60) and the **minimum quality** floor (480p,
    720p, 1080p, 1440p (2K) or 2160p (4K)) the delayed video won't drop below to save RAM (it's never
    stored above OBS's output resolution either: with a 720p output the buffer is 720p even with a
    1080p minimum). The dock shows a live estimate of whether your chosen seconds actually fit in RAM

@@ -420,6 +420,17 @@ public:
 	// yet (EnsureBufferWrapperScene hasn't been called/succeeded).
 	bool ShowBufferWrapperScene() const;
 
+	// The scene to show while the delay fills when the user chose no loading
+	// scene: autonames::kDefaultLoadingScene, holding the bundled "adding
+	// delay" video (data/videos, in OBS's language) looping and fitted to the
+	// canvas. Created the first time, reused after; the video file is
+	// re-pointed on every call so a change of OBS language follows. Returns
+	// its name, or an empty string when it can't be made (video missing, the
+	// name taken by something that isn't a scene, or a core-only build, whose
+	// host has its own loading view) -- the delayed view then stays blank, as
+	// before.
+	std::string EnsureDefaultLoadingScene() const;
+
 	// --- Audio delay orchestration ---
 	//
 	// AudioDelayFilter can't be attached to the live SCENE the way

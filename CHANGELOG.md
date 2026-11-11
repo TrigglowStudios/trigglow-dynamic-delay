@@ -4,7 +4,7 @@
 
 ## v0.7.3 — 2026-11-11 (Early Access)
 
-A branding release: the delay doesn't change.
+A branding release with a default loading screen: the delay itself doesn't change.
 
 **Before you update:** nothing to do. Install it like v0.7.2; your scenes, settings, hotkeys and
 sign-in are kept.
@@ -14,6 +14,11 @@ sign-in are kept.
   viewers see during a delay, the installer's icon and its small logo on the inner pages. The installer's Welcome and Finished banner
   drops the purple haze, and the name under the logo is now solid white. They show
   the Trigglow T inside the stopwatch instead of the old play button.
+- **A loading screen by default.** If you don't choose a loading scene, the plugin now shows a
+  calm Trigglow "Adding delay" video (in Spanish when OBS is in Spanish) while the delay fills,
+  instead of a blank screen. It lives in its own scene, "Trigglow Delay Loading (auto)", that the
+  plugin creates the first time; the dock's loading-scene picker shows it as "Trigglow (default)".
+  The delay badge with your seconds still shows over the delayed stream as before.
 
 ## v0.7.2 — 2026-11-02 (Early Access)
 

@@ -139,7 +139,11 @@ States: `Inactive → Filling → Active`, with `Error` reachable from any state
    nothing at all, so without this the ring buffer would just sit empty for the whole wait. (Audio
    doesn't need this: a leaf source's own audio pipeline runs continuously regardless of Program
    visibility — only video rendering needed forcing.)
-4. Switches Program to the optional loading scene (or leaves the live scene up if none was chosen).
+4. Switches Program to the loading scene: the one chosen, or else the default "Trigglow Delay
+   Loading (auto)" scene with the bundled "adding delay" video (`data/videos/adding-delay-en.mp4`
+   or `-es.mp4`, by OBS locale), created on first use by
+   `ObsFrontendBridge::EnsureDefaultLoadingScene()`. Only if that can't be made does the live scene
+   stay up.
 5. Once the dock's own fill timer reaches `delaySeconds`, switches Program to the wrapper scene, which
    is now showing the delayed buffered content — **an internal scene switch only**, the streaming
    output never sees this happen.
@@ -250,8 +254,9 @@ re-arms its fill timer only when it changes, so other status updates while filli
 toggled, its corner changed) no longer restart the countdown and the switch to the wrapper. For a
 change it makes itself (`SetDelaySeconds()` / `SetMinResolutionHeight()` while `Active`), the
 controller predicts the restart with `EstimateBufferFit()` and switches Program before pushing the
-setting. Without a loading scene, Program stays on the blank wrapper, never on the undelayed live
-scene. Since v0.6.0 the dock locks the live and loading scenes, the seconds and the minimum quality
+setting. Without a loading scene the default video scene is shown; only if it can't be made does
+Program stay on the blank wrapper, never on the undelayed live scene. Since v0.6.0 the dock locks
+the live and loading scenes, the seconds and the minimum quality
 while `Filling`/`Active` (a disabled control is also out of the tab order), and the filters only
 apply the dock's values (below), so in practice restarts come from OBS video resets.
 

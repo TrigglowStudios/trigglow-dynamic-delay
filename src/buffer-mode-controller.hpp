@@ -313,6 +313,9 @@ private:
 	// included -- in Filling it starts the fill window over).
 	bool BufferRestartsWith(uint32_t previousDelaySeconds, uint32_t previousMinResolutionHeight) const;
 	void ShowLoadingSceneForRefill();
+	// The scene Program shows while the ring fills: the chosen loading scene,
+	// or the default one with the Trigglow video (empty if neither exists).
+	std::string LoadingSceneToShow() const;
 	void EnterRefill(const char *reason);
 	void OnBufferRestarted();
 

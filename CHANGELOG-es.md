@@ -4,7 +4,7 @@
 
 ## v0.7.3 — 2026-11-11 (Early Access)
 
-Una versión de imagen: el delay no cambia.
+Una versión de imagen con pantalla de carga por defecto: el delay en sí no cambia.
 
 **Antes de actualizar:** nada que hacer. Se instala como la v0.7.2; tus escenas, ajustes, atajos e
 inicio de sesión se mantienen.
@@ -15,6 +15,12 @@ inicio de sesión se mantienen.
   pequeño en las páginas interiores. El banner de bienvenida y de finalización del instalador pierde
   la neblina morada, y el nombre bajo el logo pasa a blanco sólido. Llevan la T de Trigglow dentro del cronómetro en lugar del
   antiguo botón de play.
+- **Pantalla de carga por defecto.** Si no eliges escena de carga, el plugin muestra ahora un vídeo
+  tranquilo de Trigglow "Poniendo delay" (en inglés si OBS no está en español) mientras se llena el
+  delay, en lugar de una pantalla en blanco. Vive en su propia escena, "Trigglow Delay Loading
+  (auto)", que el plugin crea la primera vez; el selector de escena de carga del dock la muestra como
+  "Trigglow (por defecto)". La insignia de delay con tus segundos sigue saliendo sobre el directo
+  retrasado como antes.
 
 ## v0.7.2 — 2026-11-02 (Early Access)
 

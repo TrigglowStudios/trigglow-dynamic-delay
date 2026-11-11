@@ -135,6 +135,19 @@ bool IsWrapperSceneName(std::string_view name)
 	return name == kWrapperScene || Contains(kLegacyWrapperScenes, name);
 }
 
+bool IsDefaultLoadingSceneName(std::string_view name)
+{
+	return name == kDefaultLoadingScene;
+}
+
+std::string DefaultLoadingVideoFile(std::string_view locale)
+{
+	const bool spanish = locale.size() >= 2 && (locale[0] == 'e' || locale[0] == 'E') &&
+			     (locale[1] == 's' || locale[1] == 'S') &&
+			     (locale.size() == 2 || locale[2] == '-' || locale[2] == '_');
+	return spanish ? "videos/adding-delay-es.mp4" : "videos/adding-delay-en.mp4";
+}
+
 RenamePlan PlanRename(bool legacyExists, bool currentNameTaken)
 {
 	if (!legacyExists)

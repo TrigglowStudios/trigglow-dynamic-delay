@@ -205,6 +205,10 @@ Source: "{#PluginStageDir}\data\locale\en-US.ini"; DestDir: "{app}\data\locale";
 Source: "{#PluginStageDir}\data\locale\es-ES.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
 ; v0.5.x overlay badge frame, kept as a fallback (src/overlay-badge.cpp).
 Source: "{#PluginStageDir}\data\images\delay-badge.png"; DestDir: "{app}\data\images"; Flags: ignoreversion
+; Default loading video, shown while the delay fills when no loading scene is
+; chosen (ObsFrontendBridge::EnsureDefaultLoadingScene).
+Source: "{#PluginStageDir}\data\videos\adding-delay-en.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\videos\adding-delay-es.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
 ; Brand fonts for the dock and the overlay (Archivo, Geist Mono; SIL OFL 1.1),
 ; with their licenses next to them as the OFL requires.
 Source: "{#PluginStageDir}\data\fonts\*.ttf"; DestDir: "{app}\data\fonts"; Flags: ignoreversion

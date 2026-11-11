@@ -79,7 +79,10 @@ std::vector<std::string> BufferModeController::ListAvailableScenes() const
 {
 	std::vector<std::string> names = bridge_.ListSceneNames();
 	names.erase(std::remove_if(names.begin(), names.end(),
-				   [](const std::string &name) { return autonames::IsWrapperSceneName(name); }),
+				   [](const std::string &name) {
+					   return autonames::IsWrapperSceneName(name) ||
+						  autonames::IsDefaultLoadingSceneName(name);
+				   }),
 		    names.end());
 	return names;
 }
@@ -238,8 +241,9 @@ void BufferModeController::Enable()
 	liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(status_.liveSceneName);
 
 	sceneBeforeEnable_ = bridge_.GetCurrentSceneName();
-	if (!status_.loadingSceneName.empty())
-		bridge_.SetCurrentSceneByName(status_.loadingSceneName);
+	const std::string loadingScene = LoadingSceneToShow();
+	if (!loadingScene.empty())
+		bridge_.SetCurrentSceneByName(loadingScene);
 
 	++status_.fillGeneration; // A new fill window: the dock starts its countdown.
 	SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
@@ -426,17 +430,25 @@ bool BufferModeController::BufferRestartsWith(uint32_t previousDelaySeconds, uin
 	       before.actualSeconds != after.actualSeconds || before.effectiveSeconds != after.effectiveSeconds;
 }
 
+std::string BufferModeController::LoadingSceneToShow() const
+{
+	// The user's loading scene, or else the Trigglow "adding delay" video.
+	return status_.loadingSceneName.empty() ? bridge_.EnsureDefaultLoadingScene() : status_.loadingSceneName;
+}
+
 void BufferModeController::ShowLoadingSceneForRefill()
 {
-	// No loading scene: Program stays on the wrapper scene, blank until the
-	// ring refills -- never the undelayed live scene.
-	if (status_.loadingSceneName.empty())
+	// No loading scene at all (not even the default one): Program stays on the
+	// wrapper scene, blank until the ring refills -- never the undelayed live
+	// scene.
+	const std::string loadingScene = LoadingSceneToShow();
+	if (loadingScene.empty())
 		return;
 	// Keep the live scene rendering once Program leaves the wrapper, or the
 	// new ring never fills (see Enable()).
 	if (!liveSceneRenderingHeld_)
 		liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(status_.liveSceneName);
-	bridge_.SetCurrentSceneByName(status_.loadingSceneName);
+	bridge_.SetCurrentSceneByName(loadingScene);
 }
 
 void BufferModeController::EnterRefill(const char *reason)
@@ -450,7 +462,7 @@ void BufferModeController::EnterRefill(const char *reason)
 	TRIGGLOW_LOG_WARN(kComponent, "%s: the video buffer restarted empty -- %s for the next %us while it refills",
 			  reason,
 			  wasFilling                         ? "the fill window starts over"
-			  : status_.loadingSceneName.empty() ? "no loading scene set, the delayed view stays blank"
+			  : status_.loadingSceneName.empty() ? "back to the default loading video"
 							     : "back to the loading scene",
 			  AppliedDelaySeconds());
 }

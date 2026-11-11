@@ -1474,8 +1474,9 @@ void TrigglowDelayDock::RefreshSceneCombo(SceneComboBox *combo, const std::strin
 	const QSignalBlocker block(combo);
 	QString previousValue = QString::fromStdString(currentValue);
 	combo->clear();
+	// The loading picker's empty choice shows the Trigglow "adding delay" video.
 	if (includeNoneOption)
-		combo->addItem(T("Dock.NoneOption"));
+		combo->addItem(T("Dock.Scene.Loading.Default"));
 	for (const auto &name : bufferController_.ListAvailableScenes())
 		combo->addItem(QString::fromStdString(name));
 

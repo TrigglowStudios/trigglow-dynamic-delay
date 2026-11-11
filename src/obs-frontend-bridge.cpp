@@ -1612,6 +1612,81 @@ bool ObsFrontendBridge::ShowBufferWrapperScene() const
 	return name && SetCurrentSceneByName(name);
 }
 
+std::string ObsFrontendBridge::EnsureDefaultLoadingScene() const
+{
+#ifdef TRIGGLOW_CORE_ONLY
+	return {};
+#else
+	const char *locale = obs_get_locale();
+	const std::string relative = autonames::DefaultLoadingVideoFile(locale ? locale : "");
+	char *file = obs_module_file(relative.c_str());
+	if (!file) {
+		TRIGGLOW_LOG_WARN(kComponent, "default loading scene: %s is missing from the plugin's data folder",
+				  relative.c_str());
+		return {};
+	}
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_bool(settings, "is_local_file", true);
+	obs_data_set_string(settings, "local_file", file);
+	obs_data_set_bool(settings, "looping", true);
+	obs_data_set_bool(settings, "restart_on_activate", true);
+	obs_data_set_bool(settings, "close_when_inactive", true); // No decoder running while it isn't shown.
+	bfree(file);
+
+	OBSSourceAutoRelease sceneSource = obs_get_source_by_name(autonames::kDefaultLoadingScene);
+	obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
+	if (sceneSource && !scene) {
+		TRIGGLOW_LOG_WARN(kComponent, "default loading scene: \"%s\" is taken by a source that isn't a scene",
+				  autonames::kDefaultLoadingScene);
+		return {};
+	}
+	if (!scene) {
+		// Like the wrapper scene: OBS lists it and keeps its own reference;
+		// ours is released when sceneSource goes out of scope.
+		scene = obs_scene_create(autonames::kDefaultLoadingScene);
+		if (!scene) {
+			TRIGGLOW_LOG_ERROR(kComponent, "default loading scene: could not create it");
+			return {};
+		}
+		sceneSource = obs_scene_get_source(scene);
+		TRIGGLOW_LOG_INFO(kComponent, "default loading scene: created \"%s\"", autonames::kDefaultLoadingScene);
+	}
+
+	// The video item: reused if it is already in the scene, so a size or
+	// position the user gave it in OBS stays.
+	obs_sceneitem_t *videoItem = obs_scene_find_source(scene, autonames::kDefaultLoadingVideo); // Borrowed.
+	if (videoItem) {
+		obs_source_update(obs_sceneitem_get_source(videoItem), settings);
+		return autonames::kDefaultLoadingScene;
+	}
+	OBSSourceAutoRelease videoSource = obs_get_source_by_name(autonames::kDefaultLoadingVideo);
+	const char *id = videoSource ? obs_source_get_unversioned_id(videoSource) : nullptr;
+	if (id && strcmp(id, "ffmpeg_source") == 0)
+		obs_source_update(videoSource, settings);
+	else
+		videoSource = obs_source_create("ffmpeg_source", autonames::kDefaultLoadingVideo, settings, nullptr);
+	videoItem = videoSource ? obs_scene_add(scene, videoSource) : nullptr;
+	if (!videoItem) {
+		TRIGGLOW_LOG_WARN(kComponent, "default loading scene: could not add the video");
+		return {};
+	}
+	// Fitted to the canvas, centred, whatever its size.
+	obs_video_info ovi = {};
+	if (VideoDelayFilter::GetVideoInfo(&ovi)) {
+		vec2 pos;
+		vec2 bounds;
+		vec2_set(&pos, 0.0f, 0.0f);
+		vec2_set(&bounds, static_cast<float>(ovi.base_width), static_cast<float>(ovi.base_height));
+		obs_sceneitem_set_alignment(videoItem, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
+		obs_sceneitem_set_pos(videoItem, &pos);
+		obs_sceneitem_set_bounds_type(videoItem, OBS_BOUNDS_SCALE_INNER);
+		obs_sceneitem_set_bounds_alignment(videoItem, OBS_ALIGN_CENTER);
+		obs_sceneitem_set_bounds(videoItem, &bounds);
+	}
+	return autonames::kDefaultLoadingScene;
+#endif
+}
+
 std::vector<OBSSourceAutoRelease> ObsFrontendBridge::GetAudioCapableChildren(const std::string &liveSceneName) const
 {
 	std::vector<OBSSourceAutoRelease> result;

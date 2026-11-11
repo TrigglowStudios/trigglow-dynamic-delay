@@ -252,7 +252,8 @@ conocen la segunda. En Windows cada copia lleva sus propias DLL de FFmpeg al lad
 1. Abre OBS. Si el dock **"Trigglow Dynamic Delay"** no aparece, ve a `View → Docks` y actívalo.
 2. En el dock, elige tu **escena en directo** (obligatoria — la escena con tu contenido real) y,
    opcionalmente, una **escena de carga** para mostrar mientras se llena el buffer en vez de
-   quedarte en la escena en directo sin delay. Configura el **Delay (segundos)** (1–60) y la
+   quedarte en la escena en directo sin delay (si no eliges ninguna, sale un vídeo de Trigglow
+   "Poniendo delay": "Trigglow (por defecto)" en el selector). Configura el **Delay (segundos)** (1–60) y la
    **calidad mínima** (480p, 720p, 1080p, 1440p (2K) o 2160p (4K)) por debajo de la cual el vídeo
    delayed no baja para ahorrar RAM (tampoco se guarda nunca por encima de la resolución de salida
    de OBS: con una salida de 720p el buffer es 720p aunque el mínimo sea 1080p). El dock muestra una

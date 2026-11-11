@@ -174,6 +174,25 @@ void TestWrapperSceneNames()
 	CHECK(!IsWrapperSceneName(""));
 }
 
+void TestDefaultLoadingScene()
+{
+	g_currentTest = "default loading scene";
+	// Kept out of the dock's scene pickers; not the wrapper scene.
+	CHECK(IsDefaultLoadingSceneName(kDefaultLoadingScene));
+	CHECK(!IsDefaultLoadingSceneName(kWrapperScene));
+	CHECK(!IsDefaultLoadingSceneName("Gameplay"));
+	CHECK(!IsDefaultLoadingSceneName("Trigglow Delay Loading (auto) 2"));
+	CHECK(!IsWrapperSceneName(kDefaultLoadingScene));
+	// Spanish for any "es" locale, English for everything else.
+	CHECK(DefaultLoadingVideoFile("es-ES") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("es-MX") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("es") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("en-US") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("pt-BR") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("est") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("") == "videos/adding-delay-en.mp4");
+}
+
 void TestRenamePlan()
 {
 	g_currentTest = "rename plan";
@@ -194,6 +213,7 @@ int main()
 	TestMigratedName();
 	TestOverlayNames();
 	TestWrapperSceneNames();
+	TestDefaultLoadingScene();
 	TestRenamePlan();
 
 	std::printf("auto_names_tests: %d checks, %d failures\n", g_checks, g_failures);

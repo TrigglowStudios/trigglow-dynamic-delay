@@ -151,8 +151,11 @@ Estados: `Inactive → Filling → Active`, con `Error` alcanzable desde cualqui
    espera. (El audio no necesita esto: el propio pipeline de audio de una fuente hoja se ejecuta de
    forma continua independientemente de la visibilidad en Program — solo el renderizado de vídeo
    necesitaba forzarse.)
-4. Cambia el Program a la escena de carga opcional (o deja la escena en directo si no se eligió
-   ninguna).
+4. Cambia el Program a la escena de carga: la elegida o, si no hay, la escena por defecto "Trigglow
+   Delay Loading (auto)" con el vídeo "Poniendo delay" incluido (`data/videos/adding-delay-en.mp4` o
+   `-es.mp4`, según el idioma de OBS), que crea la primera vez
+   `ObsFrontendBridge::EnsureDefaultLoadingScene()`. Solo si no se puede crear se queda la escena en
+   directo.
 5. Cuando el temporizador de llenado propio del dock llega a `delaySeconds`, cambia el Program a la
    escena contenedora, que ya está mostrando el contenido retrasado almacenado — **un cambio de escena
    puramente interno**, el output de streaming nunca ve que esto ocurre.
@@ -274,8 +277,9 @@ rearma su temporizador de llenado cuando cambia, así que otras actualizaciones 
 llenado (activar o desactivar el overlay, cambiar su esquina) ya no reinician la cuenta atrás ni el
 paso a la escena contenedora. Para un cambio que hace el propio controlador (`SetDelaySeconds()` /
 `SetMinResolutionHeight()` en `Active`), predice el reinicio con `EstimateBufferFit()` y cambia el
-Programa antes de enviar el ajuste. Sin escena de carga, el Programa se queda en la escena
-contenedora en blanco, nunca en la escena en directo sin delay. Desde la v0.6.0 el dock bloquea las
+Programa antes de enviar el ajuste. Sin escena de carga se muestra la escena del vídeo por defecto;
+solo si no se puede crear se queda el Programa en la escena contenedora en blanco, nunca en la
+escena en directo sin delay. Desde la v0.6.0 el dock bloquea las
 escenas en directo y de carga, los segundos y la calidad mínima en `Filling`/`Active` (un control
 deshabilitado también sale del orden de tabulación), y los filtros solo aplican los valores del dock
 (abajo), así que en la práctica los reinicios vienen de resets de vídeo de OBS.
