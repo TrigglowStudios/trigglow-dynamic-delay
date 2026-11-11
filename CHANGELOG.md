@@ -2,11 +2,11 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v0.7.3 — 2026-11-11 (Early Access)
+## v0.7.4 — 2026-11-11 (Early Access)
 
 A branding release with a default loading screen: the delay itself doesn't change.
 
-**Before you update:** nothing to do. Install it like v0.7.2; your scenes, settings, hotkeys and
+**Before you update:** nothing to do. Install it like v0.7.3; your scenes, settings, hotkeys and
 sign-in are kept.
 
 **What's new:**
@@ -19,6 +19,19 @@ sign-in are kept.
   instead of a blank screen. It lives in its own scene, "Trigglow Delay Loading (auto)", that the
   plugin creates the first time; the dock's loading-scene picker shows it as "Trigglow (default)".
   The delay badge with your seconds still shows over the delayed stream as before.
+
+## v0.7.3 — 2026-11-11 (Early Access)
+
+A fix release: your mic and the rest of your audio stay in sync with the delayed video.
+
+**Before you update:** nothing to do. Install it like 0.7.2; your scenes, settings, hotkeys and
+sign-in are kept.
+
+**What it fixes:**
+- **Audio ahead of the camera.** Only audio sources placed directly in the live scene were delayed.
+  The global audio sources from OBS Settings > Audio (Desktop Audio, Mic/Aux) and audio sources
+  inside nested scenes or groups played undelayed, so viewers heard them the whole delay ahead of
+  the picture. The delay now covers all of them, each source once.
 
 ## v0.7.2 — 2026-11-02 (Early Access)
 
