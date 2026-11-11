@@ -30,6 +30,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStyleOptionComboBox>
+#include <QStylePainter>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -155,6 +157,84 @@ void OnFrontendEvent(enum obs_frontend_event event, void *data)
 	if (event == OBS_FRONTEND_EVENT_THEME_CHANGED)
 		static_cast<StreamModePanel *>(data)->ApplyTheme();
 }
+
+// Two labels side by side when both fit on one line, the second under the
+// first when they don't (narrow docks, longer translations). The labels wrap
+// as a last resort, so the row never widens the dock.
+class FitRow final : public QWidget {
+public:
+	FitRow(QLabel *first, QLabel *second, QWidget *parent) : QWidget(parent), first_(first), second_(second)
+	{
+		first_->setWordWrap(true);
+		second_->setWordWrap(true);
+		layout_ = new QBoxLayout(QBoxLayout::LeftToRight, this);
+		layout_->setSizeConstraint(QLayout::SetNoConstraint);
+		layout_->setContentsMargins(0, 0, 0, 0);
+		layout_->setSpacing(kGap);
+		layout_->addWidget(first, 1);
+		layout_->addWidget(second, 0);
+		second_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	}
+
+	// After a label's text changed.
+	void Refit() { Fit(width()); }
+
+protected:
+	void resizeEvent(QResizeEvent *event) override
+	{
+		QWidget::resizeEvent(event);
+		Fit(event->size().width());
+	}
+
+private:
+	static constexpr int kGap = 8;
+
+	void Fit(int width)
+	{
+		if (width <= 0)
+			return;
+		const bool fits = TextWidth(first_) + kGap + TextWidth(second_) <= width;
+		const auto direction = fits ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom;
+		if (layout_->direction() == direction)
+			return;
+		layout_->setDirection(direction);
+		layout_->setSpacing(fits ? kGap : 2);
+		second_->setAlignment((fits ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
+		updateGeometry();
+	}
+
+	// One line of the label's text (a wrapping label's size hint isn't).
+	static int TextWidth(const QLabel *label)
+	{
+		const QMargins m = label->contentsMargins();
+		return label->fontMetrics().horizontalAdvance(label->text()) + m.left() + m.right() +
+		       2 * label->margin() + 2;
+	}
+
+	QLabel *first_;
+	QLabel *second_;
+	QBoxLayout *layout_ = nullptr;
+};
+
+// A combo box whose closed text ends in "..." when the dock is too narrow for
+// it, instead of being cut off (the list still shows the whole text).
+class ElidingComboBox final : public QComboBox {
+public:
+	using QComboBox::QComboBox;
+
+protected:
+	void paintEvent(QPaintEvent *) override
+	{
+		QStylePainter painter(this);
+		QStyleOptionComboBox option;
+		initStyleOption(&option);
+		painter.drawComplexControl(QStyle::CC_ComboBox, option);
+		const QRect field =
+			style()->subControlRect(QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxEditField, this);
+		option.currentText = option.fontMetrics.elidedText(option.currentText, Qt::ElideRight, field.width());
+		painter.drawControl(QStyle::CE_ComboBoxLabel, option);
+	}
+};
 
 } // namespace
 
@@ -692,27 +772,38 @@ void StreamModePanel::BuildOptions(QVBoxLayout *body)
 {
 	QWidget *host = body->parentWidget();
 
-	keepSpin_ = new QSpinBox(host);
-	keepSpin_->setRange(10, static_cast<int>(relay::kMaxDelaySeconds));
-	keepSpin_->setSuffix(Tr("Stream.Seconds"));
-	keepSpin_->setKeyboardTracking(false);
-	keepSpin_->setAccessibleName(Tr("Stream.Keep"));
-	keepSpin_->setAccessibleDescription(Tr("Stream.KeepHelp"));
-	GuardWheel(keepSpin_);
-	auto *keepLabel = new QLabel(Tr("Stream.Keep"), host);
-	SetRole(keepLabel, "eyebrow", ui::FontRole::Eyebrow);
-	keepLabel->setBuddy(keepSpin_);
-	auto *keepHelp = new QLabel(Tr("Stream.KeepHelp"), host);
-	keepHelp->setWordWrap(true);
-	SetRole(keepHelp, "hint", ui::FontRole::Hint);
-	body->addWidget(keepLabel);
-	body->addWidget(keepSpin_);
-	body->addWidget(keepHelp);
-	connect(keepSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
-		if (refreshing_)
+	// Delay buffer: one combo (Automatic follows the drive type, see
+	// drive-kind.hpp), how far a live raise is instant on the eyebrow's row,
+	// and one hint line. Refresh() fills in the texts.
+	auto *bufferLabel = new QLabel(Tr("Stream.Buffer"), host);
+	SetRole(bufferLabel, "eyebrow", ui::FontRole::Eyebrow);
+	bufferInstant_ = new QLabel(host);
+	bufferInstant_->setToolTip(Tr("Stream.Buffer.InstantHelp"));
+	SetRole(bufferInstant_, "dataHint", ui::FontRole::DataHint);
+	// Side by side, or stacked when the dock is too narrow for both.
+	bufferHead_ = new FitRow(bufferLabel, bufferInstant_, host);
+	bufferCombo_ = new ElidingComboBox(host);
+	// Item 0's text names the detected drive (Refresh()).
+	bufferCombo_->addItems({Tr("Stream.Buffer.AutoUnknown"), Tr("Stream.Buffer.Memory"), Tr("Stream.Buffer.Disk")});
+	bufferCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	bufferCombo_->setMinimumContentsLength(8);
+	bufferCombo_->setAccessibleName(Tr("Stream.Buffer"));
+	bufferCombo_->setToolTip(Tr("Stream.Buffer.Help"));
+	GuardWheel(bufferCombo_);
+	bufferLabel->setBuddy(bufferCombo_);
+	bufferHint_ = new QLabel(host);
+	bufferHint_->setWordWrap(true);
+	bufferHint_->setToolTip(Tr("Stream.Buffer.Help"));
+	SetRole(bufferHint_, "hint", ui::FontRole::Hint);
+	body->addWidget(bufferHead_);
+	body->addWidget(bufferCombo_);
+	body->addWidget(bufferHint_);
+	connect(bufferCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+		if (refreshing_ || index < 0)
 			return;
-		controller_.SetKeepSeconds(static_cast<uint32_t>(value));
+		controller_.SetBufferStorage(static_cast<relay::BufferStorage>(index));
 		SettingsChanged();
+		Refresh();
 	});
 
 	// Check boxes with wrapping labels (clicking the label toggles).
@@ -1334,11 +1425,21 @@ void StreamModePanel::RefreshStatus(const StreamDelayStatus &status)
 		QString video = QString::fromStdString(r.videoCodec);
 		if (r.width > 0)
 			video += QStringLiteral(" %1x%2").arg(r.width).arg(r.height);
-		stats = Tr("Stream.Stats")
-				.arg(QString::number(r.historySeconds, 'f', 0))
-				.arg(Megabytes(r.historyBytes))
-				.arg(QString::number(r.bitrateMbps, 'f', 1))
-				.arg(video);
+		// RAM and disk separately: with the spill most of the history is on
+		// disk and RAM stays small.
+		if (r.spillActive || r.historyDiskBytes > 0)
+			stats = Tr("Stream.StatsDisk")
+					.arg(QString::number(r.historySeconds, 'f', 0))
+					.arg(Megabytes(r.historyRamBytes))
+					.arg(Megabytes(r.historyDiskBytes))
+					.arg(QString::number(r.bitrateMbps, 'f', 1))
+					.arg(video);
+		else
+			stats = Tr("Stream.Stats")
+					.arg(QString::number(r.historySeconds, 'f', 0))
+					.arg(Megabytes(r.historyRamBytes))
+					.arg(QString::number(r.bitrateMbps, 'f', 1))
+					.arg(video);
 	}
 	statsLabel_->setText(stats);
 	statsLabel_->setVisible(!stats.isEmpty());
@@ -1469,6 +1570,39 @@ void StreamModePanel::RefreshModeLines(const StreamDelayStatus &status)
 		sceneHint_->setText(handles ? Tr("Stream.Scene.Folded") : Tr("Stream.Scene.Active"));
 }
 
+void StreamModePanel::RefreshBuffer(const StreamDelayStatus &status)
+{
+	const char *autoKey = status.driveKind == relay::DriveKind::Ssd   ? "Stream.Buffer.AutoSsd"
+			      : status.driveKind == relay::DriveKind::Hdd ? "Stream.Buffer.AutoHdd"
+									  : "Stream.Buffer.AutoUnknown";
+	bufferCombo_->setItemText(0, Tr(autoKey));
+	bufferCombo_->setCurrentIndex(static_cast<int>(status.bufferStorage));
+
+	// While a stream runs, what its relay does; before, what the next one will
+	// do (the spill, unless the disk then can't be used).
+	const bool relayRunning = status.engaged || status.state == StreamDelayState::Draining;
+	const relay::RelayStatus &r = status.relay;
+	const uint32_t instant = relayRunning
+					 ? r.instantRaiseSeconds
+					 : (status.bufferOnDisk ? relay::kMaxDelaySeconds
+								: std::max(status.delaySeconds, status.keepSeconds));
+	bufferInstant_->setText(Tr("Stream.Buffer.Instant").arg(instant));
+	static_cast<FitRow *>(bufferHead_)->Refit();
+
+	// Disk asked for, but the spill couldn't start or stopped (disk full,
+	// failing, too slow): this stream is in RAM.
+	const bool fellBack = relayRunning && status.streamBufferOnDisk && !r.spillActive && !r.spillNote.empty();
+	QString hint;
+	if (fellBack && status.bufferOnDisk)
+		hint = Tr("Stream.Buffer.HintFallback");
+	else
+		hint = Tr(status.bufferOnDisk ? "Stream.Buffer.HintDisk" : "Stream.Buffer.HintMemory");
+	if (relayRunning && status.bufferOnDisk != status.streamBufferOnDisk)
+		hint += QLatin1Char(' ') + Tr("Stream.Buffer.HintNext");
+	bufferHint_->setText(hint);
+	bufferCombo_->setAccessibleDescription(hint + QLatin1Char(' ') + bufferInstant_->text());
+}
+
 void StreamModePanel::Refresh()
 {
 	if (detached_ || !themeApplied_)
@@ -1481,8 +1615,7 @@ void StreamModePanel::Refresh()
 	controlsBox_->setVisible(status.available && status.modeEnabled);
 	if (delaySpin_->value() != static_cast<int>(status.delaySeconds))
 		delaySpin_->setValue(static_cast<int>(status.delaySeconds));
-	if (keepSpin_->value() != static_cast<int>(status.keepSeconds))
-		keepSpin_->setValue(static_cast<int>(status.keepSeconds));
+	RefreshBuffer(status);
 	for (int i = 0; i < 3; ++i) {
 		const int preset = static_cast<int>(controller_.Preset(i));
 		if (presetSpins_[i]->value() != preset)

@@ -44,6 +44,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <string>
 #include <vector>
 
+#include "drive-kind.hpp"
 #include "stream-relay.hpp"
 
 struct obs_service;
@@ -71,8 +72,18 @@ struct StreamDelayStatus {
 	bool engaged = false;     // The current stream goes through the relay.
 	bool delayOn = false;     // Delay requested (armed before a stream, or applied).
 	uint32_t delaySeconds = 30;
-	uint32_t keepSeconds = 120;
+	// RAM only: the history also keeps the highest preset or delay-on scene
+	// rule (RamKeepSeconds()). The relay's status says what applies now.
+	uint32_t keepSeconds = 60;
 	bool drainOnStop = true;
+	// Where the delay buffer lives: the streamer's choice, the drive type of
+	// the spill folder (Automatic follows it) and what that resolves to for
+	// the next stream (true: Disk, the encrypted spill).
+	relay::BufferStorage bufferStorage = relay::BufferStorage::Auto;
+	relay::DriveKind driveKind = relay::DriveKind::Unknown;
+	bool bufferOnDisk = false;
+	// What the current stream asked for (a change applies to the next one).
+	bool streamBufferOnDisk = false;
 	StreamDelayState state = StreamDelayState::Idle;
 	// Why the current stream couldn't use stream mode (empty when it could).
 	std::string ineligible;
@@ -112,10 +123,25 @@ public:
 	bool ModeEnabled() const { return modeEnabled_; }
 	void SetDelaySeconds(uint32_t seconds); // Applied live while the delay is on.
 	uint32_t DelaySeconds() const { return delaySeconds_; }
+	// "keep_seconds": the history's minimum in 1.0 alpha builds. Still read
+	// and written back unchanged (going back to such a build keeps the
+	// streamer's value), but the history no longer uses it: with the spill it
+	// always keeps 600 s on disk, in RAM only RamKeepSeconds().
 	void SetKeepSeconds(uint32_t seconds);
 	uint32_t KeepSeconds() const { return keepSeconds_; }
+	// RAM only: how far the history reaches back besides the delay, so a
+	// preset, a delay-on scene rule or a hotkey step up to it is instant.
+	uint32_t RamKeepSeconds() const;
 	void SetDrainOnStop(bool drain);
 	bool DrainOnStop() const { return drainOnStop_; }
+	// "buffer_storage": where the delay buffer lives (drive-kind.hpp).
+	// Resolved when a stream starts; a change while live applies to the next
+	// stream.
+	void SetBufferStorage(relay::BufferStorage storage);
+	relay::BufferStorage BufferStorageChoice() const { return bufferStorage_; }
+	// The drive type of the spill folder, detected at Init() and again at each
+	// stream start.
+	relay::DriveKind DetectedDrive() const { return driveKind_; }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -210,6 +236,9 @@ private:
 	uint32_t delaySeconds_ = 30;
 	uint32_t keepSeconds_ = 120;
 	bool drainOnStop_ = true;
+	relay::BufferStorage bufferStorage_ = relay::BufferStorage::Auto;
+	relay::DriveKind driveKind_ = relay::DriveKind::Unknown;
+	bool streamOnDisk_ = false;
 	bool engaged_ = false;
 	bool draining_ = false;
 	std::string ineligible_;

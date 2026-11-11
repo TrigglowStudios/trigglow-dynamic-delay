@@ -32,7 +32,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Model:
 // - PacketHistory: every packet the stream produced in the last `retention`
 //   seconds, in arrival order, each stamped with its arrival time. It always
-//   starts at a video keyframe, so a sink can splice there.
+//   starts at a video keyframe, so a sink can splice there. The packets' bytes
+//   live back to back in its PayloadStore (payload-store.hpp); each Packet is
+//   only the metadata the scheduler needs.
 // - SinkScheduler: one per destination. It sends packet p once
 //   now >= p.arrival + delay. Changing the delay SPLICES: the sink jumps to the
 //   newest video keyframe old enough for the new delay (back in time to add
@@ -40,35 +42,58 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //   to remove it) and rewrites timestamps so what leaves stays continuous.
 //   The destination never sees a cut or a reconnect.
 
+#include "payload-store.hpp"
+
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <memory>
+#include <functional>
 #include <vector>
 
 namespace trigglow::relay {
 
 enum class MediaKind : uint8_t { Video, Audio, Other };
 
-// One encoded packet. Timestamps are in milliseconds (FLV's own timebase,
-// which is what RTMP carries). `payload` is opaque to the core: the relay keeps
-// a reference to the FFmpeg packet there; tests leave it empty.
+// One encoded packet's metadata. Timestamps are in milliseconds (FLV's own
+// timebase, which is what RTMP carries). Its bytes are a record in the
+// history's PayloadStore, opaque to the core (the relay's serialized FFmpeg
+// packet; tests usually store none).
 struct Packet {
-	MediaKind kind = MediaKind::Other;
-	int stream = 0;
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
+	int64_t arrivalNs = 0;     // Monotonic clock, when the packet reached the relay.
+	uint64_t recordOffset = 0; // Set by PacketHistory::Push().
+	uint32_t recordBytes = 0;  // Set by PacketHistory::Push().
+	uint32_t bytes = 0;        // Payload size, for the bitrate.
+	MediaKind kind = MediaKind::Other;
+	uint8_t stream = 0;
 	bool keyframe = false;
-	int64_t arrivalNs = 0; // Monotonic clock, when the packet reached the relay.
-	size_t bytes = 0;
-	uint64_t seq = 0; // Assigned by PacketHistory::Push().
-	std::shared_ptr<void> payload;
 };
 
 class PacketHistory {
 public:
-	// Appends `packet` (its seq is assigned here) and returns that seq.
-	uint64_t Push(Packet packet);
+	// Appends `packet`, with `parts` stored back to back as its record, and
+	// returns its seq (seqs only grow; At() finds a packet by it).
+	uint64_t Push(Packet packet, const PayloadStore::Span *parts = nullptr, size_t partCount = 0);
+
+	// Appends the packet's record to `out`. False when it isn't available
+	// (or, with the spill, not back in RAM yet).
+	bool CopyRecord(const Packet &packet, std::vector<uint8_t> &out) const
+	{
+		return store_.CopyOut(packet.recordOffset, packet.recordBytes, out);
+	}
+	bool RecordInRam(const Packet &packet) const { return store_.InRam(packet.recordOffset, packet.recordBytes); }
+	const PayloadStore &Store() const { return store_; }
+	PayloadStore &Store() { return store_; }
+
+	// Store offset of the first packet that arrived at or after `atNs` (the
+	// store's end when none did).
+	uint64_t OffsetAtArrival(int64_t atNs) const;
+	// The bytes of packet `seq` and of every packet that arrived up to
+	// `aheadNs` after it: what a sender at `seq` sends next.
+	PayloadStore::Range AheadRange(uint64_t seq, int64_t aheadNs) const;
+	// Drops the packets whose bytes the store lost (PayloadStore::LostBefore),
+	// up to the next keyframe. Senders behind the new front re-splice.
+	void DropLost();
 
 	// Drops whole GOPs from the front while the NEXT video keyframe is still
 	// older than now - retention, and never past `minKeepSeq` (the oldest
@@ -92,7 +117,10 @@ public:
 	uint64_t FrontSeq() const { return frontSeq_; }
 	uint64_t EndSeq() const { return frontSeq_ + packets_.size(); }
 	bool Empty() const { return packets_.empty(); }
+	// Payload bytes of the packets kept.
 	size_t Bytes() const { return bytes_; }
+	// RAM held for the history: records plus the packets' metadata.
+	size_t RamBytes() const { return store_.RamBytes() + packets_.CapacityBytes(); }
 	bool HasVideo() const { return sawVideo_; }
 
 	// Seconds the history covers (newest arrival - oldest arrival).
@@ -106,7 +134,8 @@ public:
 	void Clear();
 
 private:
-	std::deque<Packet> packets_;
+	ChunkedQueue<Packet> packets_;
+	PayloadStore store_;
 	uint64_t frontSeq_ = 0;
 	uint64_t nextSeq_ = 0;
 	size_t bytes_ = 0;
@@ -140,8 +169,12 @@ public:
 	SpliceInfo SetDelay(int64_t delayNs, int64_t nowNs, const PacketHistory &history);
 
 	// Packets due at `nowNs`, in order, with rewritten timestamps. Audio that
-	// would go back in time right after a splice is skipped.
-	std::vector<OutPacket> Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets = 256);
+	// would go back in time right after a splice is skipped. `ready` (when
+	// set) says whether a packet's bytes can be sent now: the first that
+	// can't stops the batch, and is due again next time.
+	using ReadyFn = std::function<bool(const Packet &)>;
+	std::vector<OutPacket> Due(int64_t nowNs, const PacketHistory &history, size_t maxPackets = 256,
+				   const ReadyFn &ready = {});
 
 	// Monotonic time the next packet is due, or -1 when the sink is caught up
 	// with the history.
@@ -196,6 +229,16 @@ inline uint32_t ClampDelaySeconds(int64_t seconds)
 // `minimumSeconds` (so the delay can be raised live without waiting), plus
 // two keyframe intervals of slack for the splice.
 int64_t RetentionNs(uint32_t delaySeconds, uint32_t minimumSeconds, double keyframeIntervalSeconds);
+
+// RetentionNs's `minimumSeconds`: how far a live raise is instant. With the
+// spill (payload-store.hpp) the older seconds cost disk, not RAM, so it is the
+// most a delay can be: every raise is instant (once the stream has run that
+// long). In RAM only, `ramSeconds`: the furthest the streamer can jump in one
+// step (the controller's highest preset or delay-on scene rule).
+inline uint32_t KeepSeconds(bool onDisk, uint32_t ramSeconds)
+{
+	return onDisk ? kMaxDelaySeconds : ClampDelaySeconds(ramSeconds);
+}
 
 // RAM the history needs for `seconds` at `bitsPerSecond`, in bytes.
 inline uint64_t EstimateBytes(double bitsPerSecond, double seconds)

@@ -20,12 +20,25 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // without OBS: not part of ctest (it needs FFmpeg's command line tools and
 // opens local ports). Windows, with the plugin's FFmpeg.
 //
-//   relay_harness <destination rtmp url> <destination key> <script>
+//   relay_harness <destination rtmp url> <destination key> <script> [keep s] [max s] [spill MB]
 //
 // It starts the relay with delay 0 and prints "PUBLISH <url> <key>" for the
 // publisher (ffmpeg standing in for OBS). <script> is "t1:d1,t2:d2,...":
-// at t seconds after start, set the delay to d. It prints the relay status
-// every second and stops once the publisher ends and the destination finished.
+// t seconds after OBS's stream reached the relay, set the delay to d (-1:
+// Dump). The steps run half a second off the stream's whole seconds, so two
+// runs of the same input splice at the same keyframes. It prints the relay
+// status and this process's memory every second and stops once the publisher
+// ends and the destination finished, or after [max s] (default 600). [keep s]
+// is the relay's keepSeconds (default 30). [spill MB]: the spill's size limit
+// (0, the default: the free disk space; -1: no spill, RAM only).
+//
+// Each status line ends with this process's resource use since it started
+// (Windows only; docs/BENCHMARK-buffer-storage.md): "cpu=" user + kernel CPU
+// seconds, "ior=" / "iow=" bytes read / written through ReadFile/WriteFile
+// (the spill file and this program's stdout), "ioo=" other I/O bytes,
+// "ppriv=" / "pws=" peak private bytes / working set, "raise=" how far the
+// delay can be raised with no wait, then the spill's note when it isn't
+// active.
 
 #include "stream-relay.hpp"
 
@@ -38,6 +51,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 #include "logging.hpp"
 
@@ -55,10 +76,67 @@ void Log(Level level, const char *component, const char *fmt, ...)
 }
 } // namespace trigglow::log
 
+namespace {
+
+// This process's private bytes and working set, in MB (0 where unsupported).
+void ProcessMemoryMb(double &privateMb, double &workingSetMb)
+{
+	privateMb = 0.0;
+	workingSetMb = 0.0;
+#ifdef _WIN32
+	PROCESS_MEMORY_COUNTERS_EX counters = {};
+	if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters),
+				 sizeof(counters))) {
+		privateMb = static_cast<double>(counters.PrivateUsage) / 1048576.0;
+		workingSetMb = static_cast<double>(counters.WorkingSetSize) / 1048576.0;
+	}
+#endif
+}
+
+// This process's CPU seconds (user + kernel), I/O byte counters and peak
+// memory in MB (0 where unsupported).
+struct ProcessUsage {
+	double cpuSeconds = 0.0;
+	unsigned long long readBytes = 0;
+	unsigned long long writeBytes = 0;
+	unsigned long long otherBytes = 0;
+	double peakPrivateMb = 0.0;
+	double peakWorkingSetMb = 0.0;
+};
+
+ProcessUsage ProcessUsageNow()
+{
+	ProcessUsage usage;
+#ifdef _WIN32
+	const HANDLE self = GetCurrentProcess();
+	FILETIME created, exited, kernel, user;
+	if (GetProcessTimes(self, &created, &exited, &kernel, &user)) {
+		const auto ticks = [](const FILETIME &ft) {
+			return (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+		};
+		usage.cpuSeconds = static_cast<double>(ticks(kernel) + ticks(user)) / 1e7;
+	}
+	IO_COUNTERS io = {};
+	if (GetProcessIoCounters(self, &io)) {
+		usage.readBytes = io.ReadTransferCount;
+		usage.writeBytes = io.WriteTransferCount;
+		usage.otherBytes = io.OtherTransferCount;
+	}
+	PROCESS_MEMORY_COUNTERS_EX counters = {};
+	if (GetProcessMemoryInfo(self, reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters), sizeof(counters))) {
+		usage.peakPrivateMb = static_cast<double>(counters.PeakPagefileUsage) / 1048576.0;
+		usage.peakWorkingSetMb = static_cast<double>(counters.PeakWorkingSetSize) / 1048576.0;
+	}
+#endif
+	return usage;
+}
+
+} // namespace
+
 int main(int argc, char **argv)
 {
 	if (argc < 4) {
-		std::printf("usage: relay_harness <dest url> <dest key> <t:delay,...>\n");
+		std::printf("usage: relay_harness <dest url> <dest key> <t:delay,...> [keep s] [max s]\n");
 		return 2;
 	}
 	std::vector<std::pair<int, int>> script;
@@ -70,6 +148,9 @@ int main(int argc, char **argv)
 			script.emplace_back(std::atoi(step.substr(0, colon).c_str()),
 					    std::atoi(step.substr(colon + 1).c_str()));
 	}
+	const int keepSeconds = argc > 4 ? std::atoi(argv[4]) : 30;
+	const int maxSeconds = argc > 5 ? std::atoi(argv[5]) : 600;
+	const int spillMb = argc > 6 ? std::atoi(argv[6]) : 0;
 
 	trigglow::relay::StreamRelay relay;
 	relay.SetEventCallback([](const std::string &m) { std::printf("EVENT %s\n", m.c_str()); });
@@ -80,7 +161,9 @@ int main(int argc, char **argv)
 	dest.primary = true;
 	trigglow::relay::RelayOptions options;
 	options.delaySeconds = 0;
-	options.keepSeconds = 30;
+	options.keepSeconds = static_cast<uint32_t>(keepSeconds);
+	options.spillToDisk = spillMb >= 0;
+	options.spillLimitBytes = spillMb > 0 ? static_cast<uint64_t>(spillMb) << 20 : 0;
 	std::string server, key, error;
 	if (!relay.Start({dest}, options, server, key, error)) {
 		std::printf("START FAILED %s\n", error.c_str());
@@ -89,29 +172,48 @@ int main(int argc, char **argv)
 	std::printf("PUBLISH %s %s\n", server.c_str(), key.c_str());
 	std::fflush(stdout);
 
+	// The script's clock starts when OBS's stream reaches the relay.
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point started = Clock::now();
+	while (!relay.GetStatus().ingestConnected && !relay.Finished() &&
+	       Clock::now() - started < std::chrono::seconds(maxSeconds))
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	const auto waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+	std::printf("INGEST after %lld ms\n", static_cast<long long>(waitedMs));
+	const Clock::time_point t0 = Clock::now() + std::chrono::milliseconds(500);
+
 	size_t next = 0;
-	for (int second = 0; second < 600; ++second) {
-		std::this_thread::sleep_for(std::chrono::seconds(1));
-		while (next < script.size() && script[next].first <= second + 1) {
+	for (int second = 0; second < maxSeconds; ++second) {
+		std::this_thread::sleep_until(t0 + std::chrono::seconds(second));
+		while (next < script.size() && script[next].first <= second) {
 			if (script[next].second < 0) {
-				std::printf("DUMP at t=%d\n", second + 1);
+				std::printf("DUMP at t=%d\n", second);
 				relay.Dump();
 			} else {
-				std::printf("SET DELAY %d at t=%d\n", script[next].second, second + 1);
+				std::printf("SET DELAY %d at t=%d\n", script[next].second, second);
 				relay.SetDelay(static_cast<uint32_t>(script[next].second));
 			}
 			++next;
 		}
 		const auto s = relay.GetStatus();
 		const auto *sink = s.sinks.empty() ? nullptr : &s.sinks[0];
+		double privateMb = 0.0;
+		double workingSetMb = 0.0;
+		ProcessMemoryMb(privateMb, workingSetMb);
+		const ProcessUsage usage = ProcessUsageNow();
 		std::printf(
-			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB %.2fMbps kf=%.1fs %s %dx%d | sink state=%d "
-			"behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s\n",
-			second + 1, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
-			s.historyBytes / 1048576.0, s.bitrateMbps, s.keyframeIntervalSeconds, s.videoCodec.c_str(),
-			s.width, s.height, sink ? static_cast<int>(sink->state) : -1, sink ? sink->behindSeconds : 0.0,
-			sink ? sink->sentMbps : 0.0, sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull,
-			sink ? sink->reconnects : 0, sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "");
+			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB disk=%.2fMB spill=%d %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
+			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s | cpu=%.2fs ior=%llu "
+			"iow=%llu ioo=%llu ppriv=%.1fMB pws=%.1fMB raise=%us %s\n",
+			second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
+			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.historyDiskBytes / 1048576.0,
+			s.spillActive ? 1 : 0, s.bitrateMbps, s.keyframeIntervalSeconds, s.videoCodec.c_str(), s.width,
+			s.height, privateMb, workingSetMb, sink ? static_cast<int>(sink->state) : -1,
+			sink ? sink->behindSeconds : 0.0, sink ? sink->sentMbps : 0.0,
+			sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull, sink ? sink->reconnects : 0,
+			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "", usage.cpuSeconds, usage.readBytes,
+			usage.writeBytes, usage.otherBytes, usage.peakPrivateMb, usage.peakWorkingSetMb,
+			s.instantRaiseSeconds, s.spillNote.c_str());
 		std::fflush(stdout);
 		if (relay.Finished() && s.ingestEnded)
 			break;

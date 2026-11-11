@@ -13,11 +13,14 @@ inicio de sesión se mantienen.
 **Novedades:**
 - **Modo stream (Windows, macOS y Linux): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
   stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
-  RAM. La RAM es tu bitrate por los segundos guardados (unos 45 MB por minuto a 6 Mbps) y no se
-  codifica dos veces. Con él:
+  RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un
+  archivo temporal cifrado en tu disco (su clave solo en la memoria de OBS, el archivo se borra al
+  terminar el directo), donde el delay ocupa unos 15 MB de RAM con cualquier duración hasta 600 s
+  (medido a 6 Mbps; unos 450 MB en disco). Con él:
   - **De 0 a 600 s de delay, cambiable en directo.** Actívalo, quítalo, súbelo o bájalo cuando
     quieras; tu directo nunca se reconecta. Al activarlo, los espectadores vuelven a ver los
-    últimos segundos y nunca nada más nuevo.
+    últimos segundos y nunca nada más nuevo. Subirlo es al instante en cuanto el directo lleva ese
+    tiempo (con Memoria, hasta tu preset o regla por escena más alto).
   - **Todas las escenas van con delay**, así que puedes cambiar de escena con el delay activo.
   - **Tu grabación, el Replay Buffer y la cámara virtual siguen en directo.**
   - **Al parar el directo,** el plugin envía los segundos que los espectadores aún no han visto
@@ -25,7 +28,15 @@ inicio de sesión se mantienen.
   - Funciona con tus ajustes de emisión de OBS de siempre (Twitch, YouTube, Kick, TikTok y
     cualquier servidor RTMP o RTMPS); no hay que cambiar nada. Enhanced Broadcasting, SRT y WHIP
     usan el modo escena.
-  - El dock muestra adónde va tu directo y su estado, la RAM usada y el bitrate.
+  - **Tú eliges dónde vive el búfer del delay** (Opciones > Búfer del delay): Memoria (más RAM,
+    nada se escribe en disco) o Disco (poca RAM, pero el directo se escribe en un archivo temporal
+    cifrado, unos 2,7 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
+    y Disco en un disco duro, y el dock dice cuál ha detectado. Al lado, hasta dónde puedes subir el
+    delay al instante: hasta 600 s con Disco, hasta tu preset o regla por escena más alto con
+    Memoria.
+  - El dock muestra adónde va tu directo y su estado, la RAM y el disco usados y el bitrate.
+  - Si Disco no puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue en RAM,
+    guardando lo de tu preset o regla por escena más alto; el directo no se corta.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
   - En macOS y Linux está en alpha como el resto de esas versiones: compilado y comprobado en la
     CI, aún no usado en un directo. Allí el plugin lleva su propio FFmpeg para ello (LGPL, enlazado

@@ -15,11 +15,13 @@ but haven't been run on a live stream yet, and they only have scene mode.**
 
 **Stream mode (new in 1.0.0, Windows, the default).** The plugin holds the stream OBS has already
 encoded and sends it to your platform later. Nothing is decoded or encoded again, so it costs
-almost no CPU and its RAM is your bitrate times the seconds kept: about 45 MB per minute at
-6 Mbps, 90 MB for the default 120 s kept. With it:
+almost no CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing
+written to disk) or in an encrypted temp file on your disk (the default on a hard drive, about 15 MB
+of RAM at any delay up to 600 s, measured at 6 Mbps). With it:
 
 - 1 to 600 s of delay, turned on, off, up or down while you're live, with no reconnect. Turning it
-  on, viewers see the last seconds again, never anything newer.
+  on, viewers see the last seconds again, never anything newer. Raising it is instant once the
+  stream has run that long (with Memory, up to your highest preset or scene rule).
 - Every scene is delayed, so switching scenes while delayed is safe.
 - Recording, the Replay Buffer and the virtual camera stay live.
 - "Dump what viewers haven't seen": the seconds still waiting are never sent, the stream jumps to
@@ -123,17 +125,32 @@ a machine that can't keep up, the buffer drops to a lower resolution (never belo
 quality you choose) and, last, to half the capture frame rate, instead of overloading OBS or cutting
 the delay; the dock shows an amber notice while that happens.
 
-**Memory in stream mode.** The bitrate of your stream times the seconds kept ("Keep for instant
-raises", 120 s by default, or the delay if it's longer), plus two keyframe intervals. Nothing else
-grows with the delay:
+**Memory in stream mode.** You choose where the delay buffer lives (dock: Options > Delay buffer):
 
-| Bitrate | 30 s | 60 s | 120 s (default kept) | 600 s |
-|---|---|---|---|---|
-| 3 Mbps | 11 MB | 22 MB | 45 MB | 225 MB |
-| 6 Mbps | 22 MB | 45 MB | 90 MB | 450 MB |
-| 8 Mbps | 30 MB | 60 MB | 120 MB | 600 MB |
+- **Memory:** everything stays in RAM and nothing is written to disk: your bitrate times your delay,
+  or your highest preset or scene rule if that's longer (45 MB per minute at 6 Mbps). Raising the
+  delay is instant up to that.
+- **Disk:** only the newest seconds and what is about to be sent stay in RAM. The plugin keeps the
+  last 600 s (so any raise is instant) in an encrypted temp file in your system's temp folder (the
+  key exists only in OBS's memory), deleted when the stream ends. Your whole stream is written to
+  disk while you stream: about 2.7 GB per hour at 6 Mbps, 225-600 MB on disk at a time (your
+  bitrate times 600 s).
+- **Automatic** (the default): Memory if your temp folder is on an SSD, to spare it hours of
+  constant writes, and Disk on a hard drive. If the drive type can't be told, Memory. The dock
+  shows what it found, for example "Automatic (Memory, SSD detected)", and you can always pick the
+  other one. A change applies to your next stream.
 
-The dock shows the RAM in use and the bitrate while you stream.
+The RAM it adds, measured at 6.2 Mbps on the relay on its own (details in `docs/STREAM_MODE.md`):
+
+| Delay | Memory | Disk: RAM | Disk: on disk |
+|---|---|---|---|
+| 10 s | about 50 MB* | 13 MB | 440 MB |
+| 120 s | 96 MB | 15 MB | 440 MB |
+| 600 s | 454 MB | 13 MB | 440 MB |
+
+\* With the default presets (10, 30 and 60 s) Memory keeps 60 s; worked out from the bitrate, not
+measured. If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM as with
+Memory. The dock shows the RAM and disk in use and the bitrate while you stream.
 
 **Memory in scene mode.** The buffer's RAM budget is half of your system RAM, between 1 GB and 24 GB (on macOS and
 Linux, where RAM isn't detected yet, a fixed 2 GB). What the buffer really takes depends on what's
@@ -174,7 +191,9 @@ interval of 2 s is recommended (Settings > Output): the delay moves in steps of 
   Trigi.
 - **Stream mode** sends your stream from your computer straight to the service set in OBS: the
   relay listens on `127.0.0.1` only, reads your server and key from OBS when the stream starts
-  without saving them anywhere else, and no Trigglow server is in the path.
+  without saving them anywhere else, and no Trigglow server is in the path. The stream's older
+  seconds wait on your computer in an encrypted temp file (its key exists only in OBS's memory),
+  deleted when the stream ends.
 - **Trigi** receives what you type and, only if you tick it, a small set of OBS technical numbers
   and states (never names, paths, URLs or keys), shown before you send it. **Your OBS log is never
   sent to the AI**; it's attached to a ticket only if you tick its box, which you can do once
@@ -279,8 +298,9 @@ it. Sign in once with your free Trigglow account from the dock.
    and viewers see the stream that many seconds late. If you turn it on before you start
    streaming, the stream starts that many seconds late on the platform ("Delay armed").
 3. Change the seconds while live: raising them rewinds (viewers see the last seconds again),
-   lowering them skips forward. **Back to live** turns the delay off. Up to **Keep for instant
-   raises** (120 s by default) a raise needs no wait.
+   lowering them skips forward. **Back to live** turns the delay off. Once the stream has run
+   that long, any raise up to 600 s is instant (the dock's **Instant raises** line says so; if the
+   disk can't be used, up to your highest preset or scene rule).
 4. **Dump what viewers haven't seen** when something slipped on screen: the seconds still waiting
    in the delay are never sent, the stream jumps to live, and the delay comes back on its own
    after its seconds.
@@ -289,7 +309,7 @@ it. Sign in once with your free Trigglow account from the dock.
    haven't seen** (on by default; **Stop sending now** cuts it).
 
 The dock shows the state ("Live, no delay", "Delay on: viewers see the stream 30 s late"...), the
-connection's state, the RAM kept and the bitrate, and the OBS settings worth changing.
+connection's state, the RAM and disk used and the bitrate, and the OBS settings worth changing.
 The delay moves in steps of your keyframe interval: set it to 2 s in `Settings → Output`. If a
 stream can't use stream mode (Enhanced Broadcasting, SRT, WHIP...), the dock says why and scene mode
 works as before.

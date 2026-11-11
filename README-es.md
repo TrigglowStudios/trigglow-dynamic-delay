@@ -15,11 +15,15 @@ pasan la CI, pero aún no se han usado en un directo, y solo tienen el modo esce
 
 **Modo stream (nuevo en la 1.0.0, Windows, el modo por defecto).** El plugin guarda el stream que
 OBS ya ha codificado y lo envía a tu plataforma más tarde. No se decodifica ni se vuelve a
-codificar nada, así que casi no gasta CPU, y su RAM es tu bitrate por los segundos guardados: unos
-45 MB por minuto a 6 Mbps, 90 MB con los 120 s que guarda por defecto. Con él:
+codificar nada, así que casi no gasta CPU, y tú eliges dónde esperan los segundos retenidos: en RAM
+(lo predeterminado en un SSD, sin escribir nada en disco) o en un archivo temporal cifrado en tu
+disco (lo predeterminado en un disco duro, unos 15 MB de RAM con cualquier delay hasta 600 s, medido
+a 6 Mbps). Con él:
 
 - De 1 a 600 s de delay, que activas, quitas, subes o bajas en directo, sin reconectar. Al
-  activarlo, los espectadores vuelven a ver los últimos segundos, nunca nada más nuevo.
+  activarlo, los espectadores vuelven a ver los últimos segundos, nunca nada más nuevo. Subirlo es
+  al instante en cuanto el directo lleva ese tiempo (con Memoria, hasta tu preset o regla por
+  escena más alto).
 - Todas las escenas van con delay, así que puedes cambiar de escena con el delay activo.
 - La grabación, el Replay Buffer y la cámara virtual siguen en directo.
 - "Borrar lo que aún no se ha emitido": los segundos que aún esperan no se envían nunca, el stream
@@ -127,17 +131,33 @@ núcleos/16 hilos). En un equipo que no llega, el buffer baja a menos resolució
 la calidad mínima que elijas) y, como último paso, a la mitad de fps de captura, en vez de
 sobrecargar OBS o cortar el delay; mientras tanto el dock muestra un aviso ámbar.
 
-**Memoria en el modo stream.** El bitrate de tu stream por los segundos guardados ("Guardar para
-subidas al instante", 120 s por defecto, o el delay si es mayor), más dos intervalos de fotogramas
-clave. Nada más crece con el delay:
+**Memoria en el modo stream.** Tú eliges dónde vive el búfer del delay (dock: Opciones > Búfer del
+delay):
 
-| Bitrate | 30 s | 60 s | 120 s (lo guardado por defecto) | 600 s |
-|---|---|---|---|---|
-| 3 Mbps | 11 MB | 22 MB | 45 MB | 225 MB |
-| 6 Mbps | 22 MB | 45 MB | 90 MB | 450 MB |
-| 8 Mbps | 30 MB | 60 MB | 120 MB | 600 MB |
+- **Memoria:** todo se queda en RAM y no se escribe nada en disco: tu bitrate por el delay, o por tu
+  preset o regla por escena más alto si es mayor (45 MB por minuto a 6 Mbps). Subir el delay es al
+  instante hasta ahí.
+- **Disco:** en RAM solo quedan los segundos más recientes y lo que está a punto de enviarse. El
+  plugin guarda los últimos 600 s (así cualquier subida es al instante) en un archivo temporal
+  cifrado en la carpeta temporal del sistema (la clave solo existe en la memoria de OBS), que se
+  borra al terminar el directo. Todo tu directo se escribe en disco mientras emites: unos 2,7 GB por
+  hora a 6 Mbps, 225-600 MB en disco a la vez (tu bitrate por 600 s).
+- **Automático** (lo predeterminado): Memoria si tu carpeta temporal está en un SSD, para ahorrarle
+  horas de escrituras constantes, y Disco en un disco duro. Si no se puede saber el tipo de unidad,
+  Memoria. El dock muestra lo que detectó, por ejemplo "Automático (Memoria, SSD detectado)", y
+  siempre puedes elegir la otra opción. Un cambio se aplica a tu próximo directo.
 
-El dock muestra la RAM en uso y el bitrate mientras emites.
+La RAM que añade, medida a 6,2 Mbps con el relay por sí solo (detalles en `docs/STREAM_MODE-es.md`):
+
+| Delay | Memoria | Disco: RAM | Disco: en disco |
+|---|---|---|---|
+| 10 s | unos 50 MB* | 13 MB | 440 MB |
+| 120 s | 96 MB | 15 MB | 440 MB |
+| 600 s | 454 MB | 13 MB | 440 MB |
+
+\* Con los presets por defecto (10, 30 y 60 s) Memoria guarda 60 s; calculado a partir del bitrate,
+no medido. Si Disco no puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue en
+RAM como con Memoria. El dock muestra la RAM y el disco en uso y el bitrate mientras emites.
 
 **Memoria en el modo escena.** El presupuesto de RAM del buffer es la mitad de la RAM del sistema,
 entre 1 GB y 24 GB (en macOS y Linux, donde todavía no se detecta la RAM, 2 GB fijos). Lo que ocupa de verdad depende
@@ -180,7 +200,9 @@ Broadcasting desactivado. Se recomienda un intervalo de fotogramas clave de 2 s
   códigos de inicio de sesión, los IDs y lo que escribes a Trigi.
 - **El modo stream** envía tu stream directamente de tu ordenador al servicio que tengas en OBS: el
   relay solo escucha en `127.0.0.1`, lee tu servidor y tu clave de OBS al empezar el directo sin
-  guardarlos en ningún otro sitio, y no hay ningún servidor de Trigglow por medio.
+  guardarlos en ningún otro sitio, y no hay ningún servidor de Trigglow por medio. Los segundos más
+  antiguos del directo esperan en tu ordenador en un archivo temporal cifrado (su clave solo existe
+  en la memoria de OBS), que se borra al terminar el directo.
 - **Trigi** recibe lo que escribes y, solo si lo marcas, un pequeño conjunto de cifras y estados
   técnicos de OBS (nunca nombres, rutas, URLs ni claves), que ves antes de enviarlo. **El log de
   OBS nunca se envía a la IA**; solo se adjunta a un ticket si marcas su casilla, cosa que puedes
@@ -287,8 +309,9 @@ sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
    empezar a emitir, el directo empieza esos segundos tarde en la plataforma ("Delay preparado").
 3. Cambia los segundos en directo: al subirlos se rebobina (los espectadores vuelven a ver los
    últimos segundos) y al bajarlos se salta hacia delante. **Volver al directo** quita el delay.
-   Hasta lo que marque **Guardar para subidas al instante** (120 s por defecto), una subida no
-   tiene que esperar.
+   En cuanto el directo lleva ese tiempo, cualquier subida hasta 600 s es al instante (lo dice la
+   línea **Subidas al instante** del dock; si no se puede usar el disco, hasta tu preset o regla por
+   escena más alto).
 4. **Borrar lo que aún no se ha emitido** cuando se te cuela algo en pantalla: los segundos que aún
    esperan en el delay no se envían nunca, el stream salta al directo y el delay vuelve solo
    pasados sus segundos.
@@ -298,7 +321,7 @@ sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
    enviar ya** lo corta).
 
 El dock muestra el estado ("En directo, sin delay", "Delay activo: tus espectadores ven el directo
-30 s tarde"...), el estado de la conexión, la RAM guardada y el bitrate, y
+30 s tarde"...), el estado de la conexión, la RAM y el disco usados y el bitrate, y
 los ajustes de OBS que conviene cambiar. El delay se mueve en pasos de tu intervalo de fotogramas
 clave: ponlo en 2 s en `Ajustes → Salida`. Si un directo no puede usar el modo stream (Enhanced
 Broadcasting, SRT, WHIP...), el dock dice por qué y el modo escena funciona como siempre.

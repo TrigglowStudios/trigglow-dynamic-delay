@@ -16,11 +16,15 @@ y en todas las plataformas. Detalles: `docs/STREAM_MODE-es.md`.
 
 **¿Por qué el modo stream usa tan poca RAM?**
 Guarda lo que el propio encoder de OBS ya ha producido para el directo, y nada más: no se decodifica
-ni se vuelve a codificar nada, la CPU solo copia bytes. La RAM es tu bitrate por los segundos
-guardados: unos 45 MB por minuto a 6 Mbps. Por defecto guarda 120 s ("Guardar para subidas al
-instante"), así que el delay se puede subir hasta ahí en directo sin esperar: unos 90 MB a 6 Mbps.
-El modo escena guarda frames con una calidad cercana a la de tu fuente, y por eso ocupa de ~190 MB a
-~2,3 GB para 30–60 s.
+ni se vuelve a codificar nada, la CPU solo copia bytes: tu bitrate por los segundos guardados (45
+MB por minuto a 6 Mbps). Tú eliges dónde esperan (Opciones > Búfer del delay). Con Memoria, lo
+predeterminado en un SSD, se quedan en RAM y no se escribe nada en disco. Con Disco, lo
+predeterminado en un disco duro, el plugin guarda los últimos 600 s (así el delay se puede subir en
+directo hasta el máximo sin esperar) pero en RAM solo quedan los segundos más recientes: el resto
+espera en un archivo temporal cifrado en tu disco, que se borra al terminar el directo; medido a
+6 Mbps, unos 15 MB de RAM con cualquier delay hasta 600 s, y unos 2,7 GB escritos por hora. El modo
+escena guarda frames con una calidad cercana a la de tu
+fuente, y por eso ocupa de ~190 MB a ~2,3 GB para 30–60 s.
 
 **¿Qué directos pueden usar el modo stream?**
 Los que salen por la salida RTMP propia de OBS, por RTMP o RTMPS: Twitch, YouTube, Kick, TikTok y

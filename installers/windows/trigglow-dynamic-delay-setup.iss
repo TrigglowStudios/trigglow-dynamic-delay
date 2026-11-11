@@ -188,6 +188,7 @@ Source: "{#PluginStageDir}\{#PluginName}.dll"; DestDir: "{app}"; Flags: ignoreve
 ; FFmpeg DLLs (LGPL; CMakeLists.txt's OS_WINDOWS block). swresample-7.dll:
 ; avcodec-63.dll has a real (non-delay-loaded) dependency on it.
 Source: "{#PluginStageDir}\avcodec-63.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PluginStageDir}\avformat-63.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avutil-61.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; OBS 31 and 32: <folder>\bin\64bit\<name>.dll, with its own FFmpeg copies.
@@ -196,6 +197,7 @@ Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}"; Flags: ignorever
 ; nothing to the download.
 Source: "{#PluginStageDir}\{#PluginName}.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avcodec-63.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
+Source: "{#PluginStageDir}\avformat-63.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avutil-61.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 ; One data folder for both. Listed one by one, so a staged build without any

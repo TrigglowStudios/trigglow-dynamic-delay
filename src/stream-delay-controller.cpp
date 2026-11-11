@@ -34,6 +34,7 @@ extern "C" {
 #include "logging.hpp"
 #include "overlay-layout.hpp"
 #include "packet-delay-core.hpp"
+#include "spill-file.hpp"
 
 namespace trigglow {
 
@@ -86,6 +87,9 @@ void StreamDelayController::Init()
 	timer_->setInterval(500);
 	QObject::connect(timer_.get(), &QTimer::timeout, [this] { Tick(); });
 	timer_->start();
+	// For the dock's "Automatic (Memory, SSD detected)" before any stream; a
+	// few storage queries, no I/O on the drive itself.
+	driveKind_ = relay::DetectDriveKind(relay::SpillFile::TempDirectory());
 	TRIGGLOW_LOG_INFO(kComponent, "stream mode %s (%s)", relay::RelayAvailable() ? "available" : "unavailable",
 			  modeEnabled_ ? "on" : "off");
 }
@@ -129,7 +133,21 @@ void StreamDelayController::SetPreset(int index, uint32_t seconds)
 	if (index < 0 || index > 2)
 		return;
 	presets_[index] = std::max<uint32_t>(1, relay::ClampDelaySeconds(seconds));
+	if (engaged_)
+		relay_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
+}
+
+uint32_t StreamDelayController::RamKeepSeconds() const
+{
+	uint32_t seconds = 0;
+	for (uint32_t preset : presets_)
+		seconds = std::max(seconds, preset);
+	for (const SceneRule &rule : sceneRules_) {
+		if (rule.action == SceneAction::DelayOn)
+			seconds = std::max(seconds, rule.seconds);
+	}
+	return relay::ClampDelaySeconds(seconds);
 }
 
 uint32_t StreamDelayController::Preset(int index) const
@@ -148,6 +166,8 @@ void StreamDelayController::ApplyPreset(int index)
 void StreamDelayController::SetSceneRules(std::vector<SceneRule> rules)
 {
 	sceneRules_ = std::move(rules);
+	if (engaged_)
+		relay_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
 }
 
@@ -319,6 +339,12 @@ void StreamDelayController::SetDrainOnStop(bool drain)
 	Notify();
 }
 
+void StreamDelayController::SetBufferStorage(relay::BufferStorage storage)
+{
+	bufferStorage_ = storage;
+	Notify();
+}
+
 bool StreamDelayController::Enable()
 {
 	if (authorized_ && !authorized_()) {
@@ -390,8 +416,12 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	status.engaged = engaged_;
 	status.delayOn = delayOn_;
 	status.delaySeconds = delaySeconds_;
-	status.keepSeconds = keepSeconds_;
+	status.keepSeconds = RamKeepSeconds();
 	status.drainOnStop = drainOnStop_;
+	status.bufferStorage = bufferStorage_;
+	status.driveKind = driveKind_;
+	status.bufferOnDisk = relay::SpillsToDisk(bufferStorage_, driveKind_);
+	status.streamBufferOnDisk = streamOnDisk_;
 	status.ineligible = ineligible_;
 	if (draining_)
 		status.state = StreamDelayState::Draining;
@@ -514,8 +544,16 @@ void StreamDelayController::OnStreamingStarting()
 
 	relay::RelayOptions options;
 	options.delaySeconds = EffectiveDelay();
-	options.keepSeconds = keepSeconds_;
+	options.keepSeconds = RamKeepSeconds();
 	options.drainOnStop = drainOnStop_;
+	// Where the delay buffer lives for this stream. The drive is checked again
+	// (the temp folder may have moved); the folder itself is never logged.
+	driveKind_ = relay::DetectDriveKind(relay::SpillFile::TempDirectory());
+	options.spillToDisk = relay::SpillsToDisk(bufferStorage_, driveKind_);
+	streamOnDisk_ = options.spillToDisk;
+	TRIGGLOW_LOG_INFO(kComponent, "delay buffer: %s (choice %s, temp folder drive %s)",
+			  options.spillToDisk ? "disk" : "memory", relay::BufferStorageName(bufferStorage_),
+			  relay::DriveKindName(driveKind_));
 	std::string loopServer;
 	std::string loopKey;
 	std::string error;
