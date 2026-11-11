@@ -321,7 +321,8 @@ jobs:
           local bad
           for arch (arm64 x86_64) {
             lipo ${binary} -thin ${arch} -output ${thin}
-            if ! strings - ${thin} | grep -qE '^Lavf[0-9]+\.'; then
+            # Not grep -q: its early exit would SIGPIPE strings under pipefail.
+            if [[ -z $(strings - ${thin} | grep -E '^Lavf[0-9]+\.') ]]; then
               print "::error::${arch}: no avformat in the plugin (stream mode relay)"
               exit 1
             fi
