@@ -48,6 +48,8 @@ inicio de sesión se mantienen.
 - **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre
   el estado del delay en su tecla.
 - **Fuera de beta.** El dock ya no muestra la etiqueta "Beta" junto a la versión.
+- **En portugués (Brasil) y chino (simplificado).** El dock, los diálogos, los atajos y los
+  mensajes siguen a OBS cuando está en uno de esos idiomas, además de en inglés y español.
 - **El nuevo diseño de Trigglow en el dock.** El mismo aspecto que trigglow.com: la tipografía
   Figtree, el violeta de acento, un botón principal violeta sólido en lugar del degradado de cian a
   magenta, y tarjetas, campos y botones redondeados. Sigue adaptándose al tema de OBS (oscuro, claro
