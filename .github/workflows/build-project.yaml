@@ -278,6 +278,25 @@ jobs:
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
 
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: ffmpeg-cache
+        with:
+          path: .deps/ffmpeg-macos-universal
+          key: macos-ffmpeg-universal-${{ hashFiles('buildspec.json', 'CMakePresets.json', '.github/scripts/build-ffmpeg.sh') }}
+
+      - name: Build FFmpeg (static, LGPL, universal) 🎞️
+        run: |
+          : Build FFmpeg 🎞️
+          if (( ${+RUNNER_DEBUG} )) setopt XTRACE
+
+          # The stream mode relay's FFmpeg (avformat, avcodec, avutil),
+          # built from the pinned, signature-checked source for arm64 and
+          # x86_64 and joined with lipo; fails on a GPL, version 3 or
+          # nonfree configuration (the licence guard). gpg checks the tag.
+          (( ${+commands[gpg]} )) || brew install gnupg
+          (( ${+commands[xz]} )) || brew install xz
+          .github/scripts/build-ffmpeg.sh
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -285,6 +304,34 @@ jobs:
           config: ${{ needs.check-event.outputs.config }}
           codesign: ${{ fromJSON(needs.check-event.outputs.codesign) }}
           codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
+
+      - name: Check Plugin Binary 🔍
+        run: |
+          : Check Plugin Binary 🔍
+          if (( ${+RUNNER_DEBUG} )) setopt XTRACE
+
+          # Stream mode is in (the relay's FFmpeg linked statically into both
+          # architectures: its "Lavf" ident string is there) and no FFmpeg
+          # symbol is exported or imported: they would clash with the
+          # avformat and avcodec OBS loads.
+          local binary=$(find build_macos -path '*.plugin/Contents/MacOS/*' -type f -print -quit)
+          if [[ -z ${binary} ]] { print '::error::no built plugin under build_macos'; exit 1; }
+          lipo -info ${binary}
+          local thin=${RUNNER_TEMP}/plugin-thin
+          local bad
+          for arch (arm64 x86_64) {
+            lipo ${binary} -thin ${arch} -output ${thin}
+            if ! strings - ${thin} | grep -qE '^Lavf[0-9]+\.'; then
+              print "::error::${arch}: no avformat in the plugin (stream mode relay)"
+              exit 1
+            fi
+            bad=$(nm -gU ${thin} | grep -E ' _(av_|avio_|avformat_|avcodec_|avpriv_|ff_|swr_|sws_)' || true)
+            if [[ -n ${bad} ]] { print "::error::${arch}: FFmpeg symbols exported: ${bad}"; exit 1; }
+            bad=$(nm -gu ${thin} | grep -E '^_(av_|avio_|avformat_|avcodec_|avpriv_|ff_|swr_|sws_)' || true)
+            if [[ -n ${bad} ]] { print "::error::${arch}: FFmpeg symbols imported: ${bad}"; exit 1; }
+          }
+          otool -L ${binary}
+          ls -l ${binary:h:h}/Resources/licenses
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
@@ -378,9 +425,9 @@ jobs:
         id: ffmpeg-cache
         with:
           path: .deps/ffmpeg-linux-x86_64
-          key: linux-ffmpeg-x86_64-${{ hashFiles('buildspec.json', '.github/scripts/linux/build-ffmpeg.sh') }}
+          key: linux-ffmpeg-x86_64-${{ hashFiles('buildspec.json', '.github/scripts/build-ffmpeg.sh') }}
 
-      - name: Build FFmpeg (static, LGPL, MJPEG only) 🎞️
+      - name: Build FFmpeg (static, LGPL) 🎞️
         run: |
           : Build FFmpeg 🎞️
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
@@ -388,7 +435,7 @@ jobs:
           # Builds the pinned, hash-checked source and fails on a GPL,
           # version 3 or nonfree configuration (the licence guard). A cache
           # hit is only reused when its stamp matches the pin and the script.
-          .github/scripts/linux/build-ffmpeg.sh
+          .github/scripts/build-ffmpeg.sh
 
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: ccache-cache

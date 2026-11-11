@@ -30,15 +30,29 @@ holds it.
    starts) `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
    RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
    `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
-2. It starts `StreamRelay` (FFmpeg avformat, Windows): a listener on `127.0.0.1:<free port>` and one
+2. It starts `StreamRelay` (FFmpeg avformat): a listener on `127.0.0.1:<free port>` and one
    sender per destination: the streamer's service first, then the extra destinations from the dock.
 3. It points **that output** at the relay with a private `rtmp_custom` service. The streamer's saved
    service is untouched; OBS sets it on the output again at every start.
 4. OBS publishes to the relay; the relay demuxes the FLV (no decoding) into `PacketHistory`
    (`packet-delay-core.*`), stamping each packet with its arrival time.
 5. Each sender's `SinkScheduler` sends packet *p* once `now >= arrival(p) + delay`, remuxed to FLV
-   over RTMP/RTMPS (SChannel TLS), with the destination's connection opened when the first packet
+   over RTMP/RTMPS, with the destination's connection opened when the first packet
    is due (a stream that starts delayed starts that much later on the platform).
+
+### Platforms
+
+| | FFmpeg | TLS for RTMPS |
+|---|---|---|
+| Windows | BtbN's LGPL shared build (`avformat-63.dll` next to the plugin) | SChannel |
+| Linux | the plugin's static LGPL build, linked in | the system's OpenSSL 3 (`libssl.so.3`, dynamic; a package dependency) |
+| macOS | the plugin's static LGPL build, linked in, universal (arm64, x86_64) | Secure Transport (Security.framework) |
+
+The Linux and macOS FFmpeg comes from `.github/scripts/build-ffmpeg.sh` at buildspec.json's
+`ffmpeg-source` pin (signed tag, pinned commit), with only what the relay needs: FLV demuxer and
+muxer, the RTMP, RTMPS, TCP and TLS protocols, and the H.264, HEVC, AV1 and AAC parsers. Its
+symbols are hidden, so they never meet the avformat OBS loads; CI checks it (`package.sh` with `nm
+-D` on Linux, the macOS job's "Check Plugin Binary" with `nm`). The core-only build has no relay.
 
 ### Changing the delay live
 
@@ -104,8 +118,6 @@ The free-account gate applies to Enable as in scene mode.
 
 ## Not covered yet
 
-- macOS and Linux: the plugin's FFmpeg there has no avformat yet, so stream mode is unavailable
-  and scene mode is used.
 - Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: scene mode.
 - Overlay in stream mode: the delay badge is a scene mode feature for now.
 
@@ -114,6 +126,8 @@ The free-account gate applies to Enable as in scene mode.
 - `packet-delay-core` is unit-tested (`tests/packet_delay_core_tests.cpp`): live passthrough,
   rewinding on enable with the delay held and monotonic timestamps, skipping forward on disable,
   short history, splicing before the first keyframe, trimming, audio only.
-- The relay and the OBS integration build on Windows; a live stream to a real platform has **not**
-  been run yet. To do before release: Twitch (RTMP), Kick (RTMPS), YouTube (HEVC over enhanced
+- The relay and the OBS integration build on Windows, Linux and macOS. The relay itself ran end to
+  end on Linux with `tests/relay_harness.cpp` (ffmpeg standing in for OBS and the platform) against
+  the plugin's static FFmpeg. A live stream to a real platform has **not** been run yet, on any
+  system. To do before release: Twitch (RTMP), Kick (RTMPS), YouTube (HEVC over enhanced
   RTMP), a delay change and an OBS stop mid-delay, with the platform's player watched.

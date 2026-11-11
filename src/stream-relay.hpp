@@ -31,8 +31,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // from them; the controller polls GetStatus() and receives events through the
 // callback (which it must marshal to its own thread).
 //
-// Available only where the plugin ships FFmpeg's avformat (Windows for now):
-// RelayAvailable() is false elsewhere and every call fails cleanly.
+// Available only where the plugin ships FFmpeg's avformat (Windows, Linux, macOS;
+// not the core-only build): RelayAvailable() is false elsewhere and every call
+// fails cleanly.
 
 #include <cstdint>
 #include <functional>

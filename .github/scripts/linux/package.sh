@@ -23,8 +23,10 @@
 # Dependencies are declared by hand, not by dpkg-shlibdeps (which pinned the
 # build machine's exact libavcodec and Qt package names): libc and libstdc++
 # from the newest symbol versions the .so actually uses, Qt 6.4 or newer
-# (each family's names; the Debian ones with and without the t64 suffix), and
-# OBS Studio at buildspec.json's obsCompat minimum. FFmpeg is linked in.
+# (each family's names; the Debian ones with and without the t64 suffix),
+# OpenSSL 3 (libssl.so.3: the TLS of the stream mode relay's RTMPS, which the
+# static FFmpeg links dynamically), and OBS Studio at buildspec.json's
+# obsCompat minimum. FFmpeg is linked in.
 #
 # The packager, nfpm, is always the release pinned in buildspec.json,
 # downloaded and checked against its SHA-256 (never one already on PATH).
@@ -66,6 +68,9 @@ needed=$(readelf -d "${so}" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
 if grep -E '^lib(av|sw|postproc)' <<< "${needed}"; then
   fail 'the plugin links a shared FFmpeg: it must use the static one (CMakeLists.txt, OS_LINUX)'
 fi
+# The stream mode relay's RTMPS: FFmpeg's TLS on the system's OpenSSL 3.
+grep -qx 'libssl.so.3' <<< "${needed}" \
+  || fail 'the plugin does not link libssl.so.3: the stream mode relay is missing (CMakeLists.txt, OS_LINUX)'
 if readelf -d "${so}" | grep -qE 'R(UN)?PATH'; then
   fail 'the plugin has an RPATH/RUNPATH (the build tree must not leak into the package)'
 fi
@@ -110,16 +115,16 @@ echo "::endgroup::"
 echo "::group::FFmpeg licence"
 # data/licenses/LICENSE-ffmpeg.txt describes both builds; the Linux packages
 # also carry the LGPL 2.1 text and the exact build of their static FFmpeg.
-[[ -f ${ffmpeg}/share/licenses/COPYING.LGPLv2.1 ]] || fail 'no FFmpeg licence in .deps (build-ffmpeg.sh)'
+[[ -f ${ffmpeg}/share/licenses/COPYING.LGPLv2.1 ]] || fail 'no FFmpeg licence in .deps (../build-ffmpeg.sh)'
 cp "${ffmpeg}/share/licenses/COPYING.LGPLv2.1" "${data}/licenses/LICENSE-ffmpeg-LGPL-2.1.txt"
 cp "${ffmpeg}/share/licenses/ffmpeg-build.txt" "${data}/licenses/ffmpeg-build-linux.txt"
 cat "${data}/licenses/ffmpeg-build-linux.txt"
 # The LGPL also asks for the source of that FFmpeg: the exact tree it was
-# built from (git archive of the pinned commit, build-ffmpeg.sh), published
+# built from (git archive of the pinned commit, ../build-ffmpeg.sh), published
 # with the release next to the packages.
 ffmpeg_tag=$(jq -r '.dependencies["ffmpeg-source"].tag' "${spec}")
 ffmpeg_source="${ffmpeg}/share/source/ffmpeg-${ffmpeg_tag}.tar.xz"
-[[ -s ${ffmpeg_source} ]] || fail "no FFmpeg source tarball at ${ffmpeg_source} (build-ffmpeg.sh)"
+[[ -s ${ffmpeg_source} ]] || fail "no FFmpeg source tarball at ${ffmpeg_source} (../build-ffmpeg.sh)"
 cp "${ffmpeg_source}" "${out}/${name}-${version}-ffmpeg-${ffmpeg_tag}-source.tar.xz"
 echo "${name}-${version}-ffmpeg-${ffmpeg_tag}-source.tar.xz: $(sha256sum "${ffmpeg_source}" | cut -d ' ' -f 1)"
 echo "::endgroup::"
@@ -166,6 +171,7 @@ deb_depends=(
   "libqt6widgets6t64 (>= 6.4) | libqt6widgets6 (>= 6.4)"
   "libqt6svg6t64 (>= 6.4) | libqt6svg6 (>= 6.4)"
   "libcurl4t64 | libcurl4"
+  "libssl3t64 | libssl3"
   "obs-studio (>= ${obs_min})"
 )
 # Fedora and openSUSE name their packages differently, so the libraries are
@@ -183,6 +189,7 @@ arch_depends=(
   "qt6-base>=6.4"
   "qt6-svg>=6.4"
   "curl"
+  "openssl"
   "obs-studio>=${obs_min}"
 )
 

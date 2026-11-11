@@ -199,7 +199,7 @@ the first configure, as CI does in an `ubuntu:24.04` container:
 
 ```bash
 sudo .github/scripts/linux/install-build-deps.sh   # Ubuntu 24.04 packages
-.github/scripts/linux/build-ffmpeg.sh              # FFmpeg from buildspec.json, LGPL, MJPEG only
+.github/scripts/build-ffmpeg.sh                   # FFmpeg from buildspec.json, LGPL, MJPEG and relay
 .github/scripts/linux/build.sh RelWithDebInfo      # stages release/stage/usr
 .github/scripts/linux/package.sh                   # .deb, .rpm, .pkg.tar.zst, .tar.xz
 ```

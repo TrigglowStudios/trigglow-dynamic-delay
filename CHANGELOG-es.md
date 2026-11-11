@@ -11,7 +11,7 @@ de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han us
 inicio de sesión se mantienen.
 
 **Novedades:**
-- **Modo stream (Windows): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
+- **Modo stream (Windows, macOS y Linux): el delay sobre tu directo, casi sin coste.** El plugin ahora guarda el
   stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. La RAM es tu bitrate por los segundos guardados (unos 45 MB por minuto a 6 Mbps) y no se
   codifica dos veces. Con él:
@@ -29,6 +29,10 @@ inicio de sesión se mantienen.
     usan el modo escena.
   - El dock muestra el estado de cada destino, la RAM usada y el bitrate.
   - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+  - En macOS y Linux está en alpha como el resto de esas versiones: compilado y comprobado en la
+    CI, aún no usado en un directo. Allí el plugin lleva su propio FFmpeg para ello (LGPL, enlazado
+    dentro); RTMPS usa el TLS propio de macOS y, en Linux, el OpenSSL 3 del sistema (los paquetes
+    ahora dependen de él).
 - **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
   "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
   La sesión se guarda en un archivo que solo puede leer tu usuario.
