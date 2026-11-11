@@ -68,7 +68,7 @@ void DelayRouter::AdjustDelay(int deltaSeconds)
 	}
 	const int64_t next = static_cast<int64_t>(scene_.GetStatus().delaySeconds) + deltaSeconds;
 	scene_.SetDelaySeconds(static_cast<uint32_t>(std::clamp<int64_t>(next, BufferModeController::kMinDelaySeconds,
-										   BufferModeController::kMaxDelaySeconds)));
+									 BufferModeController::kMaxDelaySeconds)));
 }
 
 void DelayRouter::SetDelay(uint32_t seconds)
@@ -77,7 +77,7 @@ void DelayRouter::SetDelay(uint32_t seconds)
 		stream_.SetDelaySeconds(seconds);
 	else
 		scene_.SetDelaySeconds(std::clamp<uint32_t>(seconds, BufferModeController::kMinDelaySeconds,
-								   BufferModeController::kMaxDelaySeconds));
+							    BufferModeController::kMaxDelaySeconds));
 }
 
 bool DelayRouter::Dump()
@@ -92,7 +92,7 @@ void DelayRouter::ApplyPreset(int index)
 		return;
 	}
 	scene_.SetDelaySeconds(std::clamp<uint32_t>(stream_.Preset(index), BufferModeController::kMinDelaySeconds,
-							   BufferModeController::kMaxDelaySeconds));
+						    BufferModeController::kMaxDelaySeconds));
 	scene_.Enable();
 }
 
