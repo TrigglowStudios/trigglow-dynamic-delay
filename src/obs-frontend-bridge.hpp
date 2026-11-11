@@ -271,6 +271,30 @@ public:
 	// outside the dock, it's switched back on (DelayFilterEnableSignal()).
 	bool SetBufferFilterEnabled(const std::string &liveSceneName, bool enabled) const;
 
+	// --- Other canvases (Aitum Vertical, Enhanced Broadcasting's extra
+	// canvases) ---
+	//
+	// OBS mixes ONE audio for every canvas, so the audio filters delay it on
+	// all of them: a canvas whose video isn't delayed too plays its picture
+	// the whole delay ahead of its sound. Every canvas other than the main one
+	// that has a scene named like the live scene gets its own VideoDelayFilter
+	// on that scene (a "mirror"): attached at Enable(), switched and tuned
+	// together with the main filter by the setters above and removed again by
+	// SetBufferFilterEnabled(false). Each mirror has its own ring, codecs and
+	// RAM: the dock warns that the delay then costs about twice the
+	// resources. The main filter alone drives the effective delay, the health
+	// notice and the encoder ceiling. Empty in the core build (Streamlabs'
+	// libobs has no canvas API).
+
+	// Names of the canvases that would get a mirror for liveSceneName.
+	std::vector<std::string> ListMirrorCanvases(const std::string &liveSceneName) const;
+	// Attaches (disabled) a mirror filter to each of them and keeps it for the
+	// setters, until SetBufferFilterEnabled(false). Returns their names.
+	std::vector<std::string> AttachMirrorFilters(const std::string &liveSceneName) const;
+	// The mirrors' delay alone: the main filter's effective one when RAM
+	// trims it, so every canvas's video keeps to the one audio delay.
+	void SetMirrorFiltersDelaySeconds(uint32_t seconds) const;
+
 	// Pushes `seconds` into the already-attached filter's configured delay,
 	// through its set_managed_delay_seconds proc: the filter then keeps the
 	// dock's value whatever else writes its settings (see
@@ -574,6 +598,13 @@ private:
 	std::vector<OBSSourceAutoRelease> AudioFiltersFor(const std::string &liveSceneName) const;
 	// Drops activeAudioFilters_, unguarding each filter that still exists.
 	void ForgetActiveAudioFilters() const;
+	// The mirrors AttachMirrorFilters() kept, each with its own reference.
+	std::vector<OBSSourceAutoRelease> MirrorFilters() const;
+	// The main filter (BufferFilterFor) then every mirror: what the setters
+	// push their value into. Empty without the main filter.
+	std::vector<OBSSourceAutoRelease> AllBufferFilters(const std::string &liveSceneName) const;
+	// Switches off, empties and removes every mirror, then forgets them.
+	void DetachMirrorFilters() const;
 
 	// "enable" signal handler, connected to the delay filters while the delay
 	// keeps them on (ConnectGuard()): a guarded filter switched off from
@@ -607,6 +638,8 @@ private:
 	// releases it; null while the delay is off. Bookkeeping of the const
 	// setters that switch the filter, hence mutable. UI thread only.
 	mutable obs_weak_source_t *activeBufferFilter_ = nullptr;
+	// Mirror filters on other canvases (see AttachMirrorFilters()). UI thread.
+	mutable std::vector<obs_weak_source_t *> mirrorFilters_;
 	// GetBufferPipelineHealth() logged that the filter went away (once per
 	// activation).
 	mutable bool loggedBufferFilterGone_ = false;

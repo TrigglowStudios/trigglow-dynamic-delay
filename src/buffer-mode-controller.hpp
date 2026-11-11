@@ -186,6 +186,11 @@ public:
 						 bufferOutputCap_, PlannedRingClass());
 	}
 
+	// Other canvases (Aitum Vertical...) whose video the delay also holds back
+	// for the current live scene: each one costs a second buffer (RAM, encode
+	// and decode). See ObsFrontendBridge::AttachMirrorFilters.
+	std::vector<std::string> MirrorCanvases() const { return bridge_.ListMirrorCanvases(status_.liveSceneName); }
+
 	// Health of the video buffer's pipeline (v0.6.0, design B.8): the
 	// degradation rung it's on, why, and what it buffers right now -- for a
 	// non-blocking dock notice such as "Buffer reduced to 1280x720 because of

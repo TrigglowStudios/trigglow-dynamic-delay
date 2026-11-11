@@ -36,6 +36,13 @@ inicio de sesión se mantienen.
   encima de 3 s) solo durante los segundos de más. El buffer nunca vuelve a empezar desde cero.
   Antes había que quitar el delay para cambiarlo, y el máximo era 60 s. Para cambiar de escena con
   el delay activado, usa el modo stream; el dock lo dice.
+- **El modo escena retrasa también tu lienzo vertical.** OBS manda el mismo audio a todos los
+  lienzos, así que con el delay activo un lienzo vertical (Aitum Vertical, o el lienzo vertical de
+  la Emisión mejorada de Twitch) llevaba el sonido retrasado con su imagen en directo. Ahora, si
+  otro lienzo tiene una escena con el mismo nombre que tu escena en directo, el vídeo de esa escena
+  se retrasa los mismos segundos; mientras se llena el búfer, ese lienzo se ve en negro. El dock te
+  avisa claramente cuando pasa esto: el delay mantiene un segundo búfer de vídeo, así que usa **el
+  doble de RAM, CPU y GPU**, aproximadamente. Para evitarlo, quita ese lienzo de la emisión.
 - **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
   "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
   La sesión se guarda en un archivo que solo puede leer tu usuario.

@@ -240,6 +240,14 @@ private:
 	// The cause the notice gave last (None while hidden): a new cause is
 	// announced, a new rung for the same cause isn't.
 	PipelineLoad healthCause_ = PipelineLoad::None;
+	// Other-canvas notice (RefreshFitEstimate()): its own card under the
+	// status card, amber rule and title, shown whenever the live scene also
+	// lives on another canvas (Aitum Vertical...) -- the delay then runs a
+	// second video buffer there, about twice the RAM, CPU and GPU.
+	QFrame *canvasNotice_ = nullptr;
+	QLabel *canvasIcon_ = nullptr;
+	QLabel *canvasTitle_ = nullptr;
+	QLabel *canvasBody_ = nullptr;
 	SceneComboBox *liveSceneCombo_ = nullptr;
 	SceneComboBox *loadingSceneCombo_ = nullptr;
 	QSpinBox *secondsSpin_ = nullptr;

@@ -33,6 +33,13 @@ sign-in are kept.
   seconds. The buffer never starts again from empty. Before, you had to turn the delay off to
   change it, and the most was 60 s. To switch scenes while delayed, use stream mode; the dock
   says so.
+- **Scene mode delays your vertical canvas too.** OBS sends the same audio to every canvas, so with
+  the delay on, a vertical canvas (Aitum Vertical, or the vertical canvas of Twitch's Enhanced
+  Broadcasting) got the delayed sound with its live picture. Now, when another canvas has a scene
+  with the same name as your live scene, that scene's video is delayed by the same seconds; while
+  the buffer fills, that canvas shows black. The dock warns you clearly when this applies: the delay
+  keeps a second video buffer, so it uses about **twice the RAM, CPU and GPU**. To avoid it, take
+  that canvas out of your stream.
 - **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
   "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
   in a file only your user can read.
