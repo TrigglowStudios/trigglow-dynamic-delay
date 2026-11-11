@@ -125,6 +125,13 @@ So `AudioDelayFilter` (an `OBS_SOURCE_AUDIO`-only filter) is instead attached to
 audio-capable leaf source** the stream hears with the live scene on Program: every one inside the
 live scene at any depth (nested scenes and groups included) plus the global audio sources on output
 channels 1+ (Settings > Audio: Desktop Audio, Mic/Aux), one instance per source, each running the same delay-window ring-buffer logic as video, in sample space (`ring_[channel][frame]`).
+OBS mixes one audio for every canvas, so the audio filters delay the sound of other canvases too
+(Aitum Vertical, Enhanced Broadcasting's vertical canvas): since v0.8.0 each canvas other than the
+main one that has a scene named like the live scene gets a **mirror** `VideoDelayFilter` on that
+scene, attached at `Enable()`, tuned and switched with the main filter, kept on the effective delay
+audio uses, and removed again at `Disable()` (a stale one is removed when a collection loads). Each
+mirror is a second ring with its own codecs: the dock warns that the delay then costs about twice
+the RAM, CPU and GPU. While its ring fills, that canvas shows nothing (black).
 Video and audio use the same `delaySeconds`, so both land in sync; when the RAM budget trims the
 video ring, both use the same whole-second effective delay instead (§3.3).
 

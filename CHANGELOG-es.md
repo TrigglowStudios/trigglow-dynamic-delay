@@ -2,7 +2,26 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v0.7.3 — 2026-11-11 (Early Access)
+## v0.8.0 — 2026-11-11 (Early Access)
+
+El delay cubre también tus otros lienzos: un lienzo vertical (Aitum Vertical, o el lienzo vertical
+de la Emisión mejorada de Twitch) tiene su propio vídeo retrasado, así que su imagen y su sonido van
+juntos.
+
+**Antes de actualizar:** nada que hacer. Se instala como la v0.7.3; tus escenas, ajustes, atajos e
+inicio de sesión se mantienen.
+
+**Novedades:**
+- **El lienzo vertical también se retrasa.** OBS manda el mismo audio a todos los lienzos, así que
+  con el delay activo un lienzo vertical llevaba el sonido retrasado con su imagen en directo.
+  Ahora, si otro lienzo tiene una escena con el mismo nombre que tu escena en directo, el vídeo de
+  esa escena se retrasa los mismos segundos mientras el delay está activo. Mientras se llena el
+  búfer, ese lienzo se ve en negro.
+- **Un aviso claro en el dock** cuando pasa esto: el delay mantiene entonces un segundo búfer de
+  vídeo, así que usa **el doble de RAM, CPU y GPU**, aproximadamente. Para evitarlo, quita ese
+  lienzo de la emisión.
+
+ — 2026-11-11 (Early Access)
 
 Una versión de corrección: tu micro y el resto del audio van a la par que el vídeo retrasado.
 

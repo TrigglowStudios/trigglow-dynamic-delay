@@ -187,6 +187,11 @@ void BufferModeController::Enable()
 		SetState(BufferModeState::Error, "Status.WrapperSceneFailed");
 		return;
 	}
+	// OBS has one audio mix for every canvas, so the audio filters below delay
+	// the sound of other canvases too (Aitum Vertical...): their video gets a
+	// mirror of the video filter, tuned and switched by the same calls below.
+	// Before them, so each one reaches the mirrors.
+	bridge_.AttachMirrorFilters(status_.liveSceneName);
 	bridge_.SetBufferFilterDelaySeconds(status_.liveSceneName, status_.delaySeconds);
 	bridge_.SetBufferFilterMinResolutionHeight(status_.liveSceneName, status_.minResolutionHeight);
 	// Every cycle, so the plugin settings file always wins over whatever the
@@ -719,6 +724,8 @@ void BufferModeController::SyncAudioDelayToVideoEffective()
 	}
 	status_.effectiveDelaySeconds = targetSeconds;
 	bridge_.SetAudioDelayFiltersDelaySeconds(status_.liveSceneName, targetSeconds);
+	// Other canvases' video too: their audio is this same delayed mix.
+	bridge_.SetMirrorFiltersDelaySeconds(targetSeconds);
 }
 
 } // namespace trigglow

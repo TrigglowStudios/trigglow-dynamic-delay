@@ -2,7 +2,24 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v0.7.3 — 2026-11-11 (Early Access)
+## v0.8.0 — 2026-11-11 (Early Access)
+
+The delay now covers your other canvases too: a vertical canvas (Aitum Vertical, or the vertical
+canvas of Twitch's Enhanced Broadcasting) gets its own delayed video, so its picture and sound stay
+together.
+
+**Before you update:** nothing to do. Install it like 0.7.3; your scenes, settings, hotkeys and
+sign-in are kept.
+
+**What's new:**
+- **Vertical canvas delayed too.** OBS sends the same audio to every canvas, so with the delay on a
+  vertical canvas got the delayed sound with its live picture. Now, when another canvas has a
+  scene with the same name as your live scene, that scene's video is delayed by the same seconds
+  while the delay is on. While the buffer fills, that canvas shows black.
+- **A clear notice in the dock** when this applies: the delay then keeps a second video buffer,
+  so it uses about **twice the RAM, CPU and GPU**. To avoid it, take that canvas out of your stream.
+
+ — 2026-11-11 (Early Access)
 
 A fix release: your mic and the rest of your audio stay in sync with the delayed video.
 
