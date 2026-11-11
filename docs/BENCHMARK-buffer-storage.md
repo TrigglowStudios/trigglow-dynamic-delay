@@ -17,6 +17,9 @@ columns). Scripts and raw summaries: `tools/buffer-bench/`.
   o **284 s** (10 s guardados) hasta acumular el retardo.
 - **CPU:** igual en los dos modos (14-20 s de CPU por minuto mientras envía; la diferencia medida
   disco − RAM es de −0,1 a +1,0 s de CPU por minuto, como mucho un 1,7 % de un núcleo). **0 fallbacks del spill** en 12 ejecuciones en disco.
+  Esos 14-20 s salen de usar ffmpeg como OBS y como plataforma (chunks RTMP de 128 bytes en los dos
+  sockets del relay); con un publicador como OBS y una plataforma que anuncia 4096 bytes son 1-1,5 s
+  por minuto: `docs/STREAM_MODE-es.md`, "CPU".
 - **Salida:** en las 22 ejecuciones cada paquete de salida es idéntico byte a byte a uno de la fuente
   (sha256), el DTS de vídeo es estrictamente creciente y la decodificación no da ningún error.
 - **Desgaste del SSD (calculado a partir de lo medido):** 100 horas de stream escriben 0,28-0,31 TB a
@@ -184,6 +187,10 @@ What this shows:
   per minute while sending, 0 to +1.0 s/min in the 600 s rows (mostly not sending): at most 1.7 %
   of one core, about the run-to-run spread. The CPU here is the relay itself: about 4.6-6.8 s per minute before the destination
   sends and 14-20 s per minute while it sends (23-33 % of one core of a 7700X), in both modes.
+  Those absolute figures come from ffmpeg standing in for OBS and for the platform, which makes
+  both of the relay's sockets carry 128-byte RTMP chunks; with a publisher that behaves like OBS and
+  a platform announcing 4096-byte chunks (Twitch, Kick, Facebook) the relay takes 1-1.5 s per
+  minute: `docs/STREAM_MODE.md`, "CPU". The disk-minus-RAM difference above still holds.
 - **The two SSDs behaved the same**: same memory (within 1-2 MB), same CPU, no fallback, lag at
   most 0.4 s in steady state.
 - **Physical writes match.** E: carried only the spill in batch 2: the drive counter showed

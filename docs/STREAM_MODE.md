@@ -15,7 +15,9 @@ buffer at a quality close to the source: ~190 MB to ~2.3 GB for 30-60 s (README 
 Stream mode keeps the packets OBS's own encoder produced for the stream and sends them later.
 Nothing is decoded or encoded again; the CPU copies bytes. The history is the stream's bitrate times
 the seconds kept (45 MB per minute at 6 Mbps), and most of it waits in an encrypted temp file on
-disk, so the RAM it takes stays about the same at any delay (see Memory and the disk).
+disk, so the RAM it takes stays about the same at any delay (see Memory and the disk). Its CPU is
+about 1-1.5 s per minute of stream with Twitch, Kick or Facebook, and about 10 more for each YouTube
+destination (see CPU).
 
 ## Memory and the disk
 
@@ -66,6 +68,66 @@ stream mode that grows with the delay.
 
 Tools that relay the stream outside OBS hold the same bytes: a 6 Mbps stream held for 60 s is 45 MB
 wherever it is. Stream mode keeps it on disk, encrypted, and in RAM only what is about to be sent.
+
+## CPU
+
+The relay's CPU is almost all the operating system moving RTMP's bytes through sockets, and how
+much depends on the size of the RTMP chunks on each side, which the relay doesn't choose:
+
+- **From OBS.** OBS sends 4096-byte chunks, one write per chunk (`obs-outputs`: `rtmp-stream.c`
+  sets `m_outChunkSize = 4096`; librtmp writes each chunk with its header). At 6 Mbps the relay's
+  FFmpeg listener reads about 190 chunks a second.
+- **To the platform.** FFmpeg's RTMP client (FFmpeg 9.0.2, `rtmppkt.c`) writes every chunk with two
+  `send()` calls (the chunk, then the next chunk's one-byte header), each after a `select()`. It
+  starts with 128-byte chunks and only switches to the size the server announces. Twitch, Kick
+  (Amazon IVS) and Facebook announce 4096 bytes when the relay connects; YouTube (RTMP and RTMPS)
+  announces nothing, so FFmpeg stays at 128 bytes: about 6000 chunks and 12,000 tiny sends a second
+  at 6 Mbps. FFmpeg has no option for it.
+
+Measured with `tests/relay_harness.cpp` (the relay in its own process; CPU of that process only)
+and the peers in `tools/relay-cpu/` (`rtmp_peers.py` publishes like OBS and stands in for the
+platform), a 6.2 Mbps x264 stream (1920x1080 30 fps, CBR, `-g 60 -bf 2`, AAC 160 kbps), 300 s,
+the delay set when OBS's stream reaches the relay. Windows 11, Ryzen 7 7700X, 2026-11-11. CPU
+seconds per minute of stream while OBS and the destination are both sending (exact CPU cycles in
+brackets, millions per second):
+
+| Delay | Before: ffmpeg as OBS and as the platform (the benchmark's setup) | OBS, platform announcing 4096 bytes (Twitch, Kick, Facebook) | OBS, platform announcing nothing (YouTube) |
+|---|---|---|---|
+| 0 s | 12.4 s | 0.9 s (88) | 11.1 s (772) |
+| 10 s | 12.9 s | 1.4 s (91) | 10.2 s (769) |
+| 120 s | 11.9 s | 1.6 s (97) | 10.4 s (778) |
+| 120 s, OBS only (before the delay has passed) | 3.7 s | 0.7 s (41) | 0.7 s (39) |
+| 120 s, sending only (draining after the stop) | 8.5 s | 0.9 s (73) | 9.6 s (693) |
+
+The relay's code is the same in all three columns. The 14-20 CPU s per minute in
+`docs/BENCHMARK-buffer-storage.md` came from ffmpeg standing in for OBS and for the platform: ffmpeg's
+RTMP server announces 128 bytes and ffmpeg's client copies it, so both of the relay's sockets carried
+128-byte chunks (the ingest thread woke about 10,000 times a second). With OBS and Twitch, Kick or
+Facebook, stream mode takes about 1-1.5 CPU s per minute of stream (2-3% of one core). Each YouTube
+destination adds about 10 (a sixth of one core).
+
+What was checked and isn't the cost:
+
+- **The relay's own threads.** Sampled per thread (stack samples, `QueryThreadCycleTime`, context
+  switches, 60 s at delay 10 with OBS-like peers and a 4096-byte platform): the sender 70 million
+  cycles a second, 85% of it kernel time in `send()`/`select()`; the listener 46 million, a third
+  of it kernel time; the spill's I/O thread 5 million. All user-mode time together (FFmpeg's
+  demuxing and muxing included) is about 0.4 CPU s per minute. With a 128-byte platform the sender
+  alone is about 700 million cycles a second, 96% kernel time.
+- **Waits.** No busy waits: MSVC's `condition_variable::wait_for` rounds up to whole milliseconds, a
+  sender sleeps until its next packet is due (100-200 wake-ups a second), and a wake-up costs about
+  50,000 cycles here. The spill's I/O thread wakes 20 times a second (4 million cycles a second).
+- **Per packet:** one FFmpeg packet allocation and copy per packet sent (about 80 a second), FLV
+  muxing, the status once a second, no logging. None shows up in the samples.
+- **`TCP_NODELAY` off** on the destination's socket (Nagle merges FFmpeg's small writes): 9.8 -> 8.3
+  CPU s per minute with 128-byte chunks, no change with 4096. Not worth the extra latency, so it
+  stays on.
+
+Not done: sending to YouTube at OBS's cost needs the relay to write RTMP chunks itself (announce
+4096 bytes, one write per chunk or per batch) instead of FFmpeg's client; FFmpeg has no option or
+public API for it. It must then be checked against the real platforms. Also not measured: RTMPS to a
+128-byte server, where each of those small writes is also its own TLS record; YouTube with a valid
+stream key (the probe only connected, and published with an invalid key: no chunk size either way).
 
 ## How it works
 
@@ -261,6 +323,13 @@ The free-account gate applies to Enable as in scene mode.
   - A spill capped at 70 MB fell back to RAM when full (logged), read the spilled blocks back and
     went on; the output stayed byte-identical with no gap. Killing the process mid-stream deleted
     its spill file at once.
+- CPU (2026-11-11), the setups in CPU above, 10 relays at a time: the live changes
+  `4:3,10:8,18:2,24:0` and a raise from 10 to 300 s at t=200 (190 s replayed from the spill), with
+  ffmpeg peers and with OBS-like peers, and the steady runs at 0, 10 and 120 s against both kinds of
+  platform: every packet sent is byte-identical to a packet of the source (sha256), video DTS
+  strictly increasing, no DTS step over 200 ms (largest: 34 ms video, 96 ms audio), decodes clean.
+  The public ingests' chunk sizes were read with an anonymous RTMP connect (no stream key, nothing
+  published).
 - Not run yet: a real platform (Twitch RTMP, Kick RTMPS, YouTube HEVC over enhanced RTMP) with
   its player watched, the dock UI by hand (also the new "Instant raises" line), the spill inside a
   real OBS, the spill at runtime on macOS (not built here) and Linux (unit tests only), a slow
