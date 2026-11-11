@@ -99,6 +99,7 @@ void StreamDelayController::Shutdown()
 	if (timer_)
 		timer_->stop();
 	timer_.reset();
+	RestoreFrontendService();
 	relay_.Stop();
 	if (loopbackService_) {
 		obs_service_release(loopbackService_);
@@ -439,7 +440,11 @@ void StreamDelayController::FrontendEvent(int event, void *param)
 	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
 		self->ApplySceneRule();
 		break;
+	case OBS_FRONTEND_EVENT_STREAMING_STARTED:
+		self->VerifyOutputUsesRelay();
+		break;
 	case OBS_FRONTEND_EVENT_EXIT:
+		self->RestoreFrontendService();
 		self->relay_.Stop();
 		self->engaged_ = false;
 		self->draining_ = false;
@@ -548,7 +553,14 @@ void StreamDelayController::OnStreamingStarting()
 	else
 		loopbackService_ = obs_service_create_private("rtmp_custom", "trigglow-dynamic-delay-relay", settings);
 	obs_data_release(settings);
+	// Simple output mode set the service on the output before this event;
+	// Advanced mode sets it right after (AdvancedOutput::StartStreaming
+	// calls obs_output_set_service(output, <frontend service>)), which would
+	// send the stream straight to the platform. So the output gets the relay
+	// now, and the frontend's service is swapped for it until OBS has started
+	// the output (same UI call, see RestoreFrontendService).
 	obs_output_set_service(output, loopbackService_);
+	SwapFrontendService();
 	CheckObsSettings(output);
 	obs_output_release(output);
 
@@ -566,12 +578,71 @@ void StreamDelayController::OnStreamingStopped()
 	if (!engaged_)
 		return;
 	engaged_ = false;
-	if (relay_.Running() && !relay_.Finished()) {
+	RestoreFrontendService();
+	const relay::RelayStatus relayStatus = relay_.GetStatus();
+	if (relay_.Running() && !relayStatus.ingestConnected && !relayStatus.ingestEnded) {
+		// OBS's stream never reached the relay (it failed to connect, or went
+		// elsewhere): nothing to send, and the listener would wait forever.
+		TRIGGLOW_LOG_WARN(kComponent, "OBS stopped before its stream reached the relay; nothing to send");
+		relay_.Stop();
+	} else if (relay_.Running() && !relay_.Finished()) {
 		draining_ = true;
 		TRIGGLOW_LOG_INFO(kComponent, "OBS stopped; sending the %us viewers haven't seen yet", relay_.Delay());
 	} else {
 		relay_.Stop();
 	}
+	Notify();
+}
+
+void StreamDelayController::SwapFrontendService()
+{
+	obs_service_t *current = obs_frontend_get_streaming_service();
+	if (!current || current == loopbackService_ || savedFrontendService_)
+		return;
+	savedFrontendService_ = obs_service_get_ref(current);
+	if (!savedFrontendService_)
+		return;
+	obs_frontend_set_streaming_service(loopbackService_);
+	// Back right after OBS's start call returns to the event loop: the output
+	// keeps its own reference to the relay's service (reconnects included),
+	// and the streamer's settings never show or save the relay.
+	if (timer_)
+		QTimer::singleShot(0, timer_.get(), [this] { RestoreFrontendService(); });
+}
+
+void StreamDelayController::RestoreFrontendService()
+{
+	if (!savedFrontendService_)
+		return;
+	if (obs_frontend_get_streaming_service() == loopbackService_)
+		obs_frontend_set_streaming_service(savedFrontendService_);
+	obs_service_release(savedFrontendService_);
+	savedFrontendService_ = nullptr;
+	if (engaged_)
+		VerifyOutputUsesRelay();
+}
+
+// A stream that goes out without the relay must not look delayed: if OBS's
+// output ended up with another service, stream mode lets go of this stream.
+void StreamDelayController::VerifyOutputUsesRelay()
+{
+	if (!engaged_ || !loopbackService_)
+		return;
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	if (!output)
+		return;
+	obs_service_t *service = obs_output_get_service(output);
+	obs_output_release(output);
+	if (service == loopbackService_)
+		return;
+	TRIGGLOW_LOG_ERROR(kComponent, "OBS's stream output doesn't go through the relay; this stream isn't delayed");
+	engaged_ = false;
+	ineligible_ = "relay";
+	{
+		std::lock_guard<std::mutex> lock(eventMutex_);
+		lastEvent_ = "OBS's stream doesn't go through the relay";
+	}
+	relay_.Stop();
 	Notify();
 }
 
