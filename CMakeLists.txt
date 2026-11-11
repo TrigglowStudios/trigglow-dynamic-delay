@@ -27,7 +27,11 @@ endif()
 # Local end-to-end tests of stream mode in a real OBS only: with
 # TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1 in OBS's environment, stream mode's Enable
 # doesn't need the signed-in free account. A CI build with it ON stops here.
-option(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE "Test builds only: skip stream mode's account gate when TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1" OFF)
+option(
+  TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+  "Test builds only: skip stream mode's account gate when TRIGGLOW_TEST_SKIP_ACCOUNT_GATE=1"
+  OFF
+)
 if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE AND DEFINED ENV{CI})
   message(FATAL_ERROR "TRIGGLOW_TEST_SKIP_ACCOUNT_GATE is for local test builds only")
 endif()
