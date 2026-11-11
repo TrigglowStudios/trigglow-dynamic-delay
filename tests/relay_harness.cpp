@@ -34,7 +34,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //
 // Each status line ends with this process's resource use since it started
 // (Windows only; docs/BENCHMARK-buffer-storage.md): "cpu=" user + kernel CPU
-// seconds, "ior=" / "iow=" bytes read / written through ReadFile/WriteFile
+// seconds as Windows accounts them (sampled at its clock tick), "cyc=" the
+// CPU cycles this process used (QueryProcessCycleTime: exact, in millions),
+// "ior=" / "iow=" bytes read / written through ReadFile/WriteFile
 // (the spill file and this program's stdout), "ioo=" other I/O bytes,
 // "ppriv=" / "pws=" peak private bytes / working set, "raise=" how far the
 // delay can be raised with no wait, then the spill's note when it isn't
@@ -97,6 +99,7 @@ void ProcessMemoryMb(double &privateMb, double &workingSetMb)
 // memory in MB (0 where unsupported).
 struct ProcessUsage {
 	double cpuSeconds = 0.0;
+	unsigned long long cycles = 0;
 	unsigned long long readBytes = 0;
 	unsigned long long writeBytes = 0;
 	unsigned long long otherBytes = 0;
@@ -116,6 +119,9 @@ ProcessUsage ProcessUsageNow()
 		};
 		usage.cpuSeconds = static_cast<double>(ticks(kernel) + ticks(user)) / 1e7;
 	}
+	ULONG64 cycles = 0;
+	if (QueryProcessCycleTime(self, &cycles))
+		usage.cycles = cycles;
 	IO_COUNTERS io = {};
 	if (GetProcessIoCounters(self, &io)) {
 		usage.readBytes = io.ReadTransferCount;
@@ -203,7 +209,7 @@ int main(int argc, char **argv)
 		const ProcessUsage usage = ProcessUsageNow();
 		std::printf(
 			"t=%3d in=%d ended=%d delay=%u hist=%.1fs %.2fMB hram=%.2fMB disk=%.2fMB spill=%d %.2fMbps kf=%.1fs %s %dx%d | priv=%.1fMB "
-			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s | cpu=%.2fs ior=%llu "
+			"ws=%.1fMB | sink state=%d behind=%.1fs sent=%.2fMbps bytes=%llu rc=%d rs=%d %s | cpu=%.2fs cyc=%lluM ior=%llu "
 			"iow=%llu ioo=%llu ppriv=%.1fMB pws=%.1fMB raise=%us %s\n",
 			second, s.ingestConnected, s.ingestEnded, s.delaySeconds, s.historySeconds,
 			s.historyBytes / 1048576.0, s.historyRamBytes / 1048576.0, s.historyDiskBytes / 1048576.0,
@@ -211,9 +217,9 @@ int main(int argc, char **argv)
 			s.height, privateMb, workingSetMb, sink ? static_cast<int>(sink->state) : -1,
 			sink ? sink->behindSeconds : 0.0, sink ? sink->sentMbps : 0.0,
 			sink ? static_cast<unsigned long long>(sink->bytesSent) : 0ull, sink ? sink->reconnects : 0,
-			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "", usage.cpuSeconds, usage.readBytes,
-			usage.writeBytes, usage.otherBytes, usage.peakPrivateMb, usage.peakWorkingSetMb,
-			s.instantRaiseSeconds, s.spillNote.c_str());
+			sink ? sink->resyncs : 0, sink ? sink->error.c_str() : "", usage.cpuSeconds,
+			usage.cycles / 1000000ull, usage.readBytes, usage.writeBytes, usage.otherBytes,
+			usage.peakPrivateMb, usage.peakWorkingSetMb, s.instantRaiseSeconds, s.spillNote.c_str());
 		std::fflush(stdout);
 		if (relay.Finished() && s.ingestEnded)
 			break;

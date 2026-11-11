@@ -5,6 +5,8 @@
 - every output packet (video and audio) is byte-identical to a packet of the
   source (sha256 of the packet data, via ffmpeg's framehash muxer, stream copy)
 - video DTS strictly increasing, audio DTS non-decreasing
+- the largest step between consecutive DTS per stream, and how many steps
+  are over 200 ms (a hole in the output's timeline)
 - splices: where consecutive output video packets are not consecutive source
   packets (a live delay change or a resync), with the jump in source seconds
 - clean decode: ffmpeg -v error decoding the whole output prints nothing
@@ -53,6 +55,8 @@ def main():
     counts = {0: 0, 1: 0}
     last = {0: None, 1: None}
     dts_bad = {0: 0, 1: 0}
+    max_step = {0: 0, 1: 0}
+    gaps = {0: 0, 1: 0}
     splices = []
     prev_src = None
     prev_src_dts = None
@@ -63,6 +67,10 @@ def main():
         if last.get(st) is not None:
             if (st == 0 and dts <= last[st]) or (st != 0 and dts < last[st]):
                 dts_bad[st] = dts_bad.get(st, 0) + 1
+            step = dts - last[st]
+            max_step[st] = max(max_step.get(st, 0), step)
+            if step > 200:
+                gaps[st] = gaps.get(st, 0) + 1
         last[st] = dts
         if st == 0 and h in src_index:
             idx, sdts = src_index[h]
@@ -81,6 +89,8 @@ def main():
         'video_pkts': counts.get(0, 0), 'audio_pkts': counts.get(1, 0),
         'video_unmatched': unmatched.get(0, 0), 'audio_unmatched': unmatched.get(1, 0),
         'video_dts_not_increasing': dts_bad.get(0, 0), 'audio_dts_decreasing': dts_bad.get(1, 0),
+        'video_max_step_ms': max_step.get(0, 0), 'audio_max_step_ms': max_step.get(1, 0),
+        'video_gaps_over_200ms': gaps.get(0, 0), 'audio_gaps_over_200ms': gaps.get(1, 0),
         'out_video_s': round((last[0] or 0) / 1000.0, 1),
         'splices': splices,
         'decode_errors': len(dec_lines), 'decode_first': dec_lines[:3],
