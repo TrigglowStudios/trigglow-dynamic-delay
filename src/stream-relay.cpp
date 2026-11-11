@@ -148,8 +148,8 @@ bool LoopbackListening(int port)
 	std::vector<unsigned char> buffer(16 * 1024);
 	for (int attempt = 0; attempt < 3; ++attempt) {
 		ULONG size = static_cast<ULONG>(buffer.size());
-		const DWORD ret = GetExtendedTcpTable(buffer.data(), &size, FALSE, AF_INET,
-						      TCP_TABLE_OWNER_PID_LISTENER, 0);
+		const DWORD ret =
+			GetExtendedTcpTable(buffer.data(), &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0);
 		if (ret == ERROR_INSUFFICIENT_BUFFER) {
 			buffer.resize(size + 4096);
 			continue;
@@ -162,8 +162,7 @@ bool LoopbackListening(int port)
 			const MIB_TCPROW_OWNER_PID &row = table->table[i];
 			// The LISTENER table holds listening sockets only; their dwState
 			// isn't reliable (0 on recent Windows 11 builds), so not checked.
-			if (row.dwOwningPid == self &&
-			    ntohs(static_cast<u_short>(row.dwLocalPort)) == port &&
+			if (row.dwOwningPid == self && ntohs(static_cast<u_short>(row.dwLocalPort)) == port &&
 			    row.dwLocalAddr == htonl(INADDR_LOOPBACK))
 				return true;
 		}
@@ -591,8 +590,8 @@ struct StreamRelay::Impl {
 				sink.status.error = error;
 				gaveUp = true;
 				lock.unlock();
-				TRIGGLOW_LOG_WARN(kComponent, "%s: %s; OBS has stopped, so it isn't retried", host.c_str(),
-						  error.c_str());
+				TRIGGLOW_LOG_WARN(kComponent, "%s: %s; OBS has stopped, so it isn't retried",
+						  host.c_str(), error.c_str());
 				Event(sink.dest.name + ": " + error);
 				lock.lock();
 				break;
@@ -718,9 +717,10 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 
 	serverOut = "rtmp://127.0.0.1:" + std::to_string(port) + "/trigglow";
 	keyOut = "live";
-	TRIGGLOW_LOG_INFO(kComponent,
-			  "relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us",
-			  port, waitedMs, destinations.size(), d.delaySeconds, options.keepSeconds);
+	TRIGGLOW_LOG_INFO(
+		kComponent,
+		"relay listening on 127.0.0.1:%d (ready in %lld ms), %zu destination(s), delay %us, keeps %us", port,
+		waitedMs, destinations.size(), d.delaySeconds, options.keepSeconds);
 	return true;
 }
 
