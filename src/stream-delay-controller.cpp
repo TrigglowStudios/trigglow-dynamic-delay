@@ -318,12 +318,6 @@ void StreamDelayController::SetDrainOnStop(bool drain)
 	Notify();
 }
 
-void StreamDelayController::SetExtraDestinations(std::vector<ExtraDestination> destinations)
-{
-	extras_ = std::move(destinations);
-	Notify();
-}
-
 bool StreamDelayController::Enable()
 {
 	if (authorized_ && !authorized_()) {
@@ -512,12 +506,6 @@ void StreamDelayController::OnStreamingStarting()
 	primary.key = key;
 	primary.primary = true;
 	destinations.push_back(primary);
-	for (const ExtraDestination &extra : extras_) {
-		if (!extra.enabled || extra.server.empty())
-			continue;
-		destinations.push_back(relay::Destination{extra.name.empty() ? relay::HostOf(extra.server) : extra.name,
-							  extra.server, extra.key, false});
-	}
 
 	relay::RelayOptions options;
 	options.delaySeconds = EffectiveDelay();
@@ -554,8 +542,8 @@ void StreamDelayController::OnStreamingStarting()
 
 	engaged_ = true;
 	dumpRestoreAtNs_ = 0;
-	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s%s, delay %us", primary.name.c_str(),
-			  destinations.size() > 1 ? " and more destinations" : "", EffectiveDelay());
+	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s, delay %us", primary.name.c_str(),
+			  EffectiveDelay());
 	// The scene the stream starts on may have a rule.
 	ApplySceneRule();
 	Notify();

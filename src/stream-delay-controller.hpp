@@ -99,13 +99,6 @@ struct SceneRule {
 	uint32_t seconds = 0; // DelayOn: these seconds (0 = keep the current ones).
 };
 
-struct ExtraDestination {
-	std::string name;
-	std::string server;
-	std::string key;
-	bool enabled = true;
-};
-
 class StreamDelayController {
 public:
 	StreamDelayController();
@@ -123,8 +116,6 @@ public:
 	uint32_t KeepSeconds() const { return keepSeconds_; }
 	void SetDrainOnStop(bool drain);
 	bool DrainOnStop() const { return drainOnStop_; }
-	void SetExtraDestinations(std::vector<ExtraDestination> destinations);
-	const std::vector<ExtraDestination> &ExtraDestinations() const { return extras_; }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -216,7 +207,6 @@ private:
 	bool engaged_ = false;
 	bool draining_ = false;
 	std::string ineligible_;
-	std::vector<ExtraDestination> extras_;
 	std::function<void()> onStatus_;
 	std::function<bool()> authorized_;
 

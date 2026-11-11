@@ -31,7 +31,8 @@ holds it.
    RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
    `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
 2. It starts `StreamRelay` (FFmpeg avformat, Windows): a listener on `127.0.0.1:<free port>` and one
-   sender per destination: the streamer's service first, then the extra destinations from the dock.
+   sender to the streamer's own service. Dynamic Delay doesn't multistream: `StreamRelay::Start()`
+   takes a list of destinations, but the controller only ever passes that one.
 3. It points **that output** at the relay with a private `rtmp_custom` service. The streamer's saved
    service is untouched; OBS sets it on the output again at every start.
 4. OBS publishes to the relay; the relay demuxes the FLV (no decoding) into `PacketHistory`
@@ -56,11 +57,11 @@ history holds makes the sender hold until the oldest kept keyframe is old enough
 ### Network problems
 
 - A destination that can't connect or send retries with back-off (2, 4, 8, 15 s) and a fresh
-  timeline, at the delay. The others carry on.
+  timeline, at the delay.
 - A destination that falls more than 4 s behind its delay (slow upload) jumps to the delay again at
   the next keyframe, instead of letting the delay grow (`resyncs` in the status).
 - OBS's own congestion handling only sees the loopback, so OBS's dropped-frames counter stays at 0
-  in stream mode; the dock shows each destination's state and rate instead.
+  in stream mode; the dock shows the destination's state and rate instead.
 
 ### Stopping
 
@@ -92,7 +93,8 @@ safe (scene mode only delays the scene picked in the dock).
 
 ## Controls
 
-- Dock: on/off, back to live, seconds (1-600, presets, +/-5), destinations, kept seconds, drain.
+- Dock: on/off, back to live, seconds (1-600, presets, +/-5), where the stream goes (read only:
+  OBS's Settings > Stream), kept seconds, drain.
 - Hotkeys (OBS Settings > Hotkeys): Toggle, Enable, Disable (names unchanged), Back to live,
   Delay +5 s, Delay -5 s. They go through `DelayRouter`: stream mode when it handles the controls,
   scene mode otherwise.

@@ -20,12 +20,10 @@ sign-in are kept.
     anything newer.
   - **Every scene is delayed**, so you can switch scenes while delayed.
   - **Your recording, Replay Buffer and virtual camera stay live.**
-  - **Multistream:** add more destinations (any rtmp:// or rtmps:// server and key) and they get
-    the same delayed stream, from one encode.
   - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
   - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
     RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
-  - The dock shows each destination's state, the RAM used and the bitrate.
+  - The dock shows where your stream goes and its state, the RAM used and the bitrate.
   - Scene mode is still there, folded under the new section, for what stream mode can't do.
 - **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
   "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
