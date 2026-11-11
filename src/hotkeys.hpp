@@ -20,20 +20,21 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <cstddef>
 
-#include "buffer-mode-controller.hpp"
+#include "delay-router.hpp"
 
 extern "C" {
 #include <obs.h> // obs_hotkey_id, obs_hotkey_t, obs_hotkey_func — core libobs, not the frontend API.
 }
 
-// Registers the plugin's 3 native OBS hotkeys via obs_hotkey_register_frontend
+// Registers the plugin's native OBS hotkeys via obs_hotkey_register_frontend
 // (libobs/obs-hotkey.h). Registered hotkeys show up in OBS's own
 // Settings -> Hotkeys list under this plugin's display name, exactly like
-// any other native OBS hotkey (Start Streaming, Mute, etc). This is what
-// makes the Stream Deck flow work with zero custom integration: Stream Deck's
-// own "Hotkey" / "System Hotkey" action can trigger ANY OBS hotkey by name,
-// this plugin's included, without a dedicated Stream Deck plugin — see
-// docs/STREAM_DECK.md.
+// any other native OBS hotkey (Start Streaming, Mute, etc). Stream Deck's own
+// "Hotkey" action can trigger them by key combination; the Trigglow Stream
+// Deck plugin uses obs-websocket instead (websocket-vendor.hpp).
+//
+// v1.0.0: every hotkey goes through DelayRouter, which picks stream mode or
+// scene mode. New: "Back to live" and "Delay +5 s" / "Delay -5 s".
 //
 // Frontend hotkeys registered this way are automatically persisted by OBS's
 // own hotkey config (keyed by the string name passed to
@@ -43,27 +44,32 @@ namespace trigglow {
 
 class DelayHotkeys {
 public:
-	explicit DelayHotkeys(BufferModeController &controller);
+	explicit DelayHotkeys(DelayRouter &router);
 	~DelayHotkeys();
 
 	DelayHotkeys(const DelayHotkeys &) = delete;
 	DelayHotkeys &operator=(const DelayHotkeys &) = delete;
 
-	// Registers all 3 hotkeys. Call once from obs_module_load().
+	// Registers every hotkey. Call once from obs_module_load().
 	void Init();
 
-	// Unregisters all 3 hotkeys. Call from obs_module_unload().
+	// Unregisters them. Call from obs_module_unload().
 	void Shutdown();
 
-private:
-	static void ToggleCallback(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
-	static void EnableCallback(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
-	static void DisableCallback(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
+	enum class Action { Toggle, Enable, Disable, SkipLive, DelayUp, DelayDown, Count };
 
-	BufferModeController &controller_;
-	obs_hotkey_id toggleId_ = OBS_INVALID_HOTKEY_ID;
-	obs_hotkey_id enableId_ = OBS_INVALID_HOTKEY_ID;
-	obs_hotkey_id disableId_ = OBS_INVALID_HOTKEY_ID;
+private:
+	struct Binding {
+		DelayHotkeys *self = nullptr;
+		Action action = Action::Toggle;
+		obs_hotkey_id id = OBS_INVALID_HOTKEY_ID;
+	};
+
+	static void Callback(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
+	static void RunOnUiThread(void *param);
+
+	DelayRouter &router_;
+	Binding bindings_[static_cast<size_t>(Action::Count)];
 };
 
 } // namespace trigglow

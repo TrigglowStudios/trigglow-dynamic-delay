@@ -93,6 +93,16 @@ if(OS_WINDOWS)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/hw-storage-codec.cpp src/hw-storage-codec.hpp)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxgi)
 
+  # v1.0.0 stream mode: the relay (src/stream-relay.*) reads OBS's stream on
+  # 127.0.0.1 and sends it on with FFmpeg's FLV muxer and RTMP/RTMPS client
+  # (TLS through Windows' own SChannel). avformat-63.dll comes from the same
+  # BtbN package and imports only avcodec-63, avutil-61 and system DLLs.
+  # Not in the core-only build: hosts there have their own outputs.
+  if(NOT TRIGGLOW_CORE_ONLY)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${_ffmpeg_root}/lib/avformat.lib" ws2_32)
+  endif()
+
   # Same DESTINATION set_target_properties_plugin() (cmake/windows/helpers.cmake)
   # uses for the plugin binary itself -- these need to land right next to it,
   # not just anywhere under the packaged output. Deliberately not also
@@ -123,6 +133,9 @@ if(OS_WINDOWS)
         "${_ffmpeg_root}/bin/swresample-7.dll"
       DESTINATION "${_ffmpeg_destination}"
     )
+    if(NOT TRIGGLOW_CORE_ONLY)
+      install(FILES "${_ffmpeg_root}/bin/avformat-63.dll" DESTINATION "${_ffmpeg_destination}")
+    endif()
   endforeach()
 elseif(OS_LINUX)
   # v0.7.1: our own FFmpeg, an LGPL static build of avcodec and avutil with
@@ -260,6 +273,18 @@ else()
     ${CMAKE_PROJECT_NAME}
     PRIVATE
       src/plugin-main.cpp
+      src/packet-delay-core.cpp
+      src/packet-delay-core.hpp
+      src/stream-relay.cpp
+      src/stream-relay.hpp
+      src/stream-delay-controller.cpp
+      src/stream-delay-controller.hpp
+      src/stream-mode-panel.cpp
+      src/stream-mode-panel.hpp
+      src/delay-router.cpp
+      src/delay-router.hpp
+      src/websocket-vendor.cpp
+      src/websocket-vendor.hpp
       src/delay-controller.cpp
       src/delay-controller.hpp
       src/obs-frontend-bridge.cpp

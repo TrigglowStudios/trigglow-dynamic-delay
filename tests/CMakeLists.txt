@@ -82,6 +82,17 @@ target_include_directories(overlay_layout_tests PRIVATE "${_src}")
 set_target_properties(overlay_layout_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME overlay_layout_tests COMMAND overlay_layout_tests)
 
+# v1.0.0 stream mode: the packet history and the splicing scheduler.
+add_executable(
+  packet_delay_core_tests
+  packet_delay_core_tests.cpp
+  "${_src}/packet-delay-core.cpp"
+  "${_src}/packet-delay-core.hpp"
+)
+target_include_directories(packet_delay_core_tests PRIVATE "${_src}")
+set_target_properties(packet_delay_core_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME packet_delay_core_tests COMMAND packet_delay_core_tests)
+
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
 # with a fake codec (threads, no FFmpeg).

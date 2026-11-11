@@ -24,6 +24,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QPointer>
+#include <QScrollArea>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 extern "C" {
 #include <obs-module.h>
@@ -41,15 +45,19 @@ extern "C" {
 #include "auth-manager.hpp"
 #include "buffer-mode-controller.hpp"
 #include "bug-report.hpp"
+#include "delay-router.hpp"
 #include "hotkeys.hpp"
 #include "i18n.hpp"
 #include "logging.hpp"
 #include "obs-frontend-bridge.hpp"
 #include "overlay-badge.hpp"
 #include "settings-ui.hpp"
+#include "stream-delay-controller.hpp"
+#include "stream-mode-panel.hpp"
 #include "ui-tasks.hpp"
 #include "ui-theme.hpp"
 #include "video-delay-filter.hpp"
+#include "websocket-vendor.hpp"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -69,6 +77,8 @@ constexpr const char *kComponent = "plugin-main";
 constexpr const char *kDockId = "trigglow_dynamic_delay_dock";
 constexpr const char *kDockTitle = "Trigglow Dynamic Delay";
 constexpr const char *kBufferSettingsFile = "buffer-mode-settings.json";
+// v1.0.0 stream mode: its own file, so scene mode's stays exactly as before.
+constexpr const char *kStreamSettingsFile = "stream-mode-settings.json";
 
 // All plugin-lifetime state lives in one place, constructed in
 // obs_module_load() and torn down in obs_module_unload(). No globals spread
@@ -95,7 +105,14 @@ struct PluginState {
 	// see docs/ACCOUNT_GATE.md for why this gate exists at all.
 	std::unique_ptr<trigglow::AuthManager> authManager;
 	std::unique_ptr<trigglow::BufferModeController> bufferController;
+	// v1.0.0 stream mode (the delay on the encoded stream) and the router the
+	// hotkeys and obs-websocket go through.
+	std::unique_ptr<trigglow::StreamDelayController> streamController;
+	std::unique_ptr<trigglow::DelayRouter> router;
 	std::unique_ptr<trigglow::DelayHotkeys> hotkeys;
+	// Owned by the dock container (Qt parent), like the dock itself: OBS may
+	// destroy it first, hence the QPointer.
+	QPointer<trigglow::StreamModePanel> streamPanel;
 	// Not owned past AddDock(): OBS's dock system takes ownership of the
 	// QWidget once obs_frontend_add_dock_by_id() returns true. Kept here
 	// only as a non-owning reference for potential future use (e.g. forcing
@@ -317,6 +334,120 @@ void SaveBufferSettings(const trigglow::BufferModeController &controller)
 	TRIGGLOW_LOG_INFO(kComponent, "settings saved (%s in the plugin's OBS config folder)", kBufferSettingsFile);
 }
 
+QString ModuleConfigPath(const char *file)
+{
+	char *rawPath = obs_module_get_config_path(obs_current_module(), file);
+	QString path = rawPath ? QString::fromUtf8(rawPath) : QString();
+	bfree(rawPath);
+	return path;
+}
+
+// Stream mode settings. The extra destinations' stream keys are kept here the
+// same way OBS keeps the streamer's own key in its service.json.
+void LoadStreamSettings(trigglow::StreamDelayController &controller)
+{
+	const QString path = ModuleConfigPath(kStreamSettingsFile);
+	if (path.isEmpty() || !QFileInfo::exists(path))
+		return;
+	obs_data_t *data = obs_data_create_from_json_file(path.toUtf8().constData());
+	if (!data) {
+		const QString setAside = SetAsideInvalidSettingsFile(path);
+		TRIGGLOW_LOG_WARN(kComponent, "settings file %s is not valid JSON -- %s; using defaults",
+				  kStreamSettingsFile, setAside.isEmpty() ? "left as is" : "moved aside");
+		return;
+	}
+	if (obs_data_has_user_value(data, "mode_enabled"))
+		controller.SetModeEnabled(obs_data_get_bool(data, "mode_enabled"));
+	if (obs_data_has_user_value(data, "delay_seconds"))
+		controller.SetDelaySeconds(static_cast<uint32_t>(obs_data_get_int(data, "delay_seconds")));
+	if (obs_data_has_user_value(data, "keep_seconds"))
+		controller.SetKeepSeconds(static_cast<uint32_t>(obs_data_get_int(data, "keep_seconds")));
+	if (obs_data_has_user_value(data, "drain_on_stop"))
+		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
+	std::vector<trigglow::ExtraDestination> extras;
+	if (obs_data_array_t *array = obs_data_get_array(data, "destinations")) {
+		const size_t count = obs_data_array_count(array);
+		for (size_t i = 0; i < count; ++i) {
+			obs_data_t *item = obs_data_array_item(array, i);
+			trigglow::ExtraDestination extra;
+			extra.name = obs_data_get_string(item, "name");
+			extra.server = obs_data_get_string(item, "server");
+			extra.key = obs_data_get_string(item, "key");
+			extra.enabled = !obs_data_has_user_value(item, "enabled") || obs_data_get_bool(item, "enabled");
+			obs_data_release(item);
+			if (!extra.server.empty())
+				extras.push_back(std::move(extra));
+		}
+		obs_data_array_release(array);
+	}
+	controller.SetExtraDestinations(std::move(extras));
+	obs_data_release(data);
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us, %zu extra destination(s))",
+			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds(),
+			  controller.ExtraDestinations().size());
+}
+
+void SaveStreamSettings(const trigglow::StreamDelayController &controller)
+{
+	const QString path = ModuleConfigPath(kStreamSettingsFile);
+	if (path.isEmpty())
+		return;
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	obs_data_t *data = obs_data_create();
+	obs_data_set_bool(data, "mode_enabled", controller.ModeEnabled());
+	obs_data_set_int(data, "delay_seconds", controller.DelaySeconds());
+	obs_data_set_int(data, "keep_seconds", controller.KeepSeconds());
+	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
+	obs_data_array_t *array = obs_data_array_create();
+	for (const trigglow::ExtraDestination &extra : controller.ExtraDestinations()) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "name", extra.name.c_str());
+		obs_data_set_string(item, "server", extra.server.c_str());
+		obs_data_set_string(item, "key", extra.key.c_str());
+		obs_data_set_bool(item, "enabled", extra.enabled);
+		obs_data_array_push_back(array, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "destinations", array);
+	obs_data_array_release(array);
+	obs_data_save_json_safe(data, path.toUtf8().constData(), "tmp", "bak");
+	obs_data_release(data);
+}
+
+// The dock: stream mode on top, scene mode's dock below in a section that
+// folds while stream mode handles the controls.
+QWidget *BuildDockContainer(trigglow::StreamModePanel *panel, trigglow::TrigglowDelayDock *sceneDock)
+{
+	auto *container = new QWidget();
+	auto *layout = new QVBoxLayout(container);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+
+	auto *panelScroll = new QScrollArea(container);
+	panelScroll->setWidgetResizable(true);
+	panelScroll->setFrameShape(QFrame::NoFrame);
+	panelScroll->setWidget(panel);
+	layout->addWidget(panelScroll, 1);
+
+	auto *header = new QToolButton(container);
+	header->setText(QString::fromUtf8(Str("Stream.SceneSection")));
+	header->setCheckable(true);
+	header->setChecked(true);
+	header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	header->setArrowType(Qt::DownArrow);
+	header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	layout->addWidget(header);
+	sceneDock->setParent(container);
+	layout->addWidget(sceneDock, 1);
+
+	QObject::connect(header, &QToolButton::toggled, container, [header, sceneDock](bool open) {
+		header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+		sceneDock->setVisible(open);
+	});
+	panel->SetHandlesControlsChanged([header](bool streamHandles) { header->setChecked(!streamHandles); });
+	return container;
+}
+
 } // namespace
 
 bool obs_module_load(void)
@@ -410,19 +541,50 @@ bool obs_module_load(void)
 
 	g_state->saveSettingsOnExit = LoadBufferSettings(*g_state->bufferController);
 
-	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->bufferController);
+	// v1.0.0 stream mode: same free-account gate as scene mode.
+	g_state->streamController = std::make_unique<trigglow::StreamDelayController>();
+	g_state->streamController->SetAuthorizationCheck(
+		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+	LoadStreamSettings(*g_state->streamController);
+	g_state->streamController->Init();
+	g_state->router =
+		std::make_unique<trigglow::DelayRouter>(*g_state->bufferController, *g_state->streamController);
+
+	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->router);
 	g_state->hotkeys->Init();
 
 	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->authManager);
 	g_state->dock = dock;
-	g_state->bridge.AddDock(kDockId, kDockTitle, dock);
+	auto *panel = new trigglow::StreamModePanel(*g_state->streamController, *g_state->authManager);
+	g_state->streamPanel = panel;
+	panel->SetSettingsChanged([] {
+		if (g_state && g_state->streamController)
+			SaveStreamSettings(*g_state->streamController);
+	});
+	g_state->streamController->SetStatusCallback([] {
+		if (!g_state)
+			return;
+		if (g_state->streamPanel)
+			g_state->streamPanel->Refresh();
+		trigglow::websocket::NotifyStatus();
+	});
+	g_state->bridge.AddDock(kDockId, kDockTitle, BuildDockContainer(panel, dock));
 
 	TRIGGLOW_LOG_INFO(kComponent, "loaded successfully");
 	return true;
 }
 
+// obs-websocket registers its plugin API while it loads, after this module's
+// obs_module_load(): the vendor requests go in here.
+void obs_module_post_load(void)
+{
+	if (g_state && g_state->router)
+		trigglow::websocket::Register(*g_state->router);
+}
+
 void obs_module_unload(void)
 {
+	trigglow::websocket::Unregister();
 	// Before anything is torn down: aborts every network call still in
 	// flight (a Trigi answer can take up to 90 s), drops every result not yet
 	// delivered and waits for those threads, at most 2 s in all. Nothing of
@@ -440,6 +602,15 @@ void obs_module_unload(void)
 	// back into.
 	if (g_state->hotkeys)
 		g_state->hotkeys->Shutdown();
+	// Cuts the relay (and whatever it was still sending) and joins its threads.
+	if (g_state->streamController) {
+		SaveStreamSettings(*g_state->streamController);
+		g_state->streamController->SetStatusCallback(nullptr);
+		g_state->streamController->Shutdown();
+	}
+	if (g_state->streamPanel)
+		g_state->streamPanel->Detach();
+	g_state->streamPanel = nullptr;
 	// Cancels any in-flight login poll timer before teardown (its network
 	// calls already ended above) -- see AuthManager::Shutdown().
 	if (g_state->authManager)
