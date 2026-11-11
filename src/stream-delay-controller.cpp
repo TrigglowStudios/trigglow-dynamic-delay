@@ -20,14 +20,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QTimer>
 
+#include <algorithm>
 #include <cstring>
 
 extern "C" {
+#include <graphics/vec2.h>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <util/config-file.h>
 }
 
 #include "logging.hpp"
+#include "overlay-layout.hpp"
 #include "packet-delay-core.hpp"
 
 namespace trigglow {
@@ -100,6 +104,115 @@ void StreamDelayController::Shutdown()
 		loopbackService_ = nullptr;
 	}
 	engaged_ = false;
+	ClearOverlay();
+}
+
+void StreamDelayController::SetShowOverlay(bool show)
+{
+	showOverlay_ = show;
+	UpdateOverlay();
+	Notify();
+}
+
+void StreamDelayController::SetOverlayCorner(uint32_t corner)
+{
+	overlayCorner_ = corner > 3 ? 0 : corner;
+	overlaySeconds_ = 0; // Re-place it.
+	UpdateOverlay();
+	Notify();
+}
+
+// The badge goes on a libobs output channel, which draws over the main view
+// (program) after the scene: the stream, so viewers get it with the delayed
+// picture, and the recording too. Channels 0-6 are OBS's own (transition,
+// global audio); downstream-keyer style plugins use the low ones.
+void StreamDelayController::UpdateOverlay()
+{
+	constexpr uint32_t kOverlayChannel = 61;
+	const bool want = showOverlay_ && engaged_ && delayOn_ && overlayImage_;
+	if (!want) {
+		if (overlayShown_) {
+			obs_set_output_source(kOverlayChannel, nullptr);
+			overlayShown_ = false;
+		}
+		return;
+	}
+	if (overlayShown_ && overlaySeconds_ == delaySeconds_)
+		return;
+	const std::string path = overlayImage_(delaySeconds_);
+	if (path.empty())
+		return;
+
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_string(settings, "file", path.c_str());
+	if (!overlaySource_)
+		overlaySource_ =
+			obs_source_create_private("image_source", "Trigglow Stream Delay Badge (auto)", settings);
+	else
+		obs_source_update(overlaySource_, settings);
+	obs_data_release(settings);
+	if (!overlayScene_) {
+		overlayScene_ = obs_scene_create_private("Trigglow Stream Delay Overlay (auto)");
+		obs_scene_add(overlayScene_, overlaySource_);
+	}
+
+	obs_video_info ovi = {};
+	obs_get_video_info(&ovi);
+	const overlaylayout::Placement p = overlaylayout::Place(static_cast<float>(ovi.base_width),
+								static_cast<float>(ovi.base_height), overlayCorner_);
+	if (obs_sceneitem_t *item = obs_scene_find_source(overlayScene_, "Trigglow Stream Delay Badge (auto)")) {
+		const vec2 pos{p.x, p.y};
+		const vec2 scale{p.scale, p.scale};
+		obs_sceneitem_set_pos(item, &pos);
+		obs_sceneitem_set_scale(item, &scale);
+	}
+	obs_set_output_source(kOverlayChannel, obs_scene_get_source(overlayScene_));
+	overlayShown_ = true;
+	overlaySeconds_ = delaySeconds_;
+}
+
+void StreamDelayController::ClearOverlay()
+{
+	if (overlayShown_)
+		obs_set_output_source(61, nullptr);
+	overlayShown_ = false;
+	if (overlayScene_) {
+		obs_scene_release(overlayScene_);
+		overlayScene_ = nullptr;
+	}
+	if (overlaySource_) {
+		obs_source_release(overlaySource_);
+		overlaySource_ = nullptr;
+	}
+}
+
+// Settings that make stream mode worse, checked as each stream starts:
+// - the keyframe interval is the step the delay moves in; "auto" (0) is 4-10 s
+//   on most encoders;
+// - OBS's own Stream Delay adds its fixed delay on top (and stops OBS's
+//   output from reaching the relay live).
+void StreamDelayController::CheckObsSettings(obs_output_t *output)
+{
+	warnings_.clear();
+	if (obs_encoder_t *encoder = output ? obs_output_get_video_encoder(output) : nullptr) {
+		obs_data_t *settings = obs_encoder_get_settings(encoder);
+		if (settings && obs_data_has_user_value(settings, "keyint_sec")) {
+			const long long keyint = obs_data_get_int(settings, "keyint_sec");
+			if (keyint == 0)
+				warnings_.push_back("keyint_auto");
+			else if (keyint > 4)
+				warnings_.push_back("keyint_long:" + std::to_string(keyint));
+		} else if (settings) {
+			warnings_.push_back("keyint_auto");
+		}
+		obs_data_release(settings);
+	}
+	if (config_t *profile = obs_frontend_get_profile_config()) {
+		if (config_get_bool(profile, "Output", "DelayEnable"))
+			warnings_.push_back("obs_delay");
+	}
+	for (const std::string &w : warnings_)
+		TRIGGLOW_LOG_INFO(kComponent, "settings check: %s", w.c_str());
 }
 
 void StreamDelayController::SetModeEnabled(bool enabled)
@@ -222,6 +335,16 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	{
 		std::lock_guard<std::mutex> lock(eventMutex_);
 		status.lastEvent = lastEvent_;
+	}
+	status.warnings = warnings_;
+	status.showOverlay = showOverlay_;
+	status.overlayCorner = overlayCorner_;
+	// OBS's own Stream Delay is checked live too: it's the one setting worth
+	// fixing before a stream starts.
+	if (config_t *profile = obs_frontend_get_profile_config()) {
+		if (config_get_bool(profile, "Output", "DelayEnable") &&
+		    std::find(status.warnings.begin(), status.warnings.end(), "obs_delay") == status.warnings.end())
+			status.warnings.push_back("obs_delay");
 	}
 	if (engaged_ || draining_)
 		status.relay = relay_.GetStatus();
@@ -348,6 +471,7 @@ void StreamDelayController::OnStreamingStarting()
 		loopbackService_ = obs_service_create_private("rtmp_custom", "trigglow-dynamic-delay-relay", settings);
 	obs_data_release(settings);
 	obs_output_set_service(output, loopbackService_);
+	CheckObsSettings(output);
 	obs_output_release(output);
 
 	engaged_ = true;
@@ -382,6 +506,7 @@ void StreamDelayController::Tick()
 
 void StreamDelayController::Notify()
 {
+	UpdateOverlay();
 	if (onStatus_)
 		onStatus_();
 }

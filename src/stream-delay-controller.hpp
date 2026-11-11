@@ -48,6 +48,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 struct obs_service;
 typedef struct obs_service obs_service_t;
+struct obs_output;
+typedef struct obs_output obs_output_t;
+struct obs_scene;
+typedef struct obs_scene obs_scene_t;
+struct obs_source;
+typedef struct obs_source obs_source_t;
 class QTimer;
 
 namespace trigglow {
@@ -72,6 +78,11 @@ struct StreamDelayStatus {
 	std::string ineligible;
 	// Last problem worth showing (a destination failed...), empty when none.
 	std::string lastEvent;
+	// OBS settings worth changing, as locale key suffixes under
+	// "Stream.Warn." with an optional ":<value>" (e.g. "keyint_long:8").
+	std::vector<std::string> warnings;
+	bool showOverlay = true;
+	uint32_t overlayCorner = 1;
 	relay::RelayStatus relay;
 };
 
@@ -101,6 +112,17 @@ public:
 	bool DrainOnStop() const { return drainOnStop_; }
 	void SetExtraDestinations(std::vector<ExtraDestination> destinations);
 	const std::vector<ExtraDestination> &ExtraDestinations() const { return extras_; }
+	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
+	// channel while the delay is on (viewers get it with the delayed picture).
+	void SetShowOverlay(bool show);
+	bool ShowOverlay() const { return showOverlay_; }
+	void SetOverlayCorner(uint32_t corner);
+	uint32_t OverlayCorner() const { return overlayCorner_; }
+	// Path of the badge PNG for `seconds` (overlay-badge.hpp), UI thread.
+	void SetOverlayImageProvider(std::function<std::string(uint32_t)> provider)
+	{
+		overlayImage_ = std::move(provider);
+	}
 
 	// Controls. Enable is gated by the free account like scene mode.
 	bool Enable();
@@ -130,7 +152,19 @@ private:
 	void OnStreamingStopped();
 	void Tick();
 	void Notify();
+	void UpdateOverlay();
+	void ClearOverlay();
+	void CheckObsSettings(obs_output_t *output);
 	uint32_t EffectiveDelay() const { return delayOn_ ? delaySeconds_ : 0; }
+
+	bool showOverlay_ = true;
+	uint32_t overlayCorner_ = 1;
+	std::function<std::string(uint32_t)> overlayImage_;
+	obs_scene_t *overlayScene_ = nullptr;
+	obs_source_t *overlaySource_ = nullptr;
+	uint32_t overlaySeconds_ = 0;
+	bool overlayShown_ = false;
+	std::vector<std::string> warnings_;
 
 	relay::StreamRelay relay_;
 	obs_service_t *loopbackService_ = nullptr;

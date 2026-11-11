@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <functional>
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -86,6 +87,9 @@ private:
 	QPushButton *signInButton_ = nullptr;
 	QSpinBox *keepSpin_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
+	QCheckBox *overlayCheck_ = nullptr;
+	QComboBox *cornerCombo_ = nullptr;
+	QLabel *settingsWarnings_ = nullptr;
 	QTableWidget *destTable_ = nullptr;
 	QLineEdit *destName_ = nullptr;
 	QLineEdit *destServer_ = nullptr;

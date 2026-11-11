@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "stream-mode-panel.hpp"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -270,6 +271,31 @@ void StreamModePanel::BuildUi()
 		controller_.SetDrainOnStop(on);
 		SettingsChanged();
 	});
+
+	auto *overlayRow = new QHBoxLayout();
+	overlayCheck_ = new QCheckBox(Tr("Stream.Overlay"), controlsBox_);
+	cornerCombo_ = new QComboBox(controlsBox_);
+	cornerCombo_->addItems({Tr("Stream.Corner.TopLeft"), Tr("Stream.Corner.TopRight"),
+				Tr("Stream.Corner.BottomLeft"), Tr("Stream.Corner.BottomRight")});
+	overlayRow->addWidget(overlayCheck_, 1);
+	overlayRow->addWidget(cornerCombo_);
+	controls->addLayout(overlayRow);
+	connect(overlayCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		controller_.SetShowOverlay(on);
+		SettingsChanged();
+	});
+	connect(cornerCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+		if (refreshing_ || index < 0)
+			return;
+		controller_.SetOverlayCorner(static_cast<uint32_t>(index));
+		SettingsChanged();
+	});
+
+	settingsWarnings_ = new QLabel(controlsBox_);
+	settingsWarnings_->setWordWrap(true);
+	controls->addWidget(settingsWarnings_);
 }
 
 void StreamModePanel::AddDestination()
@@ -431,6 +457,21 @@ void StreamModePanel::Refresh()
 	statsLabel_->setVisible(!stats.isEmpty());
 	warningLabel_->setText(warning);
 	warningLabel_->setVisible(!warning.isEmpty());
+
+	overlayCheck_->setChecked(status.showOverlay);
+	cornerCombo_->setCurrentIndex(static_cast<int>(status.overlayCorner));
+	cornerCombo_->setEnabled(status.showOverlay);
+	QStringList settingsText;
+	for (const std::string &w : status.warnings) {
+		const size_t colon = w.find(':');
+		const std::string key = "Stream.Warn." + w.substr(0, colon);
+		QString text = Tr(key.c_str());
+		if (colon != std::string::npos)
+			text = text.arg(QString::fromStdString(w.substr(colon + 1)));
+		settingsText << text;
+	}
+	settingsWarnings_->setText(settingsText.join(QStringLiteral("\n")));
+	settingsWarnings_->setVisible(!settingsText.isEmpty());
 
 	if (auth_.CanEnable()) {
 		accountLabel_->setText(Tr("Stream.Account.SignedIn").arg(QString::fromStdString(auth_.DisplayName())));

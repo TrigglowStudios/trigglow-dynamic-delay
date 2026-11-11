@@ -364,6 +364,10 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetKeepSeconds(static_cast<uint32_t>(obs_data_get_int(data, "keep_seconds")));
 	if (obs_data_has_user_value(data, "drain_on_stop"))
 		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
+	if (obs_data_has_user_value(data, "show_overlay"))
+		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
+	if (obs_data_has_user_value(data, "overlay_corner"))
+		controller.SetOverlayCorner(static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")));
 	std::vector<trigglow::ExtraDestination> extras;
 	if (obs_data_array_t *array = obs_data_get_array(data, "destinations")) {
 		const size_t count = obs_data_array_count(array);
@@ -398,6 +402,8 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_int(data, "delay_seconds", controller.DelaySeconds());
 	obs_data_set_int(data, "keep_seconds", controller.KeepSeconds());
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
+	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
+	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
 	obs_data_array_t *array = obs_data_array_create();
 	for (const trigglow::ExtraDestination &extra : controller.ExtraDestinations()) {
 		obs_data_t *item = obs_data_create();
@@ -545,6 +551,12 @@ bool obs_module_load(void)
 	g_state->streamController = std::make_unique<trigglow::StreamDelayController>();
 	g_state->streamController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+	g_state->streamController->SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
+		const QString label = QString::fromUtf8(Str("Overlay.Label"));
+		const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
+		const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
+		return files->PathFor(seconds, label, value, signature).toStdString();
+	});
 	LoadStreamSettings(*g_state->streamController);
 	g_state->streamController->Init();
 	g_state->router =

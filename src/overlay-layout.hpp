@@ -48,9 +48,10 @@ inline constexpr float kSignaturePixelSize = 11.0f;
 // 3: the signature under the plate, outside it; 4 (v1.0.0): the web's 2026-10
 // design, one rounded plate with the signature inside, Figtree, violet accent.
 inline constexpr uint32_t kRenderVersion = 4;
-// Seconds the badge can show: the dock's spin box range.
+// Seconds the badge can show: up to stream mode's 600 s (scene mode's dock
+// stops at 60).
 inline constexpr uint32_t kMinSeconds = 1;
-inline constexpr uint32_t kMaxSeconds = 60;
+inline constexpr uint32_t kMaxSeconds = 600;
 
 enum class Corner : uint32_t {
 	TopLeft = 0,
