@@ -3,7 +3,7 @@
 # Guía de instalación (paso a paso, con capturas)
 
 Esto explica el instalador de Windows de principio a fin, incluido el aviso de SmartScreen de
-Microsoft Edge que verás porque el instalador todavía no está firmado (Early Access — ver
+Microsoft Edge que verás porque el instalador todavía no está firmado (ver
 `docs/ROADMAP-es.md`). Las capturas de abajo son de una instalación real en una versión anterior,
 antes de que v0.3.1 añadiera el icono/banner de Trigglow que ves hoy en el instalador — los pasos y
 la disposición son iguales, solo el estilo genérico y el número de versión de la esquina están
@@ -35,7 +35,7 @@ instalarlo a mano? El `.zip` de esa misma release solo trae los archivos del plu
 
 Como el instalador no está firmado con un certificado de firma de código, Microsoft Defender
 SmartScreen no puede confirmar que sea seguro y avisa antes de dejarlo ejecutar. Es normal para
-software Early Access sin firmar, no una señal de que algo esté mal — pero solo deberías continuar
+software sin firmar, no una señal de que algo esté mal — pero solo deberías continuar
 con instaladores de un origen en el que confíes de verdad (en este caso, la página de Releases de
 GitHub enlazada arriba).
 

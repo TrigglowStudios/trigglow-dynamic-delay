@@ -449,16 +449,15 @@ public:
 	// regardless of whether that source is part of the current Program
 	// scene's tree.
 	//
-	// Known limitation: only DIRECT children of the live scene are covered
-	// -- audio from a source nested inside a SUB-scene/group within the
-	// live scene won't get delayed. Acceptable for now; revisit if it turns
-	// out to matter.
+	// Covered: audio sources at any depth of the live scene (nested scenes
+	// and groups included) and the global audio sources on the output
+	// channels (Desktop Audio, Mic/Aux). Leaving any out played that audio
+	// the whole delay ahead of the video (reported 2026-11-11).
 
 	// Idempotent: attaches AudioDelayFilter (disabled by default, matching
-	// SetBufferFilterEnabled's pattern) to every direct child of
-	// `liveSceneName` that advertises OBS_SOURCE_AUDIO and doesn't already
-	// have one. Returns false if liveSceneName doesn't resolve to a real
-	// scene.
+	// SetBufferFilterEnabled's pattern) to every source
+	// GetAudioCapableChildren() returns that doesn't already have one.
+	// Returns false if liveSceneName doesn't resolve to a real scene.
 	bool EnsureAudioDelayFilters(const std::string &liveSceneName) const;
 
 	// Enables/disables every AudioDelayFilter attached under liveSceneName
@@ -589,10 +588,9 @@ private:
 	void ConnectGuard(obs_source_t *filter) const;
 	void DisconnectGuard(obs_source_t *filter) const;
 
-	// Collects the direct children of `liveSceneName` that advertise
-	// OBS_SOURCE_AUDIO (see EnsureAudioDelayFilters's header comment for
-	// why only direct children, and why this naturally skips nested
-	// scenes/groups without needing to special-case them). Each entry holds
+	// Collects every source that advertises OBS_SOURCE_AUDIO inside
+	// `liveSceneName` (recursing into nested scenes and groups), plus the
+	// global audio sources on output channels 1+, each once. Each entry holds
 	// its own strong reference, released when the vector goes away, so a
 	// child removed from the scene meanwhile can't be freed under the caller.
 	std::vector<OBSSourceAutoRelease> GetAudioCapableChildren(const std::string &liveSceneName) const;

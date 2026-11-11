@@ -13,12 +13,11 @@ from fontTools.varLib import instancer
 # Basic Latin, Latin-1 Supplement (U+00A0 is the no-break space in "30 s"),
 # Latin Extended-A (Spanish and most European languages), plus the typographic
 # punctuation the UI copy uses. Neither upstream font has U+202F (narrow
-# no-break space), so it isn't listed; U+2009 only exists in Archivo.
+# no-break space) or U+2009 (thin space), so neither is listed.
 UNICODES = (
     list(range(0x20, 0x7F))
     + list(range(0xA0, 0x180))
     + [
-        0x2009,  # thin space (Archivo only)
         0x2013, 0x2014,  # en / em dash
         0x2018, 0x2019, 0x201C, 0x201D,  # curly quotes
         0x2026,  # ellipsis
@@ -32,8 +31,8 @@ FEATURES = ["kern", "liga", "calt", "ccmp", "locl", "mark", "mkmk", "tnum", "cas
 
 JOBS = [
     # (source, axis location, family, style, weight class, output)
-    ("Archivo[wdth,wght].ttf", {"wght": 600, "wdth": 100}, "Archivo", "SemiBold", 600, "Archivo-SemiBold.ttf"),
-    ("Archivo[wdth,wght].ttf", {"wght": 700, "wdth": 100}, "Archivo", "Bold", 700, "Archivo-Bold.ttf"),
+    ("Figtree[wght].ttf", {"wght": 600}, "Figtree", "SemiBold", 600, "Figtree-SemiBold.ttf"),
+    ("Figtree[wght].ttf", {"wght": 700}, "Figtree", "Bold", 700, "Figtree-Bold.ttf"),
     ("GeistMono[wght].ttf", {"wght": 500}, "Geist Mono", "Medium", 500, "GeistMono-Medium.ttf"),
 ]
 

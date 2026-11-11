@@ -126,7 +126,7 @@ struct PluginState {
 
 PluginState *g_state = nullptr;
 
-// Registers the bundled Archivo/Geist Mono (data/fonts) for the plugin's own
+// Registers the bundled Figtree/Geist Mono (data/fonts) for the plugin's own
 // widgets and the overlay -- never as OBS's UI font -- and logs ONE line
 // either way. Without them every role falls back to OBS's UI font.
 void LoadBrandFonts()

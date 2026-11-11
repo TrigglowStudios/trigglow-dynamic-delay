@@ -291,7 +291,8 @@ No — el plugin usa hotkeys nativas de OBS, que Stream Deck puede disparar dire
 acción "System: Hotkey". Ver `docs/STREAM_DECK.md`.
 
 **¿Es un producto terminado?**
-No — está marcado explícitamente como **MVP / Early Access**. Es funcional y pensado para un uso
-real en directo, pero con un alcance deliberadamente acotado (ver `docs/ROADMAP.md` para lo que
-viene después), y una zona de riesgo — un crash de GPU observado bajo un diseño anterior — que se
+En Windows, sí: la **v1.0.0** es la primera versión estable, pensada para un uso real en directo,
+con un alcance deliberadamente acotado (ver `docs/ROADMAP.md` para lo que viene después). Las
+versiones de macOS y Linux siguen en alpha: compilan y pasan la CI, pero aún no se han usado en un
+directo. Una zona de riesgo — un crash de GPU observado bajo un diseño anterior — que se
 cree reducida pero todavía no reconfirmada específicamente (`docs/SPEC.md` §7).

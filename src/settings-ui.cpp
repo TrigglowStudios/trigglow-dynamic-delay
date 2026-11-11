@@ -697,7 +697,7 @@ void TrigglowDelayDock::BuildUi()
 	SetRole(hintLabel_, "hint", ui::FontRole::Hint);
 	root->addWidget(hintLabel_);
 
-	// --- Footer: version + BETA chip on the left, "Report a problem" on the
+	// --- Footer: version on the left, "Report a problem" on the
 	// right. The report link stays enabled in every state -- a user hitting
 	// lag or a stuck buffer needs it exactly when things are going wrong. ---
 	auto *footerDivider = new QFrame(this);
@@ -705,7 +705,7 @@ void TrigglowDelayDock::BuildUi()
 	footerDivider->setFixedHeight(1);
 	root->addWidget(footerDivider);
 	{
-		// Version + BETA | link; the link moves under them in narrow docks.
+		// Version | link; the link moves under it in narrow docks.
 		auto *footer = new QBoxLayout(QBoxLayout::LeftToRight);
 		footerRow_ = footer;
 		footer->setContentsMargins(0, 0, 0, 0);
@@ -714,9 +714,6 @@ void TrigglowDelayDock::BuildUi()
 		versionRow->setSpacing(8);
 		auto *version = new QLabel(T("Dock.Version").arg(QString::fromUtf8(PLUGIN_VERSION)), this);
 		SetRole(version, "dataMuted", ui::FontRole::Data);
-		auto *beta = new QLabel(T("Dock.Beta"), this);
-		SetRole(beta, "tag", ui::FontRole::Tag);
-		beta->setProperty("tgTone", QStringLiteral("warning"));
 		reportBugButton_ = new QPushButton(T("Dock.ReportBug.Button"), this);
 		reportBugButton_->setProperty("tgVariant", QStringLiteral("link"));
 		reportBugButton_->setFocusPolicy(Qt::TabFocus);
@@ -725,7 +722,6 @@ void TrigglowDelayDock::BuildUi()
 		reportBugButton_->setIconSize(kLinkIconBox);
 		SetRole(reportBugButton_, "link", ui::FontRole::Strong);
 		versionRow->addWidget(version);
-		versionRow->addWidget(beta);
 		versionRow->addStretch(1);
 		footer->addLayout(versionRow, 1);
 		footer->addWidget(reportBugButton_, 0, Qt::AlignLeft | Qt::AlignVCenter);
