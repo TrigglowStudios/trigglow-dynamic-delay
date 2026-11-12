@@ -27,8 +27,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
-#include <QScrollArea>
-#include <QVBoxLayout>
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+#include <QDockWidget>
+#include <QImage>
+#include <QTimer>
+#endif
 
 extern "C" {
 #include <obs-module.h>
@@ -42,11 +45,13 @@ extern "C" {
 }
 #endif
 
+#include "apply-to.hpp"
 #include "audio-delay-filter.hpp"
 #include "auth-manager.hpp"
 #include "buffer-mode-controller.hpp"
 #include "bug-report.hpp"
 #include "delay-router.hpp"
+#include "delay-targets.hpp"
 #include "hotkeys.hpp"
 #include "i18n.hpp"
 #include "logging.hpp"
@@ -54,7 +59,6 @@ extern "C" {
 #include "overlay-badge.hpp"
 #include "settings-ui.hpp"
 #include "stream-delay-controller.hpp"
-#include "stream-mode-panel.hpp"
 #include "ui-tasks.hpp"
 #include "ui-theme.hpp"
 #include "video-delay-filter.hpp"
@@ -106,19 +110,24 @@ struct PluginState {
 	// see docs/ACCOUNT_GATE.md for why this gate exists at all.
 	std::unique_ptr<trigglow::AuthManager> authManager;
 	std::unique_ptr<trigglow::BufferModeController> bufferController;
-	// v1.0.0 stream mode (the delay on the encoded stream) and the router the
-	// hotkeys and obs-websocket go through.
+	// v1.0.0 stream mode (the delay on the encoded stream, only when the
+	// streamer ticks "Apply the delay only to the stream") and the router the
+	// dock's button, the hotkeys and obs-websocket go through, to the selected
+	// mode only. The targets wrap the two controllers for the router.
 	std::unique_ptr<trigglow::StreamDelayController> streamController;
+	std::unique_ptr<trigglow::SceneDelayTarget> sceneTarget;
+	std::unique_ptr<trigglow::StreamDelayTarget> streamTarget;
 	std::unique_ptr<trigglow::DelayRouter> router;
 	std::unique_ptr<trigglow::DelayHotkeys> hotkeys;
-	// Owned by the dock container (Qt parent), like the dock itself: OBS may
-	// destroy it first, hence the QPointer.
-	QPointer<trigglow::StreamModePanel> streamPanel;
 	// Not owned past AddDock(): OBS's dock system takes ownership of the
-	// QWidget once obs_frontend_add_dock_by_id() returns true. Kept here
-	// only as a non-owning reference for potential future use (e.g. forcing
-	// a refresh), never deleted from this side.
-	trigglow::TrigglowDelayDock *dock = nullptr;
+	// QWidget once obs_frontend_add_dock_by_id() returns true, and may destroy
+	// it first, hence the QPointer. Detached on unload, never deleted here.
+	QPointer<trigglow::TrigglowDelayDock> dock;
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local test builds only: StartDockShots(). Declared before the
+	// controllers' last use and destroyed first.
+	std::unique_ptr<QTimer> shotTimer;
+#endif
 	// False only when buffer-mode-settings.json exists, couldn't be parsed and
 	// couldn't be set aside either (see LoadBufferSettings): then the file is
 	// left untouched on exit instead of being replaced by the defaults.
@@ -343,9 +352,42 @@ QString ModuleConfigPath(const char *file)
 	return path;
 }
 
-// Stream mode settings. The stream goes only to the streamer's own OBS service;
-// a "destinations" array left by a 1.0 pre-release is ignored and dropped on
-// the next save.
+// "apply_to" (apply-to.hpp): what the delay applies to. Missing: all of OBS.
+// 1.0 test builds saved "mode_enabled" (true by default) instead; 1.0 was never
+// released, so it is ignored and dropped on the next save: everyone starts on
+// all of OBS, the default.
+trigglow::ApplyTo ReadApplyTo(obs_data_t *data)
+{
+	obs_data_item_t *item = obs_data_item_byname(data, "apply_to");
+	trigglow::ApplyToType type = trigglow::ApplyToType::Missing;
+	std::string text;
+	if (item) {
+		if (obs_data_item_gettype(item) == OBS_DATA_STRING) {
+			type = trigglow::ApplyToType::String;
+			const char *value = obs_data_item_get_string(item);
+			text = value ? value : "";
+		} else {
+			type = trigglow::ApplyToType::Other;
+		}
+		obs_data_item_release(&item);
+	}
+	const trigglow::ApplyToSetting setting =
+		trigglow::ParseApplyTo(type, text, obs_data_has_user_value(data, "mode_enabled"));
+	if (setting.warn)
+		TRIGGLOW_LOG_WARN(kComponent,
+				  "\"apply_to\" in %s is neither \"all\" nor \"stream\" -- the delay applies to all of "
+				  "OBS",
+				  kStreamSettingsFile);
+	if (setting.droppedModeEnabled)
+		TRIGGLOW_LOG_INFO(kComponent,
+				  "%s: \"mode_enabled\" from a 1.0 test build ignored and dropped (apply_to=%s)",
+				  kStreamSettingsFile, trigglow::ApplyToName(setting.value));
+	return setting.value;
+}
+
+// Stream mode settings, and what the delay applies to. The stream goes only to
+// the streamer's own OBS service; a "destinations" array left by a 1.0
+// pre-release is ignored and dropped on the next save.
 void LoadStreamSettings(trigglow::StreamDelayController &controller)
 {
 	const QString path = ModuleConfigPath(kStreamSettingsFile);
@@ -358,8 +400,7 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 				  kStreamSettingsFile, setAside.isEmpty() ? "left as is" : "moved aside");
 		return;
 	}
-	if (obs_data_has_user_value(data, "mode_enabled"))
-		controller.SetModeEnabled(obs_data_get_bool(data, "mode_enabled"));
+	controller.SetApplyTo(ReadApplyTo(data));
 	if (obs_data_has_user_value(data, "delay_seconds"))
 		controller.SetDelaySeconds(static_cast<uint32_t>(obs_data_get_int(data, "delay_seconds")));
 	if (obs_data_has_user_value(data, "keep_seconds"))
@@ -397,8 +438,9 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 	}
 	controller.SetSceneRules(std::move(rules));
 	obs_data_release(data);
-	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (%s, delay=%us, keep=%us, buffer %s)",
-			  controller.ModeEnabled() ? "on" : "off", controller.DelaySeconds(), controller.KeepSeconds(),
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (apply_to=%s, delay=%us, keep=%us, buffer %s)",
+			  trigglow::ApplyToName(controller.ApplyToChoice()), controller.DelaySeconds(),
+			  controller.KeepSeconds(),
 			  trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
 }
 
@@ -409,7 +451,7 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 		return;
 	QDir().mkpath(QFileInfo(path).absolutePath());
 	obs_data_t *data = obs_data_create();
-	obs_data_set_bool(data, "mode_enabled", controller.ModeEnabled());
+	obs_data_set_string(data, "apply_to", trigglow::ApplyToName(controller.ApplyToChoice()));
 	obs_data_set_int(data, "delay_seconds", controller.DelaySeconds());
 	obs_data_set_int(data, "keep_seconds", controller.KeepSeconds());
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
@@ -434,40 +476,92 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_release(data);
 }
 
-// The dock: stream mode on top, scene mode's dock below in a section that
-// folds while stream mode handles the controls.
-QWidget *BuildDockContainer(trigglow::StreamModePanel *panel, trigglow::TrigglowDelayDock *sceneDock)
+// The dock shows one delay value and one badge for both modes. The modes keep
+// their own copies (each in its own settings file), so at load the mode that
+// isn't selected takes the selected one's; from then on the dock writes both
+// (the badge) or carries the seconds over when the streamer switches.
+void AlignSharedSettings(trigglow::BufferModeController &scene, trigglow::StreamDelayController &stream)
 {
-	// Stream mode's panel on top (it scrolls on its own), then scene mode's
-	// dock under a fold the panel draws and keeps current: folded while stream
-	// mode handles the delay and the hotkeys, open otherwise. The streamer can
-	// still open or fold it by hand.
-	auto *container = new QWidget();
-	auto *layout = new QVBoxLayout(container);
-	layout->setContentsMargins(0, 0, 0, 0);
-	layout->setSpacing(0);
-
-	auto *panelScroll = new QScrollArea(container);
-	panelScroll->setObjectName(QStringLiteral("tgDockScroll")); // Transparent, like scene mode's.
-	panelScroll->setWidgetResizable(true);
-	panelScroll->setFrameShape(QFrame::NoFrame);
-	// Not a focus stop of its own (QScrollArea brings each focused child into
-	// view), and no sideways scrolling: narrow docks reflow instead.
-	panelScroll->setFocusPolicy(Qt::NoFocus);
-	panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-	panelScroll->setWidget(panel);
-	layout->addWidget(panelScroll, 1);
-
-	layout->addWidget(panel->CreateSceneHeader(container, [sceneDock](bool open) { sceneDock->setVisible(open); }));
-	sceneDock->setParent(container);
-	layout->addWidget(sceneDock, 1);
-
-	panel->SetHandlesControlsChanged([panel, sceneDock](bool streamHandles) {
-		panel->SetSceneSectionOpen(!streamHandles);
-		sceneDock->SetStandby(streamHandles);
-	});
-	return container;
+	const trigglow::BufferModeStatus s = scene.GetStatus();
+	if (stream.HandlesControls()) {
+		if (s.delaySeconds != stream.DelaySeconds())
+			scene.SetDelaySeconds(stream.DelaySeconds());
+		if (s.showOverlay != stream.ShowOverlay())
+			scene.SetShowOverlay(stream.ShowOverlay());
+		if (s.overlayCorner != stream.OverlayCorner())
+			scene.SetOverlayCorner(stream.OverlayCorner());
+	} else {
+		stream.SetDelaySeconds(s.delaySeconds);
+		stream.SetShowOverlay(s.showOverlay);
+		stream.SetOverlayCorner(s.overlayCorner);
+	}
 }
+
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+// Local test builds only (CMake refuses the option in CI): with
+// TRIGGLOW_TEST_DOCK_SHOTS=<folder> in OBS's environment, the plugin polls
+// <folder>/request.txt, runs its lines, then renames it to request.done:
+//   shot <name> <width> [open]  the dock rendered offscreen to <name>.png
+//                               (RenderForTest(); "open": sections open)
+//   apply all|stream            what the delay applies to
+//   enable | disable            through the router, like a hotkey
+//   delay <seconds>             through the router
+//   stream start|stop           OBS's own Start/Stop Streaming
+// Screenshots of the dock at fixed widths without sending any input to any
+// window.
+void StartDockShots()
+{
+	const char *dir = std::getenv("TRIGGLOW_TEST_DOCK_SHOTS");
+	if (!dir || !*dir)
+		return;
+	TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: dock shots on request");
+	const QString folder = QString::fromUtf8(dir);
+	g_state->shotTimer = std::make_unique<QTimer>();
+	QObject::connect(g_state->shotTimer.get(), &QTimer::timeout, [folder] {
+		if (!g_state || !g_state->dock)
+			return;
+		QFile file(folder + QStringLiteral("/request.txt"));
+		if (!file.exists() || !file.open(QIODevice::ReadOnly))
+			return;
+		const QStringList lines =
+			QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+		file.close();
+		QFile::remove(folder + QStringLiteral("/request.done"));
+		file.rename(folder + QStringLiteral("/request.done"));
+		// The dock may sit in a hidden dock widget in a fresh profile.
+		if (auto *dockWidget = qobject_cast<QDockWidget *>(g_state->dock->parentWidget()))
+			dockWidget->setVisible(true);
+		for (const QString &line : lines) {
+			const QStringList w = line.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+			if (w.isEmpty())
+				continue;
+			TRIGGLOW_LOG_INFO(kComponent, "test request: %s", line.trimmed().toUtf8().constData());
+			if (w[0] == QLatin1String("shot") && w.size() >= 3) {
+				const QImage image = g_state->dock->RenderForTest(
+					w[2].toInt(), w.size() > 3 && w[3] == QLatin1String("open"));
+				image.save(folder + QLatin1Char('/') + w[1] + QStringLiteral(".png"));
+			} else if (w[0] == QLatin1String("apply") && w.size() >= 2) {
+				g_state->streamController->SetApplyTo(w[1] == QLatin1String("stream")
+									      ? trigglow::ApplyTo::Stream
+									      : trigglow::ApplyTo::All);
+				SaveStreamSettings(*g_state->streamController);
+			} else if (w[0] == QLatin1String("enable")) {
+				g_state->router->Enable();
+			} else if (w[0] == QLatin1String("disable")) {
+				g_state->router->Disable();
+			} else if (w[0] == QLatin1String("delay") && w.size() >= 2) {
+				g_state->router->SetDelay(static_cast<uint32_t>(w[1].toUInt()));
+			} else if (w[0] == QLatin1String("stream") && w.size() >= 2) {
+				if (w[1] == QLatin1String("start"))
+					obs_frontend_streaming_start();
+				else
+					obs_frontend_streaming_stop();
+			}
+		}
+	});
+	g_state->shotTimer->start(300);
+}
+#endif
 
 } // namespace
 
@@ -590,28 +684,36 @@ bool obs_module_load(void)
 	});
 	LoadStreamSettings(*g_state->streamController);
 	g_state->streamController->Init();
-	g_state->router =
-		std::make_unique<trigglow::DelayRouter>(*g_state->bufferController, *g_state->streamController);
+	AlignSharedSettings(*g_state->bufferController, *g_state->streamController);
+	g_state->sceneTarget =
+		std::make_unique<trigglow::SceneDelayTarget>(*g_state->bufferController, *g_state->streamController);
+	g_state->streamTarget = std::make_unique<trigglow::StreamDelayTarget>(*g_state->streamController);
+	g_state->router = std::make_unique<trigglow::DelayRouter>(*g_state->sceneTarget, *g_state->streamTarget,
+								  [stream = g_state->streamController.get()] {
+									  return stream->HandlesControls();
+								  });
 
 	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->router);
 	g_state->hotkeys->Init();
 
-	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->authManager);
+	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->streamController,
+						     *g_state->router, *g_state->authManager);
 	g_state->dock = dock;
-	auto *panel = new trigglow::StreamModePanel(*g_state->streamController, *g_state->authManager);
-	g_state->streamPanel = panel;
-	panel->SetSettingsChanged([] {
+	dock->SetSettingsChanged([] {
 		if (g_state && g_state->streamController)
 			SaveStreamSettings(*g_state->streamController);
 	});
 	g_state->streamController->SetStatusCallback([] {
 		if (!g_state)
 			return;
-		if (g_state->streamPanel)
-			g_state->streamPanel->Refresh();
+		if (g_state->dock)
+			g_state->dock->OnStreamStatusChanged();
 		trigglow::websocket::NotifyStatus();
 	});
-	g_state->bridge.AddDock(kDockId, kDockTitle, BuildDockContainer(panel, dock));
+	g_state->bridge.AddDock(kDockId, kDockTitle, dock);
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	StartDockShots();
+#endif
 
 	TRIGGLOW_LOG_INFO(kComponent, "loaded successfully");
 	return true;
@@ -637,6 +739,9 @@ void obs_module_unload(void)
 
 	if (!g_state)
 		return;
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	g_state->shotTimer.reset();
+#endif
 
 	if (g_state->saveSettingsOnExit)
 		SaveBufferSettings(*g_state->bufferController);
@@ -651,9 +756,9 @@ void obs_module_unload(void)
 		g_state->streamController->SetStatusCallback(nullptr);
 		g_state->streamController->Shutdown();
 	}
-	if (g_state->streamPanel)
-		g_state->streamPanel->Detach();
-	g_state->streamPanel = nullptr;
+	if (g_state->dock)
+		g_state->dock->Detach();
+	g_state->dock = nullptr;
 	// Cancels any in-flight login poll timer before teardown (its network
 	// calls already ended above) -- see AuthManager::Shutdown().
 	if (g_state->authManager)

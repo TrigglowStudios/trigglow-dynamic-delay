@@ -136,6 +136,21 @@ if(APPLE)
 endif()
 add_test(NAME drive_kind_tests COMMAND drive_kind_tests)
 
+# v1.0.0 one panel: what the delay applies to ("apply_to", the migration of
+# 1.0 test builds' "mode_enabled") and the router following the dock's check
+# box (src/apply-to.*, src/delay-router.hpp).
+add_executable(
+  apply_to_tests
+  apply_to_tests.cpp
+  check.hpp
+  "${_src}/apply-to.cpp"
+  "${_src}/apply-to.hpp"
+  "${_src}/delay-router.hpp"
+)
+target_include_directories(apply_to_tests PRIVATE "${_src}")
+set_target_properties(apply_to_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME apply_to_tests COMMAND apply_to_tests)
+
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
 # with a fake codec (threads, no FFmpeg).

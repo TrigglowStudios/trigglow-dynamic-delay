@@ -32,9 +32,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // camera keep the live picture. Every scene is delayed, so switching scenes
 // while delayed is safe.
 //
-// Not eligible (SRT/WHIP services, Enhanced Broadcasting, a system without the
-// relay): the stream goes out exactly as OBS sends it and the dock offers scene
-// mode (BufferModeController) as before. All public methods run on OBS's UI
+// Only when the streamer ticked "Apply the delay only to the stream" in the
+// dock (apply-to.hpp); the default delays all of OBS with scene mode
+// (BufferModeController). Not eligible (SRT/WHIP services, Enhanced
+// Broadcasting, a system without the relay): the stream goes out exactly as
+// OBS sends it and the dock says so. All public methods run on OBS's UI
 // thread.
 
 #include <cstdint>
@@ -44,6 +46,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <string>
 #include <vector>
 
+#include "apply-to.hpp"
 #include "drive-kind.hpp"
 #include "stream-relay.hpp"
 
@@ -67,10 +70,12 @@ enum class StreamDelayState {
 };
 
 struct StreamDelayStatus {
-	bool available = false;   // The relay exists on this system.
-	bool modeEnabled = false; // The streamer chose stream mode.
-	bool engaged = false;     // The current stream goes through the relay.
-	bool delayOn = false;     // Delay requested (armed before a stream, or applied).
+	bool available = false; // The relay exists on this system.
+	// What the streamer chose in the dock: all of OBS (scene mode) or only
+	// the stream (this controller).
+	ApplyTo applyTo = ApplyTo::All;
+	bool engaged = false; // The current stream goes through the relay.
+	bool delayOn = false; // Delay requested (armed before a stream, or applied).
 	uint32_t delaySeconds = 30;
 	// RAM only: the history also keeps the highest preset or delay-on scene
 	// rule (RamKeepSeconds()). The relay's status says what applies now.
@@ -119,8 +124,10 @@ public:
 	void Shutdown();
 
 	// Settings (persisted by plugin-main.cpp).
-	void SetModeEnabled(bool enabled);
-	bool ModeEnabled() const { return modeEnabled_; }
+	// The dock's "Apply the delay only to the stream" (apply-to.hpp). Stream
+	// mode does nothing unless it is Stream; it applies from the next stream.
+	void SetApplyTo(ApplyTo applyTo);
+	ApplyTo ApplyToChoice() const { return applyTo_; }
 	void SetDelaySeconds(uint32_t seconds); // Applied live while the delay is on.
 	uint32_t DelaySeconds() const { return delaySeconds_; }
 	// "keep_seconds": the history's minimum in 1.0 alpha builds. Still read
@@ -181,9 +188,11 @@ public:
 	const std::vector<SceneRule> &SceneRules() const { return sceneRules_; }
 	bool DelayOn() const { return delayOn_; }
 
-	// True when the hotkeys and Stream Deck should drive this controller and
-	// not scene mode: stream mode is on and the stream (current or next) can
-	// use it.
+	// True when the dock's button, the hotkeys and Stream Deck drive this
+	// controller and not scene mode: the streamer chose "only the stream" and
+	// the relay exists on this system (ControlsGoToStream()). A stream that
+	// can't use the relay (SRT, Enhanced Broadcasting...) doesn't hand the
+	// controls to scene mode: the dock says why and how to switch.
 	bool HandlesControls() const;
 	bool Engaged() const { return engaged_; }
 
@@ -231,7 +240,7 @@ private:
 	obs_service_t *savedFrontendService_ = nullptr;
 	std::unique_ptr<QTimer> timer_;
 	bool initialized_ = false;
-	bool modeEnabled_ = true;
+	ApplyTo applyTo_ = ApplyTo::All;
 	bool delayOn_ = false;
 	uint32_t delaySeconds_ = 30;
 	uint32_t keepSeconds_ = 120;
