@@ -11,40 +11,54 @@ platform.
 **Status: 1.0.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
 but haven't been run on a live stream yet, and they only have scene mode.**
 
-## Two ways to delay
+## What the delay applies to
 
-**Stream mode (new in 1.0.0, Windows, the default).** The plugin holds the stream OBS has already
-encoded and sends it to your platform later. Nothing is decoded or encoded again, so it costs
-almost no CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing
-written to disk) or in an encrypted temp file on your disk (the default on a hard drive, about 15 MB
-of RAM at any delay up to 600 s, measured at 6 Mbps). With it:
+The dock has one panel and one choice for this, under Options > Advanced.
+
+**All of OBS (the default).** As in 0.7: the plugin keeps your rendered live scene in RAM
+(compressed with your GPU's hardware HEVC on Windows or MJPEG, stored uncompressed on macOS) and
+plays it back 1 to 600 s later in a helper scene. While the delay builds up, your loading scene
+shows (if you choose none, a Trigglow "Adding delay" video); then Program shows the delayed scene,
+so **your stream and your recording are both delayed**. The seconds change live, and the streaming
+output is never touched, so it works with any output and any service. Only your live scene is
+delayed: keep it on Program while the delay is on. It costs more RAM and CPU (table below).
+Details: `docs/SPEC.md`.
+
+**Only the stream (advanced: "Apply the delay only to the stream (recording and preview stay
+live)", Windows).** Stream mode, new in 1.0.0: the plugin holds the stream OBS has already encoded
+and sends it to your platform later. Nothing is decoded or encoded again, so it costs almost no
+CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing written to
+disk) or in an encrypted temp file on your disk (the default on a hard drive, about 15 MB of RAM at
+any delay up to 600 s, measured at 6 Mbps). The trade-off: only your platform gets the delay.
+Recording, the Replay Buffer, the virtual camera and OBS's preview stay live, and there is no
+loading scene. With it:
 
 - 1 to 600 s of delay, turned on, off, up or down while you're live, with no reconnect. Turning it
   on, viewers see the last seconds again, never anything newer. Raising it is instant once the
   stream has run that long (with Memory, up to your highest preset or scene rule).
 - Every scene is delayed, so switching scenes while delayed is safe.
-- Recording, the Replay Buffer and the virtual camera stay live.
 - "Dump what viewers haven't seen": the seconds still waiting are never sent, the stream jumps to
   live and the delay comes back on its own.
-- Delay by scene (on in your game scene, off in Just Chatting), three presets, the delay badge for
-  viewers, and checks of the OBS settings that make it worse (keyframe interval, OBS's own Stream
-  Delay).
+- Delay by scene (on in your game scene, off in Just Chatting) and checks of the OBS settings that
+  make it worse (keyframe interval, OBS's own Stream Delay).
 - When you stop streaming, the seconds viewers haven't seen are still sent (optional).
 
-It works with OBS's own RTMP or RTMPS output and any service on it (Twitch, YouTube, Kick, TikTok,
-custom servers). Enhanced Broadcasting, SRT, RIST and WHIP fall back to scene mode. Details:
-`docs/STREAM_MODE.md`.
+It needs OBS's own RTMP or RTMPS output and works with any service on it (Twitch, YouTube, Kick,
+TikTok, custom servers). With Enhanced Broadcasting, SRT, RIST or WHIP the dock says that stream
+can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
 
-**Scene mode (every platform; "Scene mode (compatibility)" in the dock).** The plugin keeps your
-rendered live scene in RAM (compressed with your GPU's hardware HEVC on Windows or MJPEG, stored
-uncompressed on macOS), and
-plays it back 1 to 600 s later in a helper scene (the seconds change live); the streaming output is never touched. It costs
-more RAM and CPU (table below) but works with any output, and it is what the streams stream mode can't relay use. Details: `docs/SPEC.md`.
+Both have the delay badge for viewers, three presets, hotkeys, obs-websocket and the Stream Deck.
 
 ## How it works
 
 ```
-Stream mode
+All of OBS (the default, scene mode, every platform)
+
+  live scene -> video/audio delay filters -> RAM ring (HEVC or MJPEG) -> helper scene
+             -> OBS program -> OBS encoders -> your service and your recording
+                (output never touched)
+
+Only the stream (stream mode, advanced)
 
   OBS scenes -> OBS encoder -> OBS RTMP output --rtmp://127.0.0.1:<port>--> relay (in OBS)
                                     |                                         |
@@ -54,15 +68,10 @@ Stream mode
                                                      the sender sends packet p at
                                                      arrival(p) + delay, over RTMP/RTMPS
                                                      -> your OBS service (Twitch, YouTube...)
-
-Scene mode (all platforms)
-
-  live scene -> video/audio delay filters -> RAM ring (HEVC or MJPEG) -> helper scene
-             -> OBS program -> OBS encoders -> your service (output never touched)
 ```
 
 - **`StreamDelayController`** (`src/stream-delay-controller.*`) watches OBS's frontend events. When
-  a stream is about to start and it's eligible (OBS's `rtmp_output`, RTMP or RTMPS, not Enhanced
+  "only the stream" is chosen, a stream is about to start and it's eligible (OBS's `rtmp_output`, RTMP or RTMPS, not Enhanced
   Broadcasting), it reads your service's server and key, starts the relay, and points **that
   output** at the relay with a private service. Your saved stream settings are never changed.
 - **`StreamRelay`** (`src/stream-relay.*`, FFmpeg's avformat, Windows only) listens on
@@ -73,10 +82,12 @@ Scene mode (all platforms)
   timestamps, so the platform sees one continuous stream.
 - **`BufferModeController`** (`src/buffer-mode-controller.*`) runs scene mode: the delay filters,
   the ring buffer, the helper scene, the fill countdown and the degradation ladder.
-- **`DelayRouter`** (`src/delay-router.*`) is the one entry point for hotkeys and obs-websocket:
-  each command goes to stream mode when it handles the controls, to scene mode otherwise.
-- The **dock** (`src/settings-ui.*`, `src/stream-mode-panel.*`) shows both, with stream mode on
-  top and scene mode folded under it.
+- **`DelayRouter`** (`src/delay-router.hpp`, `src/delay-targets.*`) is the one entry point for the
+  dock's button, hotkeys and obs-websocket: each command goes to the mode selected in the dock
+  (`src/apply-to.*`), and only to it.
+- The **dock** (`src/settings-ui.*`, `src/settings-ui-stream.cpp`) is one panel: the status, one
+  "Turn delay on" button, the delay, the scenes and folded options, where the advanced check box
+  switches to only the stream.
 - **Sign-in** (`src/auth-*`, `src/api-client.*`, `src/win-http.*`, `src/token-store.*`): the free
   account that turning the delay on needs, over WinHTTP on Windows and libcurl on macOS and Linux.
 
@@ -125,7 +136,7 @@ a machine that can't keep up, the buffer drops to a lower resolution (never belo
 quality you choose) and, last, to half the capture frame rate, instead of overloading OBS or cutting
 the delay; the dock shows an amber notice while that happens.
 
-**Memory in stream mode.** You choose where the delay buffer lives (dock: Options > Delay buffer):
+**Memory with only the stream (stream mode).** You choose where the delay buffer lives (dock: Options > Delay buffer):
 
 - **Memory:** everything stays in RAM and nothing is written to disk: your bitrate times your delay,
   or your highest preset or scene rule if that's longer (45 MB per minute at 6 Mbps). Raising the
@@ -152,7 +163,7 @@ The RAM it adds, measured at 6.2 Mbps on the relay on its own (details in `docs/
 measured. If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM as with
 Memory. The dock shows the RAM and disk in use and the bitrate while you stream.
 
-**Memory in scene mode.** The buffer's RAM budget is half of your system RAM, between 1 GB and 24 GB (on macOS and
+**Memory with all of OBS (scene mode, the default).** The buffer's RAM budget is half of your system RAM, between 1 GB and 24 GB (on macOS and
 Linux, where RAM isn't detected yet, a fixed 2 GB). What the buffer really takes depends on what's
 on screen and on how it's stored. Measured outside OBS with gameplay-like content at 60 fps (the
 buffer only; audio adds about 11 MB per source with sound for 30 s):
@@ -173,7 +184,7 @@ buffer is stored uncompressed. Details in `docs/FAQ.md`.
 your browser; the plugin stays 100% free), in both modes. Since 1.0.0 sign-in works on macOS and
 Linux too (over the system's libcurl); before, it was Windows only. See `docs/ACCOUNT_GATE.md`.
 
-**For stream mode:** Windows, macOS or Linux (alpha on macOS and Linux), OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
+**For only the stream (stream mode):** Windows, macOS or Linux (alpha on macOS and Linux), OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
 RTMP service or a custom rtmp:// or rtmps:// server), Enhanced Broadcasting off. A keyframe
 interval of 2 s is recommended (Settings > Output): the delay moves in steps of it.
 
@@ -189,7 +200,7 @@ interval of 2 s is recommended (Settings > Output): the delay moves in steps of 
   stored encrypted for your Windows user (on macOS and Linux, in a file only your user can read,
   mode 0600), and never written to the OBS log, like the sign-in codes, IDs and what you write to
   Trigi.
-- **Stream mode** sends your stream from your computer straight to the service set in OBS: the
+- **Only the stream** (stream mode) sends your stream from your computer straight to the service set in OBS: the
   relay listens on `127.0.0.1` only, reads your server and key from OBS when the stream starts
   without saving them anywhere else, and no Trigglow server is in the path. The stream's older
   seconds wait on your computer in an encrypted temp file (its key exists only in OBS's memory),
@@ -290,75 +301,86 @@ contains the `obs-trigglow-dynamic-delay` folder) and restart OBS. Don't copy an
 Open OBS. If the **"Trigglow Dynamic Delay"** dock doesn't show up, go to `View → Docks` and enable
 it. Sign in once with your free Trigglow account from the dock.
 
-### Stream mode
+The dock is one panel. Top to bottom: the **status**, the one **Turn delay on** / **Turn delay off**
+button, the **Delay** card (1-600 s, -5/+5 and your three presets as quick picks), your **scenes**,
+then folded sections: **Hotkey presets** and **Options** (the minimum quality and the RAM estimate,
+the delay badge for viewers and its corner, and **Advanced**). The version and **Report a problem**
+are at the bottom.
 
-1. Leave **Use stream mode** ticked (the default). Set the **Delay** in seconds (1-600) and, if you
-   want, the three **presets** (10, 30 and 60 s by default).
-2. Start streaming as usual. With the delay off you're live; press **Turn delay on** at any moment
-   and viewers see the stream that many seconds late. If you turn it on before you start
-   streaming, the stream starts that many seconds late on the platform ("Delay armed").
-3. Change the seconds while live: raising them rewinds (viewers see the last seconds again),
-   lowering them skips forward. **Back to live** turns the delay off. Once the stream has run
-   that long, any raise up to 600 s is instant (the dock's **Instant raises** line says so; if the
-   disk can't be used, up to your highest preset or scene rule).
-4. **Dump what viewers haven't seen** when something slipped on screen: the seconds still waiting
-   in the delay are never sent, the stream jumps to live, and the delay comes back on its own
-   after its seconds.
-5. Optional: **Delay by scene** (turn the delay on with its own seconds, or off, when you switch to a scene), **Show the
-   delay badge to viewers** and its corner, and **When I stop streaming, send the seconds viewers
-   haven't seen** (on by default; **Stop sending now** cuts it).
-
-The dock shows the state ("Live, no delay", "Delay on: viewers see the stream 30 s late"...), the
-connection's state, the RAM and disk used and the bitrate, and the OBS settings worth changing.
-The delay moves in steps of your keyframe interval: set it to 2 s in `Settings → Output`. If a
-stream can't use stream mode (Enhanced Broadcasting, SRT, WHIP...), the dock says why and scene mode
-works as before.
-
-### Scene mode (every platform)
-
-Under **Scene mode (compatibility)** in the dock (it is the only mode on macOS and Linux):
+### All of OBS (the default; every platform)
 
 1. Pick your **live scene** (required — the scene with your real content) and, optionally, a
-   **loading scene** to show while the buffer fills instead of staying on the undelayed live scene
-   (if you choose none, a Trigglow "Adding delay" video shows: "Trigglow (default)" in the picker).
-   Set **Delay (seconds)** (1–60) and the **minimum quality** floor (480p, 720p, 1080p, 1440p (2K)
-   or 2160p (4K)) the delayed video won't drop below to save RAM (it's never stored above OBS's
-   output resolution either: with a 720p output the buffer is 720p even with a 1080p minimum). The
-   dock shows a live estimate of whether your chosen seconds actually fit in RAM at that quality
-   *before* you press Enable — if they don't, it warns that the buffered duration will be
-   shortened instead of lowering the quality further, but never blocks your choice. These fields
-   are locked while the delay is preparing or on ("Turn the delay off to change it.").
-2. Press Enable (from the dock button, a hotkey, or Stream Deck). The dock shows **Preparing
-   delay** with a progress bar and a live countdown while the buffer fills up to the requested
-   delay; once full, it switches automatically to **Delay on** and Program starts showing the
-   delayed video and audio, in sync. **The streaming output itself is never touched at any point**
-   — viewers never see a cut or a reconnect, whether you press the button before or during a live
-   stream.
+   **loading scene** to show while the delay builds up instead of staying on the undelayed live
+   scene (if you choose none, a Trigglow "Adding delay" video shows: "Trigglow (default)" in the
+   picker). Set the **Delay** (1-600 s) and, in Options, the **minimum quality** floor (480p, 720p,
+   1080p, 1440p (2K) or 2160p (4K)) the delayed video won't drop below to save RAM (it's never
+   stored above OBS's output resolution either: with a 720p output the buffer is 720p even with a
+   1080p minimum). Options shows a live estimate of whether your seconds actually fit in RAM at
+   that quality *before* you turn the delay on, and opens by itself when they don't: the buffered
+   duration is then shortened instead of lowering the quality further, but your choice is never
+   blocked. The scenes and the quality are locked while the delay is preparing or on.
+2. Press **Turn delay on** (or a hotkey, or the Stream Deck). The dock shows **Preparing delay**
+   with a progress bar and a countdown while your loading scene shows; once the buffer is full it
+   switches to **Delay on** and Program shows the delayed video and audio, in sync: your stream and
+   your recording are both delayed. **The streaming output itself is never touched** — viewers
+   never see a cut or a reconnect, whether you press it before or during a live stream.
+3. Change the seconds while it's on: lowering them skips forward at once; raising them holds the
+   picture for up to 3 s, and shows the loading scene for the extra seconds only above that.
+4. Keep the delayed view on Program: only your live scene is delayed, so switching Program to
+   another scene would show it without delay. To switch scenes freely, use only the stream.
 
-Pressing Disable frees the RAM buffer immediately and switches back to whatever scene was showing
-before you enabled it.
+**Turn delay off** frees the RAM buffer at once and switches back to the scene that was showing
+before you turned it on.
 
-Scene mode manages a few objects in your scene collection by itself: the scene **Trigglow Delay
+All of OBS manages a few objects in your scene collection by itself: the scene **Trigglow Delay
 Buffer (auto)**, the filters **Trigglow Buffer Mode Delay (auto)** and `Trigglow Audio Delay (auto) -
-<source>`, the overlay image **Trigglow Delay Badge (auto)** and, when you choose no loading scene,
-the scene **Trigglow Delay Loading (auto)**. You can move or resize the overlay in OBS and it stays
-where you put it; don't rename or delete the others. Stream mode adds nothing to your scene
+<source>`, the badge image **Trigglow Delay Badge (auto)** and, when you choose no loading scene,
+the scene **Trigglow Delay Loading (auto)**. You can move or resize the badge in OBS and it stays
+where you put it; don't rename or delete the others. Only the stream adds nothing to your scene
 collection (its badge is a private source on an OBS output channel).
+
+### Only the stream (advanced; Windows)
+
+Tick **Apply the delay only to the stream (recording and preview stay live)** in **Options →
+Advanced**. It is locked while a delay is on ("Turn the delay off to change it."), and ticked while
+you're live it applies from your next stream. The scene pickers, the minimum quality and the RAM
+estimate go away, and the stream's own parts show: where it sends, **Dump**, **Settings to check**,
+**Delay by scene**, the **Delay buffer** (Options) and sending the rest when you stop.
+
+1. Start streaming as usual. With the delay off you're live; press **Turn delay on** at any moment
+   and viewers see the stream that many seconds late. If you turn it on before you start
+   streaming, the stream starts that many seconds late on the platform ("Armed").
+2. Change the seconds while live: raising them rewinds (viewers see the last seconds again),
+   lowering them skips forward. **Turn delay off** goes back to live. Once the stream has run that
+   long, any raise up to 600 s is instant (the dock's **Instant raises** line says so; if the disk
+   can't be used, up to your highest preset or scene rule).
+3. **Dump** (what viewers haven't seen) when something slipped on screen: the seconds still
+   waiting in the delay are never sent, the stream jumps to live, and the delay comes back on its
+   own after its seconds.
+4. Optional: **Delay by scene** (turn the delay on with its own seconds, or off, when you switch to
+   a scene) and **When I stop streaming, send the seconds viewers haven't seen** (on by default;
+   **Stop sending now** cuts it).
+
+The dock shows the state ("Delay off", "Armed", "Delay on: viewers see the stream 30 s late",
+"Sending the rest"...), where it sends and the connection's state, the RAM and disk used and the
+bitrate, and the OBS settings worth changing. The delay moves in steps of your keyframe interval:
+set it to 2 s in `Settings → Output`. If a stream can't use it (Enhanced Broadcasting, SRT,
+WHIP...), the dock says why: untick the option to delay all of OBS.
 
 ### Hotkeys
 
-In `Settings → Hotkeys`, search for "Trigglow". They work in both modes (stream mode when it
-handles the current or next stream, scene mode otherwise):
+In `Settings → Hotkeys`, search for "Trigglow". They drive the mode selected in the dock, and only
+it:
 
-| Hotkey | Stream mode | Scene mode |
+| Hotkey | All of OBS (default) | Only the stream |
 |---|---|---|
-| Trigglow: Toggle Dynamic Delay | delay on/off | Enable/Disable |
-| Trigglow: Enable Dynamic Delay | delay on | Enable |
-| Trigglow: Disable Dynamic Delay | delay off | Disable |
-| Trigglow: Back to live (delay off) *(new)* | delay off | Disable |
-| Trigglow: Delay +5 s / Delay -5 s *(new)* | changes the delay live | changes the seconds for the next Enable (1-60) |
-| Trigglow: Dump what viewers haven't seen *(new)* | dump | nothing |
-| Trigglow: Delay preset 1 / 2 / 3 *(new)* | the preset's seconds, delay on | the preset's seconds (up to 60), Enable |
+| Trigglow: Toggle Dynamic Delay | delay on/off | delay on/off |
+| Trigglow: Enable Dynamic Delay | delay on | delay on |
+| Trigglow: Disable Dynamic Delay | delay off | delay off |
+| Trigglow: Back to live (delay off) *(new)* | delay off | delay off |
+| Trigglow: Delay +5 s / Delay -5 s *(new)* | changes the delay live (1-600) | changes the delay live (1-600) |
+| Trigglow: Dump what viewers haven't seen *(new)* | nothing | dump |
+| Trigglow: Delay preset 1 / 2 / 3 *(new)* | the preset's seconds, delay on | the preset's seconds, delay on |
 
 The three original hotkeys keep their internal names, so your bindings carry over. In Spanish they
 read "Trigglow: Activar/desactivar Dynamic Delay", "Activar" and "Desactivar".
@@ -374,12 +396,13 @@ and one of these `requestType`s:
 | `GetStatus` | — | only returns the status |
 | `EnableDelay` / `DisableDelay` / `ToggleDelay` | — | as the hotkeys |
 | `SkipToLive` | — | back to live (delay off) |
-| `SetDelay` | `{"seconds": N}` | sets the seconds (stream mode 1-600, scene mode 1-60); 0 or less is ignored |
+| `SetDelay` | `{"seconds": N}` | sets the seconds (1-600); 0 or less is ignored |
 | `AdjustDelay` | `{"delta": N}` | adds N seconds (negative to lower) |
-| `DumpDelay` | — | dump (stream mode); `dumped` says whether there was anything to drop |
+| `DumpDelay` | — | dump (only the stream); `dumped` says whether there was anything to drop |
 | `ApplyPreset` | `{"index": 0-2}` | preset 1-3 |
 
-Every answer carries `ok` and the status: `mode` (`stream` or `scene`), `state` (stream:
+Requests go to the mode selected in the dock. Every answer carries `ok` and the status: `mode`
+(`scene` for all of OBS, `stream` for only the stream), `state` (stream:
 `idle`, `live`, `delayed`, `draining`; scene: `inactive`, `filling`, `active`, `error`), `delayOn`,
 `delaySeconds`, `appliedSeconds` (what viewers get now, 0 when live), `behindSeconds` and
 `ramMegabytes` (stream mode). The vendor event **`StatusChanged`** carries the same fields without
@@ -396,7 +419,7 @@ Two ways:
   combination you bound to one of the hotkeys above. OBS needs to be running and listening for the
   global shortcut (with some setups, focused).
 
-Pressing it while live is safe in both modes: no reconnection and no visible cut. More detail and
+Pressing it while live is safe with either choice: no reconnection and no visible cut. More detail and
 troubleshooting: `docs/STREAM_DECK.md`.
 
 ## Project structure
@@ -413,8 +436,13 @@ src/
                                      127.0.0.1, the sender to your OBS service, retries, drain
   packet-delay-core.{hpp,cpp}      → pure: PacketHistory and SinkScheduler (splices, timestamp
                                      rewrite, trimming, dump floor), unit-tested
-  stream-mode-panel.{hpp,cpp}      → the dock's stream mode section
-  delay-router.{hpp,cpp}           → hotkeys and obs-websocket to stream mode or scene mode
+  settings-ui-stream.cpp           → the dock's parts for only the stream (where it sends, Dump,
+                                     settings to check, Delay by scene, delay buffer)
+  apply-to.{hpp,cpp}               → pure: what the delay applies to (all of OBS / only the
+                                     stream), its setting and the migration from 1.0 test builds
+  delay-router.hpp                 → pure: the dock's button, hotkeys and obs-websocket to the
+                                     selected mode only, unit-tested
+  delay-targets.{hpp,cpp}          → the two modes as router targets
   websocket-vendor.{hpp,cpp}       → the obs-websocket vendor trigglow-dynamic-delay (requests,
                                      StatusChanged event)
   core-host.{hpp,cpp}, core-main.cpp → the core-only build (TRIGGLOW_CORE_ONLY): scene mode driven
@@ -456,9 +484,10 @@ src/
   hardware-info.{hpp,cpp}          → total system RAM query, used to size the buffer budget, and
                                      the GPUs present (vendor, for the hardware storage codec)
   scene-combo-box.{hpp,cpp}        → dock combo box populated from OBS's own scene list
-  settings-ui.{hpp,cpp}            → the Qt dock (live/loading scene, seconds, quality, fit
-                                     estimate, Enable/Disable, live fill countdown, degradation
-                                     notice, update notice)
+  settings-ui.{hpp,cpp}            → the Qt dock, one panel for both modes (status, the one
+                                     button, delay, live/loading scene, options with quality, fit
+                                     estimate and the advanced check box, fill countdown,
+                                     degradation notice, update notice)
   ui-tokens.{hpp,cpp}              → pure color tokens derived from OBS's palette, with the WCAG
                                      AA contract unit-tested in tests/
   ui-theme.{hpp,cpp}               → the UI's single style sheet, bundled brand fonts and
@@ -537,6 +566,8 @@ tests/
                                      a scripted network stand-in (fake-transport.hpp)
   background_tasks_tests.cpp       → cancellation and bounded shutdown of the background jobs
   packet_delay_core_tests.cpp      → stream mode's splicing, timestamps, trimming and dump
+  apply_to_tests.cpp               → what the delay applies to, the migration from 1.0 test
+                                     builds, and the router following the dock's check box
   relay_harness.cpp                → end-to-end harness for the relay: a local RTMP stream in,
                                      delay changes, a dump, the output checked (manual, Windows)
 tools/fonts/                       → how the bundled font subsets are generated

@@ -2,18 +2,27 @@
 
 # FAQ — Trigglow Dynamic Delay
 
-## Stream mode (v1.0.0, Windows)
+## All of OBS or only the stream (v1.0.0)
 
-**What's the difference between stream mode and scene mode?**
-Stream mode (new in 1.0.0, the default on Windows) delays the stream OBS has **already encoded**:
-the plugin points OBS's stream output at a relay inside OBS, on `127.0.0.1`, keeps the packets in
-RAM and sends them to your platform after the delay. Scene mode (the only mode before 1.0.0, now
-"Scene mode (compatibility)" in the dock) keeps your rendered live scene in RAM and plays it back in
-a helper scene, before OBS encodes it. Stream mode costs far less RAM and CPU, delays every scene,
-leaves your recording live and changes the delay while you're live; scene mode works with any
-output and on every platform. Details: `docs/STREAM_MODE.md`.
+**What does "Apply the delay only to the stream" change?**
+The dock is one panel with one button; this check box, in Options > Advanced, picks what the delay
+applies to. **Off (the default), all of OBS**, as in 0.7 (scene mode): the plugin keeps your
+rendered live scene in RAM and plays it back in a helper scene, before OBS encodes it. Your loading
+scene shows while the delay builds up, then Program is delayed, so the stream **and your
+recording** are delayed; it works with any output and on every platform. **On, only the stream**
+(stream mode, Windows): the plugin points OBS's stream output at a relay inside OBS, on
+`127.0.0.1`, keeps the already-encoded packets and sends them to your platform after the delay. It
+costs far less RAM and CPU and delays every scene, but your recording, the Replay Buffer and OBS's
+preview stay live, and there's no loading scene. The dock's button, the hotkeys, obs-websocket and
+the Stream Deck drive the one you chose, and only that one. The box is locked while a delay is on;
+ticked while you're live, it applies from your next stream. Details: `docs/STREAM_MODE.md`.
 
-**Why does stream mode use so little RAM?**
+**I used a 1.0 test build with stream mode on. Which one do I get now?**
+All of OBS, the default. Test builds saved "Use stream mode" (ticked by default) in
+`stream-mode-settings.json`; 1.0.0 saves the choice as `apply_to` instead and ignores the old key,
+so everyone starts on all of OBS. Tick the box again if you want only the stream.
+
+**Why does only the stream use so little RAM?**
 It keeps what OBS's own encoder already produced for the stream, and nothing else: nothing is
 decoded or encoded again, the CPU only copies bytes: your bitrate times the seconds kept (45 MB
 per minute at 6 Mbps). You choose where they wait (Options > Delay buffer). With Memory, the
@@ -21,15 +30,15 @@ default on an SSD, they stay in RAM and nothing is written to disk. With Disk, t
 hard drive, the plugin keeps the last 600 s (so the delay can be raised live up to the maximum with
 no wait) but only the newest seconds stay in RAM: the rest waits in an encrypted temp file on your
 disk, deleted when the stream ends; measured at 6 Mbps, about 15 MB of RAM at any delay up to
-600 s, and about 2.7 GB written per hour. Scene
-mode stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
+600 s, and about 2.7 GB written per hour. All of OBS (scene mode) stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
 30–60 s.
 
-**Which streams can use stream mode?**
+**Which streams can use only the stream?**
 Streams that go out through OBS's own RTMP output over RTMP or RTMPS: Twitch, YouTube, Kick, TikTok
 and any custom rtmp:// or rtmps:// server, with Enhanced Broadcasting off. Not (yet): Enhanced
 Broadcasting, SRT, RIST and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
-part the relay needs yet). In those cases the dock says why and scene mode works as before.
+part the relay needs yet). In those cases the dock says why: untick "Apply the delay only to the
+stream" to delay all of OBS.
 
 **Does the stream reconnect when I turn the delay on, off, up or down?**
 No. The relay keeps one connection to your platform and splices: turning the delay on (or raising
@@ -52,13 +61,14 @@ Dynamic Delay's.
 Something slipped on screen while delayed? Press it (dock, hotkey or obs-websocket): the seconds
 still waiting in the delay are never sent. The stream jumps to live within about one keyframe
 interval, and the delay comes back on its own after its seconds plus 3 s, rewinding only into what
-came after the dump. It does nothing when the delay is off or in scene mode.
+came after the dump. Only the stream has it; it does nothing when the delay is off.
 
 **What are presets and "Delay by scene"?**
-Three presets (10, 30 and 60 s by default) each set the seconds and turn the delay on, from the
-dock, a hotkey or obs-websocket. "Delay by scene" turns the delay on (with its own seconds, or the
+Three presets (10, 30 and 60 s by default, in both modes) each set the seconds and turn the delay
+on, from a hotkey or obs-websocket; the dock's preset chips set the seconds. "Delay by scene" (only
+the stream) turns the delay on (with its own seconds, or the
 current ones) or off when you switch to a scene: on in your game scene, off in Just Chatting. Rules
-apply when OBS switches scene and when a stream starts, in stream mode only.
+apply when OBS switches scene and when a stream starts.
 
 **What happens when I stop streaming while delayed?**
 By default the plugin keeps sending the seconds viewers haven't seen yet, then stops ("Stream
@@ -66,24 +76,24 @@ stopped: sending the last 30 s"). **Stop sending now** cuts it, and you can turn
 "When I stop streaming, send the seconds viewers haven't seen". Starting a new stream or closing OBS
 cuts it too.
 
-**Why does OBS show 0 dropped frames in stream mode?**
+**Why does OBS show 0 dropped frames with only the stream?**
 OBS now sends the stream to the relay on your own computer, so its own congestion counter only
 sees that local link. The dock shows the connection's state and rate instead, and if the
 stream falls more than 4 s behind (slow upload) jumps back to the delay at the next keyframe rather
 than letting the delay grow.
 
-**Is stream mode tested?**
+**Is "only the stream" tested?**
 Its core (the splicing, timestamps, trimming and dump) is unit-tested, and the relay was checked
 end to end on a local machine with a test stream, including delay changes and a dump. It has **not
 yet been run on a live stream to a real platform** (Twitch, Kick, YouTube); that's the next step
-before it's called verified (`docs/STREAM_MODE.md`, "Verification status"). Scene mode stays
-available if anything goes wrong.
+before it's called verified (`docs/STREAM_MODE.md`, "Verification status"). All of OBS, the
+default, is there if anything goes wrong.
 
 ## General
 
 **Does the stream cut out or reconnect when I enable, disable, or use the delay?**
-No — never, at any point, for any reason, in either mode. Stream mode keeps one connection to your
-platform and splices the delayed stream (see above). Scene mode never calls into OBS's own
+No — never, at any point, for any reason, in either mode. Only the stream keeps one connection to
+your platform and splices the delayed stream (see above). All of OBS never calls into OBS's own
 streaming-output delay setting at all. Instead, two OBS filters buffer video and
 audio in a system-RAM ring, and the plugin switches OBS's Program between your live scene, an
 optional loading scene, and a delayed "wrapper" scene entirely internally — the streaming output
@@ -121,16 +131,16 @@ dropping below it; lowering the seconds or the quality floor gets you back to th
 duration.
 
 **Can I change the delay while it's on?**
-Yes, since v1.0.0, in both modes. In stream mode the new delay applies at the next keyframe. In
-scene mode, lowering it skips viewers forward at once, and raising it holds the picture (or shows
+Yes, since v1.0.0, in both modes. With only the stream the new delay applies at the next keyframe.
+With all of OBS, lowering it skips viewers forward at once, and raising it holds the picture (or shows
 the loading scene above 3 s) only while the extra seconds build up; the buffer is never emptied.
 Typed values apply on Enter or when the field loses focus, so "300" never passes through 3 and 30.
-The scenes and the minimum quality stay locked while scene mode's delay runs: turn the delay off to
-change them.
+The scenes and the minimum quality stay locked while the delay runs: turn the delay off to change
+them.
 
 **What's the maximum delay it supports?**
-600 seconds (10 minutes) in both modes. Stream mode keeps the already-encoded stream, about 45 MB
-per minute at 6 Mbps, so 600 s fits almost anywhere. In scene mode the real ceiling is whatever fits
+600 seconds (10 minutes) in both modes. Only the stream keeps the already-encoded stream, about
+45 MB per minute at 6 Mbps, so 600 s fits almost anywhere. With all of OBS the real ceiling is whatever fits
 your machine's detected RAM budget (roughly half of total system RAM, floored at 1GB and capped at
 24GB) at your chosen quality — if the seconds at your chosen quality don't fit, the dock's live
 estimate will tell you before you enable it, and the plugin buffers as many seconds as actually fit
@@ -248,15 +258,16 @@ load drops, it goes back up by itself after 30 s with room to spare, and the not
 What to do about it, if anything: `docs/TROUBLESHOOTING.md`.
 
 **Does it affect local recording or the Replay Buffer?**
-**In stream mode, no**: recording, the Replay Buffer and the virtual camera keep the live picture
+**With all of OBS (the default), yes**: that is the point of it. It works by switching what OBS's
+Program shows, and local recording and the Replay Buffer capture that same Program output, so while
+the delay is on (`Active`) what gets saved is the delayed content too, the same as what viewers
+see.
+
+**With "Apply the delay only to the stream", no**: recording, the Replay Buffer and the virtual camera keep the live picture
 while viewers get the delayed stream. The one thing they share is the delay badge, if you show it:
 it's drawn over OBS's program, so the recording shows it too while the delay is on.
 
-**In scene mode, indirectly yes**, and this is worth understanding: buffer mode works by switching what OBS's Program
-is showing, and both local recording and the Replay Buffer capture that same Program output — so if
-you're recording (or have the Replay Buffer running) while the delay is `Active`, what gets saved is
-the delayed content too, same as what viewers see. There's currently no way to delay the stream
-without also delaying recording/Replay Buffer in scene mode; use stream mode for that.
+To delay only the stream and keep the recording live, tick that box (Options > Advanced).
 
 **The plugin's scene and filters have new names. Do I need to do anything?**
 Since v0.6.0 they end in "(auto)" instead of "(no tocar)": **Trigglow Delay Buffer (auto)**,
@@ -269,11 +280,10 @@ hotkeys aren't affected. If you go back to v0.5.0 or earlier afterwards, it crea
 **What is the badge viewers see during the delay?**
 One image the plugin draws itself: since v1.0.0 a rounded plate with the Dynamic Delay logo,
 "DELAY" and your seconds, and "Dynamic Delay by Trigglow" under them, the same in every language. It
-only shows while the delay is on. In scene mode it's the source **Trigglow Delay Badge (auto)**:
-**Show delay overlay on stream** in the dock turns it off, the dock picks the corner, and you can
-move and resize it in OBS (it stays where you put it). In stream mode it's drawn over OBS's
-program on its own output channel (up to 600 s): **Show the delay badge to viewers** and the corner
-are in the stream mode section, and it can't be moved by hand.
+only shows while the delay is on. **Show the delay badge to viewers** and **Badge position** (dock:
+Options) work for both modes. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
+you can move and resize it in OBS (it stays where you put it). With only the stream it's drawn over
+OBS's program on its own output channel (up to 600 s) and can't be moved by hand.
 
 **What triggers the `Error` state?**
 Anything that would otherwise leave the plugin in a broken but silent condition: no live scene
@@ -281,9 +291,9 @@ chosen, or a chosen live scene that no longer resolves to anything (e.g. it was 
 shows a clear message explaining what's wrong instead of hanging or crashing.
 
 **Does it work with Twitch/YouTube/Kick/any platform?**
-Yes. Scene mode works entirely on OBS's own Program output, so the platform doesn't matter. Stream
-mode works with any platform OBS streams to over RTMP or RTMPS (Twitch, YouTube, Kick, TikTok,
-custom servers); SRT and WHIP services use scene mode.
+Yes. All of OBS (the default) works entirely on OBS's own Program output, so the platform doesn't
+matter. Only the stream works with any platform OBS streams to over RTMP or RTMPS (Twitch, YouTube,
+Kick, TikTok, custom servers); with SRT and WHIP services, delay all of OBS.
 
 **Do I need a web panel or a Trigglow account to use it?**
 No web panel: all control lives inside OBS. Since v0.3.3 you do need to sign in once to a free
@@ -357,7 +367,7 @@ On every OBS start, one check of your sign-in with api.trigglow.com (plus a rene
 and one check of this repository's latest release on api.github.com. Everything else happens only
 when you use it: signing in, signing out, asking Trigi and sending a report. All of it over HTTPS,
 the sign-in only ever sent to api.trigglow.com, and the plugin only opens its own fixed pages on
-www.trigglow.com and GitHub. In stream mode your stream goes from your computer straight to the
+www.trigglow.com and GitHub. With only the stream, your stream goes from your computer straight to the
 service set in OBS; no Trigglow server is in the path.
 
 **Do I need Trigglow's Stream Deck plugin?**
@@ -370,7 +380,7 @@ obs-websocket tool can use too). See `docs/STREAM_DECK.md`.
 On Windows, yes: **v1.0.0** is the first stable release, meant for real live use, with a
 deliberately focused scope (see `docs/ROADMAP.md` for what comes next). The macOS and Linux builds
 are still alpha: they build and pass CI, but haven't been run on a live stream yet, and they only
-have scene mode. Stream mode is new in 1.0.0 and hasn't been run on a live stream to a real
-platform yet (see "Is stream mode tested?" above). One risk
+have scene mode. "Only the stream" (stream mode) is new in 1.0.0 and hasn't been run on a live
+stream to a real platform yet (see "Is "only the stream" tested?" above). One risk
 area — a GPU crash observed under an earlier design — that's believed reduced but not yet
 specifically re-confirmed (`docs/SPEC.md` §7).

@@ -33,13 +33,13 @@ reconnection, no cut, at any point, for any reason. No external app, no web pane
 process: everything lives inside the OBS process.
 
 **Since v1.0.0 the plugin has two modes, and this document describes scene mode (buffer mode).**
-Stream mode (the default where it can run) delays the stream OBS has already encoded: it
-points OBS's RTMP output at a relay on `127.0.0.1` inside OBS and sends the packets to the
-platform(s) after the delay, with no decode or second encode, every scene delayed and the recording
-live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for
-the streams stream mode can't relay (Enhanced Broadcasting, SRT, RIST, WHIP); it's "Scene mode
-(compatibility)" in the dock. Hotkeys and obs-websocket reach either mode through `DelayRouter`
-(§8).
+Scene mode, below, is the default: the dock's delay applies to all of OBS, the stream and the
+recording. Stream mode is the dock's advanced option "Apply the delay only to the stream (recording
+and preview stay live)": it delays the stream OBS has already encoded, pointing OBS's RTMP output at
+a relay on `127.0.0.1` inside OBS and sending the packets to the platform after the delay, with no
+decode or second encode, every scene delayed and the recording live. It is specified in
+`docs/STREAM_MODE.md` (with the one-panel dock and the `apply_to` setting). The dock's button,
+hotkeys and obs-websocket reach the selected mode only, through `DelayRouter` (§8).
 
 ## 2. Why reconnection was rejected
 
@@ -1572,8 +1572,12 @@ stream-relay.*                → v1.0.0 the relay (FFmpeg avformat, Windows): R
                                 127.0.0.1, the sender to the streamer's service, back-off, drain
 packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: splices, timestamp rewrite,
                                 trimming, dump floor; pure
-stream-mode-panel.*           → v1.0.0 the dock's stream mode section
-delay-router.*                → v1.0.0 hotkeys and obs-websocket to stream mode or scene mode
+settings-ui-stream.cpp        → v1.0.0 the dock's parts for "only the stream"
+apply-to.*                    → v1.0.0 what the delay applies to (all of OBS / only the stream),
+                                the apply_to setting and its migration; pure
+delay-router.hpp              → v1.0.0 the dock's button, hotkeys and obs-websocket to the selected
+                                mode only; pure
+delay-targets.*               → v1.0.0 the two controllers as router targets
 websocket-vendor.*            → v1.0.0 obs-websocket vendor trigglow-dynamic-delay (docs/STREAM_DECK.md)
 core-host.* / core-main.cpp   → the core-only build (v0.7.2, TRIGGLOW_CORE_ONLY): scene mode driven
                                 through a private source's settings, for Trigglow Studio
@@ -1631,9 +1635,10 @@ update-checker.*              → latest GitHub release check; opens only this r
 background-tasks.* / cancel-token.* / ui-tasks.* → §3.8 -- cancellable background jobs, owners
                                 and the bounded shutdown on unload
 scene-combo-box.*             → dock combo box populated from obs_frontend_get_scene_names()
-settings-ui.*                 → the Qt dock (live/loading scene, seconds, quality, fit estimate,
-                                Enable/Disable, live fill countdown, locked fields, degradation
-                                notice)
+settings-ui.*                 → the Qt dock, one panel for both modes since v1.0.0 (status, the
+                                one button, delay, live/loading scene, quality, fit estimate, the
+                                advanced check box, live fill countdown, locked fields,
+                                degradation notice)
 ui-tokens.* / ui-theme.*      → colors derived from OBS's palette (WCAG AA), style sheet, bundled
                                 fonts and recolored SVG icons
 hotkeys.*                     → registration of the 10 native OBS hotkeys (v1.0.0: back to live,
@@ -1655,11 +1660,12 @@ tests/                        → unit suites, built only with -DTRIGGLOW_BUILD_
 
 Design principle: **each mode's controller is the only owner of its state** —
 `BufferModeController` for scene mode, `StreamDelayController` for stream mode. The dock and the
-hotkeys (and, since v1.0.0, obs-websocket) call the same public methods (`Enable()`, `Disable()`,
+hotkeys (and, since v1.0.0, obs-websocket) reach the same public methods (`Enable()`, `Disable()`,
 `Toggle()`...) — there is no separate code path for "button" vs. "hotkey", which halves the
-state-sync bug surface. `DelayRouter` only picks which controller a hotkey or obs-websocket command
-goes to (stream mode when `StreamDelayController::HandlesControls()`, scene mode otherwise); it keeps
-no state of its own.
+state-sync bug surface. `DelayRouter` only picks which controller the dock's button, a hotkey or an
+obs-websocket command goes to: the one the streamer selected in the dock (stream mode when
+`StreamDelayController::HandlesControls()`, scene mode otherwise), and only that one; it keeps no
+state of its own.
 
 ## 9. License and repository
 

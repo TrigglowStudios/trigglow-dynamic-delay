@@ -34,14 +34,14 @@ jamás**. Ni reconexión, ni corte, en ningún momento, por ningún motivo. Sin 
 web, sin proceso aparte: todo vive dentro del proceso de OBS.
 
 **Desde la v1.0.0 el plugin tiene dos modos, y este documento describe el modo escena (modo
-buffer).** El modo stream (el modo por defecto donde puede funcionar) retrasa el directo
-que OBS ya ha codificado: apunta la salida RTMP de OBS a un relay en `127.0.0.1` dentro de OBS y
-envía los paquetes a la plataforma o plataformas pasado el delay, sin decodificar ni codificar dos
-veces, con todas las escenas retrasadas y la grabación en directo. Se especifica en
-`docs/STREAM_MODE-es.md`. El modo escena, el de abajo, se queda para los
-directos que el modo stream no puede reenviar (Enhanced Broadcasting, SRT, RIST, WHIP); en el dock
-es "Modo escena (compatibilidad)". Las hotkeys y obs-websocket llegan a cualquiera de los dos modos
-a través de `DelayRouter` (§8).
+buffer).** El modo escena, el de abajo, es el predeterminado: el delay del dock se aplica a todo
+OBS, el directo y la grabación. El modo stream es la opción avanzada del dock "Aplicar el delay solo
+a la emisión (la grabación y la vista previa no se retrasan)": retrasa el directo que OBS ya ha
+codificado, apuntando la salida RTMP de OBS a un relay en `127.0.0.1` dentro de OBS y enviando los
+paquetes a la plataforma pasado el delay, sin decodificar ni codificar dos veces, con todas las
+escenas retrasadas y la grabación en directo. Se especifica en `docs/STREAM_MODE-es.md` (con el dock
+de un solo panel y el ajuste `apply_to`). El botón del dock, las hotkeys y obs-websocket llegan
+solo al modo elegido, a través de `DelayRouter` (§8).
 
 ## 2. Por qué se rechazó la reconexión
 
@@ -1721,8 +1721,12 @@ stream-relay.*                → v1.0.0 el relay (FFmpeg avformat, Windows): li
                                 127.0.0.1, el emisor hacia el servicio del streamer, back-off, envío final al parar
 packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: empalmes, reescritura de
                                 marcas de tiempo, recorte, suelo del borrado; puro
-stream-mode-panel.*           → v1.0.0 la sección del modo stream del dock
-delay-router.*                → v1.0.0 hotkeys y obs-websocket hacia el modo stream o el modo escena
+settings-ui-stream.cpp        → v1.0.0 lo del dock propio de "solo a la emisión"
+apply-to.*                    → v1.0.0 a qué se aplica el delay (todo OBS / solo a la emisión), el
+                                ajuste apply_to y su migración; puro
+delay-router.hpp              → v1.0.0 el botón del dock, las hotkeys y obs-websocket hacia el modo
+                                elegido y solo a él; puro
+delay-targets.*               → v1.0.0 los dos controladores como destinos del router
 websocket-vendor.*            → v1.0.0 vendor de obs-websocket trigglow-dynamic-delay
                                 (docs/STREAM_DECK-es.md)
 core-host.* / core-main.cpp   → el build solo de núcleo (v0.7.2, TRIGGLOW_CORE_ONLY): el modo escena
@@ -1792,9 +1796,10 @@ update-checker.*              → comprobación de la última release de GitHub;
 background-tasks.* / cancel-token.* / ui-tasks.* → §3.8 -- trabajos en segundo plano cancelables,
                                 sus dueños y el cierre acotado al descargar el plugin
 scene-combo-box.*             → combo box del dock poblado desde obs_frontend_get_scene_names()
-settings-ui.*                 → el dock de Qt (escena en directo/de carga, segundos, calidad, estimación
-                                de ajuste, Enable/Disable, cuenta atrás de llenado en vivo, campos
-                                bloqueados, aviso de degradación)
+settings-ui.*                 → el dock de Qt, un solo panel para los dos modos desde la v1.0.0
+                                (estado, el único botón, delay, escena en directo/de carga, calidad,
+                                estimación de ajuste, la casilla avanzada, cuenta atrás de llenado
+                                en vivo, campos bloqueados, aviso de degradación)
 ui-tokens.* / ui-theme.*      → colores derivados de la paleta de OBS (WCAG AA), hoja de estilos,
                                 fuentes empaquetadas e iconos SVG recoloreados
 hotkeys.*                     → registro de las 10 hotkeys nativas de OBS (v1.0.0: volver al
@@ -1819,9 +1824,9 @@ Principio de diseño: **el controlador de cada modo es el único dueño de su es
 hotkeys (y, desde la v1.0.0, obs-websocket) llaman a los mismos métodos públicos (`Enable()`,
 `Disable()`, `Toggle()`...) — no hay una ruta de código separada para "botón" vs. "hotkey", lo cual
 reduce a la mitad la superficie de bugs de desincronización de estado. `DelayRouter` solo elige a
-qué controlador va una hotkey o un comando de obs-websocket (al modo stream cuando
-`StreamDelayController::HandlesControls()`, al modo escena en los demás casos); no guarda estado
-propio.
+qué controlador va el botón del dock, una hotkey o un comando de obs-websocket: al que el streamer
+ha elegido en el dock (al modo stream cuando `StreamDelayController::HandlesControls()`, al modo
+escena en los demás casos), y solo a ese; no guarda estado propio.
 
 ## 9. Licencia y repositorio
 

@@ -2,9 +2,37 @@
 
 # Stream mode (v1.0.0)
 
-Stream mode delays the stream OBS has **already encoded**, instead of the rendered frames. It is
-the default from v1.0.0 wherever it can run (Windows, and macOS and Linux as alpha); scene mode
-(buffer mode, `docs/SPEC.md`) stays for the cases it can't.
+Stream mode delays the stream OBS has **already encoded**, instead of the rendered frames. In the
+dock it is the advanced option **"Apply the delay only to the stream (recording and preview stay
+live)"** (Options > Advanced), off by default: by default the delay applies to all of OBS, with
+scene mode (buffer mode, `docs/SPEC.md`), as in 0.7. Stream mode runs wherever its relay exists
+(Windows, and macOS and Linux as alpha).
+
+## One panel, two engines
+
+The dock is one panel with one "Turn delay on" button. The check box picks the engine, saved as
+`apply_to` (`"all"` or `"stream"`) in `stream-mode-settings.json` (`src/apply-to.*`):
+
+- **All of OBS** (`"all"`, the default, also when the key is missing or not one of the two values):
+  scene mode. The loading scene shows while the buffer fills, then Program, so the stream and the
+  recording, are delayed. The dock shows the live and loading scene pickers, the minimum quality
+  and the RAM estimate.
+- **Only the stream** (`"stream"`): stream mode. The dock hides those and shows where the stream
+  goes, Dump, the settings checks, Delay by scene, the delay buffer and sending the rest on stop.
+
+The dock's button, the hotkeys, obs-websocket and the Stream Deck all go through `DelayRouter`
+(`src/delay-router.hpp`), which sends each control to the selected engine only:
+`StreamDelayController::HandlesControls()` is true when "only the stream" is chosen and the relay
+exists here (`ControlsGoToStream()`); a stream that can't use the relay doesn't hand the controls
+to scene mode, the dock says why instead. The check box is locked while either engine's delay is on
+or draining ("Turn the delay off to change it."); ticked while OBS is already streaming, it applies
+from the next stream. When it changes, the new engine starts from the seconds the dock shows; the
+badge's on/off and corner are written to both. At load the engine that isn't selected takes the
+selected one's seconds and badge.
+
+1.0 test builds saved `mode_enabled` (true by default, "Use stream mode") instead. 1.0 was never
+released, so that key is ignored and dropped on the next save, and those installs start on all of
+OBS (`apply_to_tests` covers the migration and the router).
 
 ## Why it costs almost nothing
 
@@ -103,7 +131,7 @@ wherever it is. Stream mode keeps it on disk, encrypted, and in RAM only what is
 ## How it works
 
 1. On `OBS_FRONTEND_EVENT_STREAMING_STARTING` (after OBS created the stream output, before it
-   starts) `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
+   starts), with "only the stream" chosen, `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
    RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
    `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
 2. It starts `StreamRelay` (FFmpeg avformat): a listener on `127.0.0.1:<free port>` and one
@@ -184,7 +212,7 @@ the seconds and turn the delay on, each with a hotkey and `ApplyPreset {index}` 
 
 Recording, the Replay Buffer and the virtual camera read OBS's program, which stream mode never
 touches: they keep the live picture. Every scene is delayed, so switching scenes while delayed is
-safe (scene mode only delays the scene picked in the dock).
+safe (all of OBS only delays the live scene picked in the dock).
 
 ## The delay badge
 
@@ -192,7 +220,8 @@ While the delay is on and the stream goes through the relay, the "DELAY N s" bad
 as scene mode, up to 600 s) is drawn on libobs output channel 61, over OBS's program after the
 scene. Viewers get it with the delayed picture. Because it is on the program, the recording (and
 anything else that takes the program) shows it too while the delay is on. On/off ("Show the delay
-badge to viewers") and the corner are in the dock and saved.
+badge to viewers") and the corner are in the dock's Options, one control for both engines, and
+saved.
 
 ## Settings checks
 
@@ -205,16 +234,17 @@ mode worse (`StreamDelayController::CheckObsSettings`):
 
 ## Controls
 
-- Dock: on/off, back to live, seconds (1-600, +/-5), dump, three presets, delay by scene,
+- Dock (with "only the stream" ticked): the one on/off button, seconds (1-600, +/-5, the presets
+  as quick picks), dump, the three presets (Hotkey presets), delay by scene,
   the delay buffer (Automatic / Memory / Disk) with how far a raise is instant (read only; it
   replaced the "Keep for instant raises" setting, whose saved `keep_seconds` is still read and
   written back unchanged), drain, the badge, where the
   stream goes (read only: OBS's Settings > Stream). The stats show the RAM and the disk the history
   takes.
 - Hotkeys (OBS Settings > Hotkeys): Toggle, Enable, Disable (names unchanged), Back to live,
-  Delay +5 s, Delay -5 s, Dump, Preset 1-3. They go through `DelayRouter`: stream mode when it
-  handles the controls, scene mode otherwise (there too the seconds change live, 1-600, and a preset also turns the delay
-  on; Dump does nothing).
+  Delay +5 s, Delay -5 s, Dump, Preset 1-3. They go through `DelayRouter`, to the engine selected
+  in the dock only (with all of OBS the seconds change live too, 1-600, a preset also turns the
+  delay on, and Dump does nothing).
 - obs-websocket 5, vendor `trigglow-dynamic-delay`: `GetStatus`, `EnableDelay`, `DisableDelay`,
   `ToggleDelay`, `SkipToLive`, `SetDelay {seconds}`, `AdjustDelay {delta}`, `DumpDelay`,
   `ApplyPreset {index}` (0-2); event `StatusChanged`. For the Trigglow Stream Deck plugin; details
@@ -224,9 +254,10 @@ The free-account gate applies to Enable as in scene mode.
 
 ## Not covered yet
 
-- Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: scene mode.
-- Delay by scene only in stream mode: scene mode keeps delaying the one live scene chosen in the
-  dock.
+- Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: the dock says the stream
+  can't use it; all of OBS (the default) works with them.
+- Delay by scene only with "only the stream": all of OBS keeps delaying the one live scene chosen
+  in the dock.
 
 ## Verification status
 

@@ -103,11 +103,11 @@ Delay"** is checked in that same menu:
 
 ![Docks menu with Trigglow Dynamic Delay listed](images/obs-panel-2-reset-panels.png)
 
-The dock appears. Its top section is **Stream mode**, ticked by default: there's nothing
-else to set up before you stream (a keyframe interval of 2 s in `Settings → Output` is
-recommended). Scene mode, with its live scene picker, is folded under **Scene mode
-(compatibility)**. The screenshot below is from an earlier
-version, before stream mode. See `README.md` ("Using the plugin") for what to configure next.
+The dock appears: one panel with the status, one **Turn delay on** button, the delay and your
+scenes. By default the delay applies to all of OBS (stream and recording): pick your **live
+scene** and you're set. To delay only the stream and keep the recording live, tick **Apply the
+delay only to the stream** in Options > Advanced. The screenshot below is from an earlier version.
+See `README.md` ("Using the plugin") for what to configure next.
 
 ![Trigglow Dynamic Delay dock, Inactive state](images/obs-panel-3-dock.png)
 
@@ -209,9 +209,9 @@ package or the `.tar.xz`'s `install.sh`.
 
 
 Install the new version over the old one, the same way (with OBS closed): your scenes, settings,
-hotkeys and sign-in are kept. **From any 0.x to 1.0.0** there's nothing to do: on Windows stream
-mode is on by default from your next stream, and your three hotkeys keep their bindings next to the
-seven new ones. **From v0.5.x or earlier, updating is required**: the sign-in of those versions is
+hotkeys and sign-in are kept. **From any 0.x to 1.0.0** there's nothing to do: the delay still
+applies to all of OBS, as before, in the new one-panel dock (the stream-only delay is an option
+under Options > Advanced), and your three hotkeys keep their bindings next to the seven new ones. **From v0.5.x or earlier, updating is required**: the sign-in of those versions is
 switched off when v0.6.0 is published, and the sign-ins they already have stop working after a
 transition period. On the first start your sign-in moves to the new format by itself; if the dock
 asks you to sign in, do it once (step 6). Since v0.6.0 the objects the plugin manages end in

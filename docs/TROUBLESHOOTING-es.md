@@ -66,20 +66,22 @@ La línea del log de arriba (`loading ... from <ruta>`) te dice qué copia ha ca
 
 ## Modo stream (v1.0.0, Windows)
 
-### El dock dice que este directo no puede usar el modo stream
-Cuando empieza un directo, el plugin comprueba si puede reenviarlo. Si no, el directo sale tal cual
-lo envía OBS, el dock dice por qué y el modo escena (en "Modo escena (compatibilidad)") se encarga
-del delay en ese directo. El log dice `this stream can't use stream mode (<reason>: output …,
+### El dock dice que este directo no puede usar "solo a la emisión"
+Con **Aplicar el delay solo a la emisión** marcado, cuando empieza un directo el plugin comprueba si
+puede reenviarlo. Si no, el directo sale tal cual lo envía OBS, sin delay, y el dock dice por qué.
+Desmarca la opción (Opciones > Avanzado, con el delay quitado) para retrasar todo OBS, que funciona
+con cualquier salida. El log dice `this stream can't use stream mode (<reason>: output …,
 protocol …)`.
 
 | El dock dice | Por qué | Qué hacer |
 |---|---|---|
-| "Este directo usa Enhanced Broadcasting…" | Enhanced Broadcasting envía varias pistas por una sola salida multipista | Desactiva Enhanced Broadcasting en `Ajustes → Emisión`, o usa el modo escena |
-| "Tu servicio no emite por RTMP ni RTMPS (SRT, WHIP...)" | SRT, RIST y WHIP aún no se reenvían | Usa un servidor RTMP o RTMPS si tu plataforma lo tiene, o el modo escena |
-| "Este directo no usa la salida RTMP de OBS" | emite otro plugin de salida | Modo escena |
+| "Este directo usa Enhanced Broadcasting…" | Enhanced Broadcasting envía varias pistas por una sola salida multipista | Desactiva Enhanced Broadcasting en `Ajustes → Emisión`, o retrasa todo OBS |
+| "Tu servicio no emite por RTMP ni RTMPS (SRT, WHIP...)" | SRT, RIST y WHIP aún no se reenvían | Usa un servidor RTMP o RTMPS si tu plataforma lo tiene, o retrasa todo OBS |
+| "Este directo no usa la salida RTMP de OBS" | emite otro plugin de salida | Retrasa todo OBS |
 | "Tu servidor de emisión no es una dirección rtmp:// ni rtmps://" | el servidor de `Ajustes → Emisión` no se puede leer como tal | Revisa la dirección del servidor |
-| "El modo stream no pudo arrancar en este directo" | el relay no pudo arrancar (el log dice `couldn't start the relay (…); this stream goes out without it`) | Para el directo y vuelve a empezarlo; si se repite, envía un reporte con el log |
-| "El modo stream aún no está disponible en este sistema" | macOS o Linux (allí aún no hay relay) | Modo escena |
+| "El delay solo en la emisión no pudo arrancar en este directo" | el relay no pudo arrancar (el log dice `couldn't start the relay (…); this stream goes out without it`) | Para el directo y vuelve a empezarlo; si se repite, envía un reporte con el log |
+| "El delay solo en la emisión aún no está disponible en este sistema" | macOS o Linux (allí aún no hay relay) | Retrasa todo OBS |
+| "OBS ya estaba emitiendo cuando elegiste…" | marcaste la opción en pleno directo | Se aplica desde tu próximo directo; desmárcala para retrasar este |
 
 ### El delay se mueve a saltos grandes, o un cambio tarda segundos en aplicarse
 El delay solo puede cambiar en un keyframe, así que se mueve en pasos del intervalo de keyframes. En
@@ -747,10 +749,11 @@ descarta frames (un frame repetido en pantalla) en vez de crecer.
   Abre un issue en el repositorio con el log de error completo.
 
 ## No sé si el problema es del plugin o de mi configuración de streaming
-- Primero desmarca **Usar el modo stream** en el dock (se aplica a partir del siguiente directo):
-  así OBS vuelve a emitir directamente a tu plataforma, como sin el plugin. Si el problema
-  desaparece, está en el modo stream: repórtalo con el log de OBS.
+- Si marcaste **Aplicar el delay solo a la emisión**, primero desmárcalo (Opciones > Avanzado, con
+  el delay quitado; se aplica a partir del siguiente directo): así OBS vuelve a emitir directamente
+  a tu plataforma, como sin el plugin. Si el problema desaparece, está en ese modo: repórtalo con el
+  log de OBS.
 - Después desactiva el plugin (bórralo temporalmente de la carpeta de plugins) y confirma que el
-  streaming funciona bien sin él. Si el problema persiste sin el plugin, no es cosa del plugin. El
-  modo escena nunca toca el output de streaming, así que con el modo stream desactivado el plugin no
-  puede causar problemas de conexión.
+  streaming funciona bien sin él. Si el problema persiste sin el plugin, no es cosa del plugin. A
+  todo OBS (lo predeterminado) nunca toca el output de streaming, así que con esa opción desmarcada
+  el plugin no puede causar problemas de conexión.

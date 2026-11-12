@@ -64,19 +64,21 @@ The log line above (`loading ... from <path>`) tells you which copy OBS actually
 
 ## Stream mode (v1.0.0, Windows)
 
-### The dock says this stream can't use stream mode
-When a stream starts, the plugin checks it can relay it. If not, the stream goes out exactly as OBS
-sends it, the dock says why, and scene mode (under "Scene mode (compatibility)") handles the delay
-for that stream. The log has `this stream can't use stream mode (<reason>: output …, protocol …)`.
+### The dock says this stream can't use "only the stream"
+With **Apply the delay only to the stream** ticked, when a stream starts the plugin checks it can
+relay it. If not, the stream goes out exactly as OBS sends it, undelayed, and the dock says why.
+Untick the option (Options > Advanced, with the delay off) to delay all of OBS, which works with any
+output. The log has `this stream can't use stream mode (<reason>: output …, protocol …)`.
 
 | Dock says | Why | What to do |
 |---|---|---|
-| "This stream uses Enhanced Broadcasting…" | Enhanced Broadcasting sends several tracks on one multitrack output | Turn Enhanced Broadcasting off in `Settings → Stream`, or use scene mode |
-| "Your service doesn't stream over RTMP or RTMPS (SRT, WHIP...)" | SRT, RIST and WHIP aren't relayed yet | Use an RTMP or RTMPS server if your platform has one, or scene mode |
-| "This stream doesn't use OBS's RTMP output" | another output plugin streams | Scene mode |
+| "This stream uses Enhanced Broadcasting…" | Enhanced Broadcasting sends several tracks on one multitrack output | Turn Enhanced Broadcasting off in `Settings → Stream`, or delay all of OBS |
+| "Your service doesn't stream over RTMP or RTMPS (SRT, WHIP...)" | SRT, RIST and WHIP aren't relayed yet | Use an RTMP or RTMPS server if your platform has one, or delay all of OBS |
+| "This stream doesn't use OBS's RTMP output" | another output plugin streams | Delay all of OBS |
 | "Your stream server isn't an rtmp:// or rtmps:// address" | the server in `Settings → Stream` can't be read as one | Check the server address |
-| "Stream mode couldn't start for this stream" | the relay couldn't start (the log has `couldn't start the relay (…); this stream goes out without it`) | Stop and start the stream again; if it repeats, report a problem with the log |
-| "Stream mode isn't available on this system yet" | macOS or Linux (no relay there yet) | Scene mode |
+| "The stream-only delay couldn't start for this stream" | the relay couldn't start (the log has `couldn't start the relay (…); this stream goes out without it`) | Stop and start the stream again; if it repeats, report a problem with the log |
+| "The stream-only delay isn't available on this system yet" | macOS or Linux (no relay there yet) | Delay all of OBS |
+| "OBS was already streaming when you chose…" | you ticked the option while live | It applies from your next stream; untick it to delay this one |
 
 ### The delay moves in big steps, or a change takes seconds to apply
 The delay can only change at a keyframe, so it moves in steps of the keyframe interval. With
@@ -696,10 +698,11 @@ drops frames (a repeated frame on screen) instead of growing.
   with the full error log.
 
 ## I don't know if the problem is the plugin or my streaming configuration
-- First untick **Use stream mode** in the dock (it applies from the next stream): OBS then streams
-  to your platform directly again, as without the plugin. If the problem goes away, it's in stream
-  mode: report it with the OBS log.
+- If you ticked **Apply the delay only to the stream**, first untick it (Options > Advanced, with
+  the delay off; it applies from the next stream): OBS then streams to your platform directly
+  again, as without the plugin. If the problem goes away, it's in that mode: report it with the OBS
+  log.
 - Then disable the plugin (temporarily remove it from the plugins folder) and confirm that
   streaming works fine without it. If the problem persists without the plugin, it's not the
-  plugin's fault. Scene mode never touches the streaming output at all, so with stream mode off,
-  the plugin can't cause connection trouble.
+  plugin's fault. All of OBS (the default) never touches the streaming output at all, so with
+  that option unticked, the plugin can't cause connection trouble.
