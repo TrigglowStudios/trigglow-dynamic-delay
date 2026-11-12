@@ -74,7 +74,8 @@ private:
 	void Update(obs_data_t *settings);
 	obs_audio_data *FilterAudio(obs_audio_data *audio);
 	// Sets configuredDelaySeconds_, logging a real change. Under managedMutex_.
-	void ApplyDelaySeconds(uint32_t seconds);
+	// fromCollection: the value saved with the scene collection, at creation.
+	void ApplyDelaySeconds(uint32_t seconds, bool fromCollection);
 
 	// --- obs_source_info callback trampolines ---
 	static const char *GetName(void *typeData);
@@ -102,6 +103,7 @@ private:
 	std::mutex managedMutex_;
 	bool managed_ = false;
 	bool warnedForeignSettings_ = false;
+	bool created_ = false; // Create() has run: Update() calls after it aren't the collection's load.
 	// Bumped by Update() whenever the "reset_token" setting changes (the
 	// bridge does this on every Enable); consumed by the audio thread.
 	std::atomic<bool> resetRequested_{false};
