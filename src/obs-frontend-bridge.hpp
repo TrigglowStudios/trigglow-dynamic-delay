@@ -428,7 +428,9 @@ public:
 	// its name, or an empty string when it can't be made (video missing, the
 	// name taken by something that isn't a scene, or a core-only build, whose
 	// host has its own loading view) -- the delayed view then stays blank, as
-	// before.
+	// before. v1.0.0: with the video's first frame as a still under it
+	// (autonames::kDefaultLoadingStill), so Program shows that frame, never
+	// black, while the video opens.
 	std::string EnsureDefaultLoadingScene() const;
 
 	// --- Audio delay orchestration ---
@@ -521,6 +523,12 @@ public:
 	bool ReleaseLiveSceneRendering(const std::string &liveSceneName);
 
 private:
+#ifndef TRIGGLOW_CORE_ONLY
+	// EnsureDefaultLoadingScene()'s parts: an item fitted to the canvas,
+	// centred; the still under the video (added once, re-pointed each call).
+	static void FitLoadingItemToCanvas(obs_sceneitem_t *item);
+	static void EnsureDefaultLoadingStill(obs_scene_t *scene);
+#endif
 #ifndef TRIGGLOW_CORE_ONLY
 	// Must match obs_frontend_event_cb exactly: void(*)(enum obs_frontend_event, void*).
 	static void FrontendEventCallback(enum obs_frontend_event event, void *privateData);

@@ -140,12 +140,22 @@ bool IsDefaultLoadingSceneName(std::string_view name)
 	return name == kDefaultLoadingScene;
 }
 
+namespace {
+bool SpanishLocale(std::string_view locale)
+{
+	return locale.size() >= 2 && (locale[0] == 'e' || locale[0] == 'E') && (locale[1] == 's' || locale[1] == 'S') &&
+	       (locale.size() == 2 || locale[2] == '-' || locale[2] == '_');
+}
+} // namespace
+
 std::string DefaultLoadingVideoFile(std::string_view locale)
 {
-	const bool spanish = locale.size() >= 2 && (locale[0] == 'e' || locale[0] == 'E') &&
-			     (locale[1] == 's' || locale[1] == 'S') &&
-			     (locale.size() == 2 || locale[2] == '-' || locale[2] == '_');
-	return spanish ? "videos/adding-delay-es.mp4" : "videos/adding-delay-en.mp4";
+	return SpanishLocale(locale) ? "videos/adding-delay-es.mp4" : "videos/adding-delay-en.mp4";
+}
+
+std::string DefaultLoadingStillFile(std::string_view locale)
+{
+	return SpanishLocale(locale) ? "images/adding-delay-es.jpg" : "images/adding-delay-en.jpg";
 }
 
 RenamePlan PlanRename(bool legacyExists, bool currentNameTaken)

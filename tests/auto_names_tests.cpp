@@ -191,6 +191,12 @@ void TestDefaultLoadingScene()
 	CHECK(DefaultLoadingVideoFile("pt-BR") == "videos/adding-delay-en.mp4");
 	CHECK(DefaultLoadingVideoFile("est") == "videos/adding-delay-en.mp4");
 	CHECK(DefaultLoadingVideoFile("") == "videos/adding-delay-en.mp4");
+	// v1.0.0: the still under the video follows the same rule.
+	CHECK(DefaultLoadingStillFile("es-ES") == "images/adding-delay-es.jpg");
+	CHECK(DefaultLoadingStillFile("es") == "images/adding-delay-es.jpg");
+	CHECK(DefaultLoadingStillFile("en-US") == "images/adding-delay-en.jpg");
+	CHECK(DefaultLoadingStillFile("est") == "images/adding-delay-en.jpg");
+	CHECK(DefaultLoadingStillFile("") == "images/adding-delay-en.jpg");
 }
 
 void TestRenamePlan()
