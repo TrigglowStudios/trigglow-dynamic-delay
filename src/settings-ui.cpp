@@ -720,6 +720,12 @@ void TrigglowDelayDock::BuildUi()
 	SetRole(hintLabel_, "hint", ui::FontRole::Hint);
 	root->addWidget(hintLabel_);
 
+	standbyLabel_ = new QLabel(T("Dock.Standby.Note"), this);
+	standbyLabel_->setWordWrap(true);
+	SetRole(standbyLabel_, "hint", ui::FontRole::Hint);
+	standbyLabel_->setVisible(false);
+	root->addWidget(standbyLabel_);
+
 	// --- Footer: version on the left, "Report a problem" on the
 	// right. The report link stays enabled in every state -- a user hitting
 	// lag or a stuck buffer needs it exactly when things are going wrong. ---
@@ -840,6 +846,14 @@ void TrigglowDelayDock::BuildUi()
 		bufferController_.Tick(); // v0.7.0: the storage codec's once-a-second duties.
 		RefreshPipelineHealth(bufferController_.GetStatus());
 	});
+}
+
+void TrigglowDelayDock::SetStandby(bool standby)
+{
+	if (standby_ == standby)
+		return;
+	standby_ = standby;
+	RefreshFromStatus(bufferController_.GetStatus());
 }
 
 void TrigglowDelayDock::ApplyTheme(bool force)
@@ -1152,6 +1166,15 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 	requirement(reqAccountIcon_, reqAccountText_, loggedIn, "Dock.Requirement.Account");
 	requirement(reqSceneIcon_, reqSceneText_, hasScene, "Dock.Requirement.Scene");
 	hintLabel_->setVisible(!busy);
+
+	// Stream mode handles the delay: no second "Turn delay on" here.
+	const bool parked = standby_ && !busy;
+	if (parked) {
+		enableButton_->setVisible(false);
+		requirements_->setVisible(false);
+		hintLabel_->setVisible(false);
+	}
+	standbyLabel_->setVisible(parked);
 
 	const QSignalBlocker blockSeconds(secondsSpin_);
 	secondsSpin_->setValue(static_cast<int>(status.delaySeconds));

@@ -37,7 +37,7 @@ inicio de sesión se mantienen.
   - El dock muestra adónde va tu directo y su estado, la RAM y el disco usados y el bitrate.
   - Si Disco no puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue en RAM,
     guardando lo de tu preset o regla por escena más alto; el directo no se corta.
-  - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre.
+  - El modo escena sigue ahí, plegado bajo la sección nueva, para lo que el modo stream no cubre. Mientras el modo stream se encarga del delay, el modo escena no muestra su propio botón "Activar delay", así que solo hay uno.
   - En macOS y Linux está en alpha como el resto de esas versiones: compilado y comprobado en la
     CI, aún no usado en un directo. Allí el plugin lleva su propio FFmpeg para ello (LGPL, enlazado
     dentro); RTMPS usa el TLS propio de macOS y, en Linux, el OpenSSL 3 del sistema (los paquetes

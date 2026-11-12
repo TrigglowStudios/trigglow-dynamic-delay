@@ -84,6 +84,13 @@ public:
 	// change events; a no-op when nothing changed.
 	void ApplyTheme(bool force = false);
 
+	// v1.0.0: stream mode handles the delay and the hotkeys (its panel says
+	// so above this dock). While scene mode's own delay is off, its Enable
+	// button gives way to one line that says how to use scene mode instead,
+	// so the dock never shows two "Turn delay on" buttons. A scene mode delay
+	// that is already running keeps its Disable button.
+	void SetStandby(bool standby);
+
 protected:
 	void changeEvent(QEvent *event) override;
 	// Wheel guard: the mouse wheel over a combo/spin box that doesn't have
@@ -287,6 +294,8 @@ private:
 	QLabel *reqSceneIcon_ = nullptr;
 	QLabel *reqSceneText_ = nullptr;
 	QLabel *hintLabel_ = nullptr;
+	QLabel *standbyLabel_ = nullptr;
+	bool standby_ = false;
 	QTimer *fillTimer_ = nullptr;
 
 	// Free-account row (see RefreshAccountUi()): icon + text, an inline

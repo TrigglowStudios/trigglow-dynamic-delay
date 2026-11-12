@@ -34,7 +34,7 @@ sign-in are kept.
   - The dock shows where your stream goes and its state, the RAM and disk used and the bitrate.
   - If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM, keeping as
     much as your highest preset or scene rule; the stream isn't interrupted.
-  - Scene mode is still there, folded under the new section, for what stream mode can't do.
+  - Scene mode is still there, folded under the new section, for what stream mode can't do. While stream mode handles the delay, scene mode has no "Turn delay on" button of its own, so there's only one.
   - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet
     run on a live stream. The plugin carries its own FFmpeg for it there (LGPL, linked in); RTMPS
     uses macOS's own TLS and, on Linux, the system's OpenSSL 3 (the packages now depend on it).

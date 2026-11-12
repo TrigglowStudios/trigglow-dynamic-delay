@@ -462,7 +462,10 @@ QWidget *BuildDockContainer(trigglow::StreamModePanel *panel, trigglow::Trigglow
 	sceneDock->setParent(container);
 	layout->addWidget(sceneDock, 1);
 
-	panel->SetHandlesControlsChanged([panel](bool streamHandles) { panel->SetSceneSectionOpen(!streamHandles); });
+	panel->SetHandlesControlsChanged([panel, sceneDock](bool streamHandles) {
+		panel->SetSceneSectionOpen(!streamHandles);
+		sceneDock->SetStandby(streamHandles);
+	});
 	return container;
 }
 
