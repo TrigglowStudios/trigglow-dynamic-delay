@@ -164,6 +164,22 @@ uint64_t DesiredFrames(uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen, 
 uint64_t SlackFrames(uint32_t delaySeconds, uint32_t fpsNum, uint32_t fpsDen, uint32_t keyframeIntervalFrames = 0);
 uint64_t FrameIntervalNs(uint32_t fpsNum, uint32_t fpsDen); // 1e9 * den / num; 0 if num == 0.
 uint64_t Nv12FrameBytes(uint32_t width, uint32_t height);   // width * height * 3 / 2.
+// v1.0.0: the clock the delay buffer stamps its captures with and picks the
+// frame to show by. OBS's video frame time (obs_get_video_frame_time()): the
+// same for every Render() of one frame, exactly one interval from the last,
+// and what the outputs timestamp that frame with. The wall clock at Render()
+// jitters by up to a frame against it, so a capture stamped with it and a
+// target of "now - delay" picked a frame early one time and late the next:
+// the delayed picture repeated and skipped frames (~18% at 60 fps, measured
+// in OBS 33). The wall clock only when OBS gives no frame time (0) or one that
+// isn't near it (a host with its own render loop).
+uint64_t FrameClockNs(uint64_t videoFrameNs, uint64_t wallNs);
+// Whether the frame at frameNs gets a capture: the first one, one after the
+// clock went back (a video reset), or one at least captureIntervalNs after the
+// last capture, less half a frame (OBS's own interval is the integer floor of
+// ours: 16666666 vs 16666667 ns at 60 fps). Several Render() calls of one
+// frame capture once; the half-rate rung (interval 2 frames) every other one.
+bool CaptureDue(uint64_t frameNs, uint64_t lastCaptureNs, uint64_t frameIntervalNs, uint64_t captureIntervalNs);
 
 // The whole seconds a ring of `frames` slots delays by (Result::
 // effectiveDelaySeconds): the span minus the slack, floored, never above
