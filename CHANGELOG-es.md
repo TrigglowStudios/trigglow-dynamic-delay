@@ -85,6 +85,23 @@ inicio de sesión se mantienen.
   "Trigglow (por defecto)". La insignia de delay con tus segundos sigue saliendo sobre el directo
   retrasado como antes.
 
+**Qué arregla (modo escena, comprobado fotograma a fotograma en OBS 33):**
+- **Vídeo retrasado fluido.** La imagen retrasada repetía un fotograma y se saltaba el siguiente
+  varias veces por segundo a 60 fps (más o menos uno de cada seis), así que el movimiento se veía a
+  tirones y el sonido iba hasta dos fotogramas desfasado. Ahora muestra cada fotograma justo el delay
+  después de que pasara, con el sonido a la par. La v0.7.3 también lo tenía.
+- **Sin congelarse al volver a poner el delay.** Poner el delay por segunda vez en una sesión de OBS
+  (o después de que el buffer bajara su calidad) congelaba la imagen retrasada medio segundo al
+  empezar, luego saltaba hacia delante, y podía bajar la resolución del buffer durante el resto del
+  delay.
+- **Sin destello negro en la pantalla de carga.** El vídeo "Poniendo delay" por defecto salía en
+  negro unos fotogramas cada vez que se ponía el delay, mientras se abría el vídeo.
+- **Los delays largos mantienen el sonido a la par.** Poner, subir o bajar un delay de unos minutos
+  podía dejar todo el sonido de OBS unos 20 ms por detrás de la imagen hasta reiniciar OBS, un poco
+  más cada vez: la memoria de audio del delay se preparaba o se liberaba de golpe en los hilos de tus
+  fuentes de audio, y OBS tomaba esa pausa por una fuente con retraso. Ahora entra y sale poco a
+  poco.
+
 ## v0.7.3 — 2026-11-11 (Early Access)
 
 Una versión de corrección: tu micro y el resto del audio van a la par que el vídeo retrasado.

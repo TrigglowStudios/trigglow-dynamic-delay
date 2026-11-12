@@ -75,6 +75,21 @@ sign-in are kept.
   plugin creates the first time; the dock's loading-scene picker shows it as "Trigglow (default)".
   The delay badge with your seconds still shows over the delayed stream as before.
 
+**What it fixes (scene mode, checked frame by frame in OBS 33):**
+- **Smooth delayed video.** The delayed picture repeated one frame and skipped the next several
+  times a second at 60 fps (about one frame in six), so motion looked jerky and the sound was up to
+  two frames off. It now shows every frame exactly the delay after it happened, with the sound in
+  step. v0.7.3 had this too.
+- **No freeze when the delay starts again.** Turning the delay on a second time in an OBS session
+  (or after the buffer lowered its quality) froze the delayed picture for about half a second as it
+  started, then skipped ahead, and could lower the buffer's resolution for the rest of the delay.
+- **No black flash on the loading screen.** The default "Adding delay" video showed black for a few
+  frames each time the delay was turned on, while the video opened.
+- **Long delays keep the sound in step.** Turning on, raising or lowering a delay of a few minutes
+  could leave all of OBS's sound about 20 ms behind the picture until OBS restarted, a little more
+  each time: the delay's audio memory was set up or given back all at once on your audio sources'
+  own threads, and OBS took that pause for a late source. It now comes and goes a little at a time.
+
 ## v0.7.3 — 2026-11-11 (Early Access)
 
 A fix release: your mic and the rest of your audio stay in sync with the delayed video.
