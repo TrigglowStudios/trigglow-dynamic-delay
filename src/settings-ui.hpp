@@ -109,7 +109,7 @@ public:
 	// content rendered offscreen at `width` logical px on the dock's
 	// background, with the folded sections open or not. Never shown, never
 	// sends input anywhere.
-	QImage RenderForTest(int width, bool sectionsOpen);
+	QImage RenderForTest(int width, bool sectionsOpen, int minHeight = 0);
 #endif
 
 	// Recomputes tokens, fonts and icons from the application palette (OBS's

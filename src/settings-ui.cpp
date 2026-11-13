@@ -558,6 +558,11 @@ void TrigglowDelayDock::BuildUi()
 	}
 	root->addWidget(moreCard);
 
+	// The space left over goes above the footer: in a tall dock the footer
+	// sits on its bottom edge; when the content is taller it follows the
+	// content and scrolls with it.
+	root->addStretch(1);
+
 	// --- Footer: version on the left, "Report a problem" on the
 	// right. The report link stays enabled in every state -- a user hitting
 	// lag or a stuck buffer needs it exactly when things are going wrong. ---
@@ -585,8 +590,6 @@ void TrigglowDelayDock::BuildUi()
 		footer->addWidget(reportBugButton_, 0, Qt::AlignLeft | Qt::AlignVCenter);
 		root->addLayout(footer);
 	}
-
-	root->addStretch(1);
 
 	connect(enableButton_, &QPushButton::clicked, this, [this] {
 		TRIGGLOW_LOG_INFO(kComponent, "Turn delay on pressed in dock (%s)",
@@ -1342,7 +1345,7 @@ void TrigglowDelayDock::OnStreamStatusChanged()
 }
 
 #ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
-QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen)
+QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen, int minHeight)
 {
 	auto *scroll = findChild<QScrollArea *>(QStringLiteral("tgDockScroll"));
 	QWidget *content = scroll ? scroll->widget() : nullptr;
@@ -1360,7 +1363,9 @@ QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen)
 	content->resize(width, 100);
 	content->layout()->activate();
 	QLayout *layout = content->layout();
-	const int height = layout->hasHeightForWidth() ? layout->heightForWidth(width) : layout->sizeHint().height();
+	const int fitted = layout->hasHeightForWidth() ? layout->heightForWidth(width) : layout->sizeHint().height();
+	// A taller dock than the content (minHeight) shows where the footer sits.
+	const int height = std::max(fitted, minHeight);
 	content->resize(width, height);
 	layout->activate();
 	QImage image(content->size(), QImage::Format_ARGB32_Premultiplied);
