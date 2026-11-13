@@ -20,7 +20,15 @@ inicio de sesión se mantienen.
   botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
   de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS. Las
   tarjetas Delay y Escenas también se pliegan: plegadas, su cabecera sigue mostrando los segundos y
-  la escena en directo.
+  la primera escena con delay.
+- **Varias escenas con delay, un solo búfer.** En todo OBS, añade hasta 8 escenas en **Escenas con
+  delay** (Añadir escena). Con el delay activo, cambia entre ellas con los botones del dock, los
+  atajos nuevos "Escena con delay 1" a "8", obs-websocket (`SetDelayedScene`) o el Stream Deck: tu
+  audiencia ve el cambio cuando el delay llega a él, imagen y sonido juntos, nunca en directo.
+  Todas comparten el mismo búfer, así que más escenas no gastan más RAM (las que no están en
+  pantalla siguen renderizándose fuera del lienzo, algo de GPU). También puedes elegirlas en la
+  lista de escenas de OBS, pero OBS muestra antes su transición sin delay un momento. Al desactivar
+  el delay se ve en directo la escena que estaba en el delay.
 - **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu
   directo.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un

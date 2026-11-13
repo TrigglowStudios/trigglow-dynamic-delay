@@ -76,6 +76,12 @@ public:
 	void Write(const float *const *planes, size_t frames);
 	// A gap in the source's timeline, filled with silence.
 	void WriteSilence(size_t frames);
+	// v1.0.0, several delayed scenes: Write() while `open`, silence while
+	// not. The gate acts where the samples go IN, so what the line already
+	// holds still plays out: closed at T, the source is heard until T + delay
+	// and silent after; opened at T, silent until T + delay, then heard from T
+	// on -- in step with the delayed video's switch between scenes.
+	void WriteGated(const float *const *planes, size_t frames, bool open);
 	// The `frames` samples due now (call after the Write() of the same chunk)
 	// into out[0..Channels()-1]: silence where there's no history (filling,
 	// or a raise building up). True if any real sample came out.

@@ -45,6 +45,8 @@ public:
 	bool Dump() override { return false; }
 	void ApplyPreset(int index) override;
 	RouterStatus Status() const override;
+	bool SelectDelayedScene(const std::string &sceneName) override;
+	bool SelectDelayedSceneSlot(size_t slot) override;
 
 private:
 	BufferModeController &scene_;

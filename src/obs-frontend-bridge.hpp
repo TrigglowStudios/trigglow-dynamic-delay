@@ -117,6 +117,10 @@ enum class FrontendEvent {
 	SceneCollectionChanging,
 	SceneCollectionChanged,
 	ThemeChanged, // OBS switched theme (or its font size): the dock restyles itself.
+	// v1.0.0: Program changed scene (OBS_FRONTEND_EVENT_SCENE_CHANGED; with a
+	// transition, once it ends). Several delayed scenes: a click on one of
+	// them in OBS's scene list switches the delay to it.
+	SceneChanged,
 	Other,
 };
 
@@ -204,7 +208,9 @@ public:
 	// doesn't resolve.
 	// ringClass (v0.7.0): what the ring is (or would be) sized for, as
 	// SetBufferFilterStorageClass() pushes it.
-	VideoDelayFilter::BufferFitEstimate EstimateBufferFit(const std::string &liveSceneName,
+	// v1.0.0: `scenes` are the delayed scenes: the first one's size (the
+	// scene holding them has the canvas's), the audio sources of all of them.
+	VideoDelayFilter::BufferFitEstimate EstimateBufferFit(const std::vector<std::string> &scenes,
 							      uint32_t requestedDelaySeconds,
 							      uint32_t minResolutionHeight, bool capToOutput,
 							      bufferfit::RingClass ringClass) const;
@@ -258,7 +264,36 @@ public:
 	// delay filter attached (disabled by default — see SetBufferFilterEnabled).
 	// Returns false if liveSceneName doesn't resolve to a real scene, or
 	// setup otherwise fails.
+	//
+	// v1.0.0: BufferModeController passes kDelayedScenes here (the scene
+	// EnsureDelayedScenes() fills), never one of the streamer's scenes: a
+	// previous live scene the wrapper still holds is removed with the filter
+	// an earlier version left on it.
 	bool EnsureBufferWrapperScene(const std::string &liveSceneName) const;
+
+	// v1.0.0, several delayed scenes. Idempotent: ensures the scene
+	// autonames::kDelayedScenes exists and holds exactly one item per scene of
+	// `scenes` (missing scenes and helper scenes are skipped, items of scenes
+	// no longer listed removed), then places them (SelectDelayedScene()).
+	// Every item stays VISIBLE, so all their sources stay active (heard, and
+	// rendered off the canvas): switching only moves items. Returns false if
+	// none of `scenes` could be added.
+	bool EnsureDelayedScenes(const std::vector<std::string> &scenes, const std::string &selected) const;
+	// Puts `selected`'s item at 0,0 and every other item off the canvas
+	// (visible). The delay filter on the holder buffers what's at 0,0, so
+	// viewers see the switch one delay later. False if it isn't one of them.
+	bool SelectDelayedScene(const std::string &selected) const;
+	// The scene whose item sits at 0,0 in the holder, or empty.
+	std::string SelectedDelayedScene() const;
+	// Removes the video delay filter an earlier version left on any scene
+	// other than the holder (scene mode now filters only the holder). Only
+	// while the delay is off; filters switched on are left alone.
+	void RemoveStrayBufferFilters() const;
+	// Opens the audio filters (set_gate_open) of the audio sources of
+	// `selectedScene` -- the global ones (Desktop Audio, Mic/Aux) included --
+	// and closes the other filters under `hostName`. An empty
+	// `selectedScene` opens them all (the delay off).
+	bool SetAudioDelayGates(const std::string &hostName, const std::string &selectedScene) const;
 
 	// Enables/disables the buffer filter attached by EnsureBufferWrapperScene.
 	// No-op (returns false) if that hasn't been called successfully yet for
@@ -536,6 +571,8 @@ private:
 	// Core build: no frontend keeps the wrapper scene in its scene list, so the
 	// bridge holds a reference to it (EnsureBufferWrapperScene()) until Shutdown().
 	mutable obs_source_t *wrapperKeepAlive_ = nullptr;
+	// Same for the delayed scenes' holder (EnsureDelayedScenes()).
+	mutable obs_source_t *delayedScenesKeepAlive_ = nullptr;
 	// The outputs' "start" signal (core build): FrontendEvent::StreamingStarted
 	// on the controller thread, like OBS's STREAMING/RECORDING/REPLAY_BUFFER_STARTED.
 	static void OutputStartSignal(void *param, calldata_t *data);
@@ -602,6 +639,8 @@ private:
 	// its own strong reference, released when the vector goes away, so a
 	// child removed from the scene meanwhile can't be freed under the caller.
 	std::vector<OBSSourceAutoRelease> GetAudioCapableChildren(const std::string &liveSceneName) const;
+	// The same for several scenes, each source once.
+	std::vector<OBSSourceAutoRelease> GetAudioCapableChildrenOf(const std::vector<std::string> &scenes) const;
 	// v1.0.0: the RAM `sources` audio delay filters take per second of delay
 	// (OBS's channels x sample rate x 4 bytes each).
 	static uint64_t AudioBytesPerSecondFor(size_t sources);

@@ -42,6 +42,7 @@ struct Driver {
 	AudioDelayLine line;
 	uint64_t next = 0; // Absolute index of the next input frame.
 	std::vector<float> outL, outR;
+	bool open = true; // The gate (WriteGated): closed, the chunk goes in as silence.
 
 	explicit Driver(uint32_t channels = 2) { line.Configure(channels, kRate); }
 
@@ -54,7 +55,7 @@ struct Driver {
 			inR[i] = -static_cast<float>(next + i + 1);
 		}
 		const float *planes[2] = {inL.data(), inR.data()};
-		line.Write(planes, frames);
+		line.WriteGated(planes, frames, open);
 		next += frames;
 		outL.assign(frames, -1.0f);
 		outR.assign(frames, -1.0f);
@@ -339,6 +340,44 @@ void TestMemoryComesInBlocks()
 
 } // namespace
 
+// v1.0.0, several delayed scenes: the gate closes and opens where the samples
+// go in, so the source's sound stops and starts exactly one delay later.
+void TestGateSwitchesOneDelayLater()
+{
+	testcheck::g_currentTest = "gate switches one delay later";
+	Driver d;
+	d.line.SetDelayFrames(1000);
+	for (int i = 0; i < 20; ++i)
+		d.Step(); // Filled and playing.
+	CHECK(ChunkIs(d, 1000));
+
+	// Closed at 2000: what went in before still plays until 2999...
+	d.open = false;
+	for (int i = 0; i < 10; ++i) {
+		d.Step();
+		CHECK(ChunkIs(d, 1000));
+	}
+	// ...then silence, for as long as it stays closed and one delay after.
+	for (int i = 0; i < 10; ++i) {
+		d.Step();
+		CHECK(ChunkSilent(d));
+	}
+
+	// Opened at 4000: still silent until 4999 (it was closed from 3000)...
+	d.open = true;
+	for (int i = 0; i < 10; ++i) {
+		d.Step();
+		CHECK(ChunkSilent(d));
+	}
+	// ...then the source again from 4000, one delay late, faded in.
+	d.Step();
+	CHECK(ChunkIs(d, 1000, kFade));
+	for (int i = 0; i < 10; ++i) {
+		d.Step();
+		CHECK(ChunkIs(d, 1000));
+	}
+}
+
 int main()
 {
 	TestDelayAndFill();
@@ -350,5 +389,6 @@ int main()
 	TestReset();
 	TestSilenceAndMissingPlanes();
 	TestMemoryComesInBlocks();
+	TestGateSwitchesOneDelayLater();
 	return testcheck::Finish("audio_delay_line_tests");
 }

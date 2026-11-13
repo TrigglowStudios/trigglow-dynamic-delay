@@ -76,6 +76,9 @@ std::vector<std::string> LookupNames(Kind kind)
 		names.emplace_back(kOverlayBadge);
 		Append(names, kLegacyOverlayBadges);
 		break;
+	case Kind::DelayedScenes:
+		names.emplace_back(kDelayedScenes); // New in v1.0.0: no earlier names.
+		break;
 	}
 	return names;
 }
@@ -138,6 +141,16 @@ bool IsWrapperSceneName(std::string_view name)
 bool IsDefaultLoadingSceneName(std::string_view name)
 {
 	return name == kDefaultLoadingScene;
+}
+
+bool IsDelayedScenesName(std::string_view name)
+{
+	return name == kDelayedScenes;
+}
+
+bool IsHelperSceneName(std::string_view name)
+{
+	return IsWrapperSceneName(name) || IsDelayedScenesName(name) || IsDefaultLoadingSceneName(name);
 }
 
 namespace {

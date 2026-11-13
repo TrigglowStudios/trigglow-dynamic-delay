@@ -18,6 +18,20 @@ hay escena de carga. El botón del dock, los atajos, obs-websocket y el Stream D
 elegida, y solo esa. La casilla se bloquea con el delay activo; si la marcas en pleno directo, se
 aplica desde tu próximo directo. Detalles: `docs/STREAM_MODE-es.md`.
 
+**¿Puedo poner delay a más de una escena?**
+Sí, en todo OBS (v1.0.0): añade hasta 8 en **Escenas con delay** (Añadir escena). Van dentro de una
+escena auxiliar, **Trigglow Delay Scenes (auto)**, y el delay guarda esa, así que es **un solo búfer
+y la misma RAM** por muchas que añadas. La escena que está en el delay queda en el lienzo y las
+demás justo fuera, funcionando (algo de GPU, y sus fuentes siguen sonando, silenciadas dentro del
+delay). Con el delay activo, cambia con los botones del dock, los atajos "Escena con delay 1" a
+"8", `SetDelayedScene` de obs-websocket o el Stream Deck: la escena nueva entra en el búfer al
+momento y tu audiencia la ve cuando el delay llega a ella, con su sonido; el sonido de la anterior
+se corta en ese mismo momento. Elegir una escena con delay en la lista de escenas de OBS también
+funciona, pero OBS ya la ha mostrado en directo durante su transición cuando el plugin la recoge,
+así que en directo usa las otras formas. Una escena que no es de ellas se ve sin delay, como antes.
+Las versiones anteriores ponían el filtro de delay en tu propia escena en directo; la 1.0.0 lo quita
+de ahí la primera vez que activas el delay.
+
 **Usé una build de prueba de la 1.0 con el modo stream activado. ¿Cuál tengo ahora?**
 A todo OBS, lo predeterminado. Las builds de prueba guardaban "Usar el modo stream" (marcado por
 defecto) en `stream-mode-settings.json`; la 1.0.0 guarda la elección como `apply_to` e ignora la
@@ -282,7 +296,8 @@ Para retrasar solo la emisión y dejar la grabación en directo, marca esa casil
 Avanzado).
 
 **La escena y los filtros del plugin tienen nombres nuevos. ¿Tengo que hacer algo?**
-Desde la v0.6.0 terminan en "(auto)" en vez de "(no tocar)": **Trigglow Delay Buffer (auto)**,
+Desde la v0.6.0 terminan en "(auto)" en vez de "(no tocar)" (la v1.0.0 añade **Trigglow Delay Scenes
+(auto)**, que guarda tus escenas con delay): **Trigglow Delay Buffer (auto)**,
 **Trigglow Buffer Mode Delay (auto)**, `Trigglow Audio Delay (auto) - <fuente>` y **Trigglow Delay
 Badge (auto)**. Tus colecciones de escenas se renombran solas. Solo tienes que actualizar las
 acciones de Stream Deck, obs-websocket u otro control remoto que usen esos objetos **por su

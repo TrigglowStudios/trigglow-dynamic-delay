@@ -784,6 +784,46 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 	AddFieldLock(liveSceneCombo_);
 	RefreshSceneCombo(liveSceneCombo_, bufferController_.GetStatus().liveSceneName, false);
 
+	// v1.0.0: more delayed scenes under the first one, each removable, and
+	// "Add scene". One buffer holds them all, so more scenes cost no more RAM.
+	extraScenesList_ = new QVBoxLayout();
+	extraScenesList_->setSpacing(5);
+	layout->addLayout(extraScenesList_);
+	addSceneButton_ = new QPushButton(T("Dock.Scene.Add"), card);
+	addSceneButton_->setProperty("tgVariant", QStringLiteral("secondary"));
+	addSceneButton_->setFocusPolicy(Qt::TabFocus);
+	addSceneButton_->setIconSize(kButtonIconBox);
+	addSceneButton_->setToolTip(T("Dock.Scene.Add.Tooltip"));
+	SetRole(addSceneButton_, "button", ui::FontRole::Button);
+	layout->addWidget(addSceneButton_);
+	connect(addSceneButton_, &QPushButton::clicked, this, [this] {
+		AddExtraSceneRow({});
+		RefreshDelayedScenes(bufferController_.GetStatus());
+		if (!extraSceneRows_.empty())
+			extraSceneRows_.back().combo->setFocus(Qt::TabFocusReason);
+	});
+	{
+		const std::vector<std::string> &saved = bufferController_.GetStatus().liveSceneNames;
+		for (size_t i = 1; i < saved.size(); ++i)
+			AddExtraSceneRow(saved[i]);
+	}
+
+	// While the delay runs, with two or more delayed scenes: one button each.
+	// The one pressed goes into the delay; viewers see the switch one delay
+	// later, never live.
+	switchBlock_ = new QWidget(card);
+	{
+		auto *switchLayout = new QVBoxLayout(switchBlock_);
+		switchLayout->setContentsMargins(0, 4, 0, 0);
+		switchLayout->setSpacing(5);
+		switchLayout->addWidget(MakeEyebrow(T("Dock.Scene.Switch"), nullptr, switchBlock_));
+		switchList_ = new QVBoxLayout();
+		switchList_->setSpacing(5);
+		switchLayout->addLayout(switchList_);
+	}
+	switchBlock_->setVisible(false);
+	layout->addWidget(switchBlock_);
+
 	layout->addSpacing(7);
 	loadingSceneCombo_ = new SceneComboBox(card);
 	loadingSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
@@ -822,12 +862,15 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 	// dock says what to do instead, while it runs.
 	sceneSwitchRow_ = MakeNoteRow(card, sceneSwitchIcon_, T("Dock.SceneSwitch.Note"));
 	layout->addWidget(sceneSwitchRow_);
+	for (QLabel *label : sceneSwitchRow_->findChildren<QLabel *>()) {
+		if (label != sceneSwitchIcon_)
+			sceneSwitchText_ = label;
+	}
 
 	for (QWidget *control : std::initializer_list<QWidget *>{liveSceneCombo_, loadingSceneCombo_})
 		GuardWheel(control);
-	connect(liveSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-		bufferController_.SetLiveScene(index < 0 ? std::string{}
-							 : liveSceneCombo_->currentText().toStdString());
+	connect(liveSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+		DelayedScenesChanged();
 		RefreshFitEstimate(); // Different scene = different resolution/fps to estimate against.
 	});
 	connect(loadingSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -835,6 +878,164 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 							     : loadingSceneCombo_->currentText().toStdString());
 	});
 	return card;
+}
+
+void TrigglowDelayDock::AddExtraSceneRow(const std::string &scene)
+{
+	QWidget *host = scenesSection_->body;
+	ExtraSceneRow r;
+	r.row = new QWidget(host);
+	auto *rowLayout = new QHBoxLayout(r.row);
+	rowLayout->setContentsMargins(0, 0, 0, 0);
+	rowLayout->setSpacing(6);
+	r.combo = new SceneComboBox(r.row);
+	r.combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	r.combo->setMinimumContentsLength(8);
+	r.combo->setPlaceholderText(T("Dock.Scene.Live.Placeholder"));
+	r.combo->setAccessibleName(T("Dock.Scene.Live"));
+	r.combo->setToolTip(T("Dock.Scene.Live.Tooltip"));
+	SceneComboBox *combo = r.combo;
+	r.combo->SetRefreshCallback([this, combo] {
+		RefreshSceneCombo(combo, combo->currentIndex() < 0 ? std::string{} : combo->currentText().toStdString(),
+				  false);
+	});
+	RefreshSceneCombo(r.combo, scene, false);
+	GuardWheel(r.combo);
+	AddFieldLock(r.combo);
+	if (themeApplied_) {
+		// Rows rebuilt after the theme was applied draw their lock now.
+		FieldIcon *lock = fieldLocks_.back().second;
+		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
+					       lock->devicePixelRatioF()));
+	}
+
+	r.remove = new QPushButton(r.row);
+	r.remove->setProperty("tgVariant", QStringLiteral("icon"));
+	r.remove->setFocusPolicy(Qt::TabFocus);
+	r.remove->setIconSize(QSize(kInlineIconSize, kInlineIconSize));
+	r.remove->setCursor(Qt::PointingHandCursor);
+	r.remove->setToolTip(T("Dock.Scene.Remove"));
+	r.remove->setAccessibleName(
+		T("Dock.Scene.RemoveName")
+			.arg(scene.empty() ? T("Dock.Scene.Live.Placeholder") : QString::fromStdString(scene)));
+	rowLayout->addWidget(r.combo, 1);
+	rowLayout->addWidget(r.remove, 0, Qt::AlignVCenter);
+	extraScenesList_->addWidget(r.row);
+
+	QWidget *row = r.row;
+	QPushButton *remove = r.remove;
+	connect(r.combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, combo, remove](int) {
+		remove->setAccessibleName(T("Dock.Scene.RemoveName").arg(combo->currentText()));
+		DelayedScenesChanged();
+	});
+	connect(r.remove, &QPushButton::clicked, this, [this, row] { RemoveExtraSceneRow(row); });
+	if (themeApplied_)
+		SetButtonIcon(r.remove, ui::IconId::Trash, ui::ToQColor(theme_.tokens.textMuted), Qt::AlignCenter);
+	extraSceneRows_.push_back(r);
+}
+
+void TrigglowDelayDock::RemoveExtraSceneRow(QWidget *row)
+{
+	auto it = std::find_if(extraSceneRows_.begin(), extraSceneRows_.end(),
+			       [row](const ExtraSceneRow &r) { return r.row == row; });
+	if (it == extraSceneRows_.end())
+		return;
+	SceneComboBox *combo = it->combo;
+	fieldLocks_.erase(std::remove_if(fieldLocks_.begin(), fieldLocks_.end(),
+					 [combo](const auto &entry) { return entry.first == combo; }),
+			  fieldLocks_.end());
+	const size_t index = static_cast<size_t>(it - extraSceneRows_.begin());
+	extraSceneRows_.erase(it);
+	row->hide();
+	row->deleteLater();
+	DelayedScenesChanged();
+	if (index < extraSceneRows_.size())
+		extraSceneRows_[index].remove->setFocus(Qt::TabFocusReason);
+	else if (addSceneButton_->isVisible())
+		addSceneButton_->setFocus(Qt::TabFocusReason);
+}
+
+void TrigglowDelayDock::DelayedScenesChanged()
+{
+	if (refreshing_ || detached_)
+		return;
+	std::vector<std::string> names;
+	if (liveSceneCombo_->currentIndex() >= 0)
+		names.push_back(liveSceneCombo_->currentText().toStdString());
+	for (const ExtraSceneRow &r : extraSceneRows_) {
+		if (r.combo->currentIndex() >= 0)
+			names.push_back(r.combo->currentText().toStdString());
+	}
+	bufferController_.SetLiveScenes(std::move(names));
+}
+
+void TrigglowDelayDock::RefreshDelayedScenes(const BufferModeStatus &status)
+{
+	const bool busy = status.state == BufferModeState::Filling || status.state == BufferModeState::Active;
+	const std::vector<std::string> &list = status.liveSceneNames;
+
+	// The rows follow the list when it changed elsewhere (the saved list
+	// restored, a duplicate dropped); a new row with no scene yet stays.
+	std::vector<std::string> rowNames;
+	for (const ExtraSceneRow &r : extraSceneRows_) {
+		if (r.combo->currentIndex() >= 0)
+			rowNames.push_back(r.combo->currentText().toStdString());
+	}
+	const std::vector<std::string> tail(list.size() > 1 ? list.begin() + 1 : list.end(), list.end());
+	if (rowNames != tail) {
+		for (const ExtraSceneRow &r : extraSceneRows_) {
+			SceneComboBox *combo = r.combo;
+			fieldLocks_.erase(std::remove_if(fieldLocks_.begin(), fieldLocks_.end(),
+							 [combo](const auto &entry) { return entry.first == combo; }),
+					  fieldLocks_.end());
+			r.row->hide();
+			r.row->deleteLater();
+		}
+		extraSceneRows_.clear();
+		for (const std::string &name : tail)
+			AddExtraSceneRow(name);
+	}
+	for (const ExtraSceneRow &r : extraSceneRows_) {
+		r.combo->setEnabled(!busy);
+		r.remove->setVisible(!busy);
+	}
+	addSceneButton_->setVisible(!busy && !status.liveSceneName.empty() &&
+				    1 + extraSceneRows_.size() < BufferModeController::kMaxDelayedScenes);
+
+	// The switch buttons, rebuilt when the list changed.
+	if (switchNames_ != list) {
+		for (QPushButton *button : switchButtons_) {
+			button->hide();
+			button->deleteLater();
+		}
+		switchButtons_.clear();
+		for (const std::string &name : list) {
+			const QString text = QString::fromStdString(name);
+			auto *button = new QPushButton(switchBlock_);
+			button->setProperty("tgVariant", QStringLiteral("chip"));
+			button->setFocusPolicy(Qt::TabFocus);
+			button->setCursor(Qt::PointingHandCursor);
+			button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+			button->setText(button->fontMetrics().elidedText(text, Qt::ElideRight, 220));
+			button->setToolTip(T("Dock.Scene.Switch.Tooltip").arg(text));
+			button->setAccessibleName(T("Dock.Scene.Switch.Name").arg(text));
+			SetRole(button, "chip", ui::FontRole::Chip);
+			connect(button, &QPushButton::clicked, this,
+				[this, name] { bufferController_.SelectDelayedScene(name); });
+			switchList_->addWidget(button);
+			switchButtons_.push_back(button);
+		}
+		switchNames_ = list;
+	}
+	for (size_t i = 0; i < switchButtons_.size() && i < list.size(); ++i) {
+		const bool selected = list[i] == status.selectedSceneName;
+		ui::SetStyleProperty(switchButtons_[i], "tgActive",
+				     selected ? QStringLiteral("true") : QStringLiteral("false"));
+		switchButtons_[i]->setAccessibleDescription(selected ? T("Dock.Scene.Switch.Selected") : QString());
+	}
+	switchBlock_->setVisible(busy && list.size() >= 2);
+	if (sceneSwitchText_)
+		sceneSwitchText_->setText(T(list.size() >= 2 ? "Dock.SceneSwitch.NoteMulti" : "Dock.SceneSwitch.Note"));
 }
 
 TrigglowDelayDock::Section *TrigglowDelayDock::AddSection(QVBoxLayout *parent, const QString &title, bool open)
@@ -1322,6 +1523,9 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetButtonIcon(dumpButton_, ui::IconId::Scissors, ui::ToQColor(t.text));
 	SetButtonIcon(cutButton_, ui::IconId::X, ui::ToQColor(t.text));
 	SetButtonIcon(addRule_, ui::IconId::Plus, ui::ToQColor(t.text));
+	SetButtonIcon(addSceneButton_, ui::IconId::Plus, ui::ToQColor(t.text));
+	for (const ExtraSceneRow &row : extraSceneRows_)
+		SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(t.textMuted), Qt::AlignCenter);
 	for (const std::unique_ptr<Section> &section : sections_)
 		SetSectionOpen(*section, section->open);
 	for (const RuleRow &row : ruleRows_)
@@ -1604,6 +1808,8 @@ void TrigglowDelayDock::RefreshSceneStatus(const BufferModeStatus &status)
 
 void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 {
+	// v1.0.0: the delayed scenes' rows first, so the locks below cover them.
+	RefreshDelayedScenes(status);
 	// Scenes and quality are locked while the delay runs (a disabled control
 	// is also out of the tab order): no arrows, the card's background and a
 	// lock inside each (ui-theme.cpp, tgLocked), and the line under the
@@ -1640,7 +1846,10 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 			: loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
 	loadingSceneCombo_->setCurrentIndex(loadingIndex >= 0 ? loadingIndex : 0);
 
-	SetSectionSummary(*scenesSection_, liveIndex >= 0 ? liveName : QString());
+	QString summary = liveIndex >= 0 ? liveName : QString();
+	if (!summary.isEmpty() && status.liveSceneNames.size() > 1)
+		summary += QStringLiteral(" +%1").arg(status.liveSceneNames.size() - 1);
+	SetSectionSummary(*scenesSection_, summary);
 	// The live scene is required: folded without one, the section opens so
 	// the picker is in sight.
 	if (liveIndex < 0 && !busy && !scenesSection_->open)

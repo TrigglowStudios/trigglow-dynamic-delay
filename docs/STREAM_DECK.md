@@ -79,6 +79,7 @@ needed, `requestData`:
 | `AdjustDelay` | `{"delta": -5}` | adds the seconds (negative lowers them), same ranges |
 | `DumpDelay` | — | stream mode: the seconds viewers haven't seen are never sent; `dumped` is false when there was nothing to drop (delay off, not streaming, or scene mode) |
 | `ApplyPreset` | `{"index": 0}` | preset 1 (`0`), 2 (`1`) or 3 (`2`): its seconds, delay on. Same in scene mode |
+| `SetDelayedScene` | `{"sceneName": "Chat"}` or `{"slot": 2}` | all of OBS (v1.0.0), delay on: puts that delayed scene in the delay; viewers see the switch when the delay catches up. `selected` is false when the delay is off or the scene isn't one of the delayed scenes |
 
 Every answer's `responseData` has `ok: true` and the status:
 
@@ -91,7 +92,10 @@ Every answer's `responseData` has `ok: true` and the status:
 | `appliedSeconds` | what viewers get now (0 when live) |
 | `behindSeconds` | stream mode: how old what the relay sends is, to 0.1 s |
 | `ramMegabytes` | stream mode: the RAM kept, to 0.1 MB |
+| `delayedScenes` | all of OBS's delayed scenes, `[{"sceneName": "..."}]`, in the dock's order |
+| `delayedScene` | the one in the delay now (empty while the delay is off) |
 | `dumped` | only in `DumpDelay`'s answer |
+| `selected` | only in `SetDelayedScene`'s answer |
 
 The plugin also emits the vendor event **`StatusChanged`** (subscribe to vendor events) with
 `mode`, `state`, `delayOn`, `delaySeconds` and `appliedSeconds`, only when one of them changes.

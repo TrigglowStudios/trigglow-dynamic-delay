@@ -3,7 +3,7 @@
 # Technical specification — Trigglow Dynamic Delay for OBS
 
 Status: **v1.0.0 — stable on Windows; macOS and Linux in alpha**
-Last updated: 2026-11-12 (v1.0.0: §3.11, scene mode verified end to end; 2026-11-11: §1, §3.8, §8; stream mode has its own document,
+Last updated: 2026-11-13 (v1.0.0: §3.12, several delayed scenes in one buffer; 2026-11-12: §3.11, scene mode verified end to end; 2026-11-11: §1, §3.8, §8; stream mode has its own document,
 `docs/STREAM_MODE.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
 scratch on 2026-08-26 — see §0). A v0.5.1 hotfix was prepared but never published; everything in it
 shipped in v0.6.0, so this document dates those changes v0.6.0.
@@ -349,7 +349,8 @@ Known limitation: the plugin doesn't watch Program while the delay is `Active`. 
 sits on the live scene's own source (the wrapper nests it), so the live scene shown directly is still
 delayed, but any other scene the user (or a Stream Deck/obs-websocket action) switches Program to is
 streamed live. Since v1.0.0 the dock says so while the delay runs (`Dock.SceneSwitch.Note`):
-switching scenes while delayed needs stream mode. §3.9 explains why scene mode doesn't do it in 1.0.
+switching scenes while delayed needs stream mode, or (v1.0.0, §3.12) adding the scene to the delayed
+scenes.
 
 ### 3.4. Freeing the RAM ring on Disable
 
@@ -801,7 +802,9 @@ Program scene in Preview, groups, and the cost of a filter per scene. A multi-we
 own testing, not something to rush into 1.0.
 
 For 1.0 the dock shows `Dock.SceneSwitch.Note` while the delay runs: keep the delayed view on
-Program, and use stream mode to switch scenes while delayed.
+Program, and use stream mode to switch scenes while delayed. **Superseded in 1.0.0 by §3.12**:
+switching among a list of delayed scenes kept in one buffer, which needs neither a filter per scene
+nor Program to leave the wrapper.
 
 ### 3.10. v1.0.0: delays up to 600 s, and their RAM
 
@@ -930,6 +933,69 @@ on, and a filter outside the live scene stays off.
 
 **Not verified:** macOS and Linux; the NVIDIA and Intel storage codecs; 600 s at 1080p60 from a fresh
 Enable (the 600 s at 60 fps came from a live raise); Studio Mode; a real platform's ingest.
+
+### 3.12. v1.0.0: several delayed scenes, one buffer
+
+Scene mode delays a list of scenes (up to `BufferModeController::kMaxDelayedScenes`, 8), not one
+live scene, and the streamer switches between them while the delay runs. It sidesteps the three
+problems of §3.9 by never letting Program leave the wrapper for a switch:
+
+- **One buffer.** The delayed scenes are items of one helper scene, `autonames::kDelayedScenes`
+  ("Trigglow Delay Scenes (auto)"), which the wrapper holds instead of the live scene. The video
+  filter sits on that holder (`ObsFrontendBridge::EnsureDelayedScenes()`, then
+  `EnsureBufferWrapperScene(kDelayedScenes)`); every bridge call about the buffer names the holder,
+  never a streamer's scene. RAM is the same with 1 or 8 scenes; the fit estimate takes the first
+  scene's size and the audio sources of all of them (`EstimateBufferFit(scenes, …)`).
+- **A switch moves items.** All items stay visible, so all their sources stay in OBS's active tree
+  (`libobs/obs-scene.c`: `scene_enum_active_sources()` follows `active_refs`, which only visibility
+  changes; position doesn't). The scene in the delay sits at 0,0; the others at two canvas widths
+  to the right, outside the holder's frame. `SelectDelayedScene()` moves them: the new picture
+  enters the ring at the next frame and comes out one delay later. Program never changes, so
+  nothing reaches channel 0 undelayed.
+- **Audio gates on the input side.** Each audio filter has a gate (`set_gate_open`,
+  `AudioDelayLine::WriteGated()`): closed, its source's samples go into the delay as silence. The
+  sources of the scene in the delay are open (shared ones, like a mic in two scenes, and the global
+  Desktop/Mic channels stay open, continuous); the rest are closed. A switch at T flips them at T:
+  the old scene's sound plays out what it already holds until T + delay, then stops; the new one's
+  starts at T + delay with its sound from T. Picture and sound switch together, and nothing hidden
+  before the switch is heard after it (§3.9, point 3).
+- **Ways to switch.** The dock's buttons (while Filling/Active, two or more scenes), the hotkeys
+  `trigglow_dynamic_delay.scene1`..`scene8`, obs-websocket's `SetDelayedScene` (`sceneName` or
+  1-based `slot`; `GetStatus` lists `delayedScenes` and `delayedScene`) and the Stream Deck through
+  it. A delayed scene picked in OBS's own scene list is caught on `OBS_FRONTEND_EVENT_SCENE_CHANGED`
+  (`FrontendEvent::SceneChanged`), put in the delay and Program sent back to the wrapper (the
+  loading scene while Filling) -- but that event comes when the transition has ended, so the scene
+  was live for the transition: logged once per cycle, and the dock and the docs say to use the other
+  ways. A scene not in the list is left on Program, as before.
+- **Settings.** `live_scenes` (an array of `{"name"}`) next to `live_scene` (the first, for older
+  builds); a file without it reads `live_scene`. The list is locked while the delay runs. Enable
+  starts with the scene on Program if it's in the list, the first one otherwise; Disable from the
+  delayed view shows the scene that was in the delay, live.
+- **Migration.** Earlier versions put the video filter on the live scene itself and the scene in the
+  wrapper. On Enable, `RemoveStrayBufferFilters()` removes a switched-off video filter from any
+  scene but the holder, and the wrapper's previous live scene item goes with its filter.
+
+**Cost.** The scenes not in the delay keep rendering off the canvas (GPU, every frame) and their
+sources keep running (a media source doesn't restart when its scene is switched to; a browser
+source keeps its page). They're silent in the delay, not on OBS's own meters.
+
+**Verified 2026-11-13** in the official OBS 33.0.1 portable build (`--portable --multi`, its own
+websocket port, the plugin built with `TRIGGLOW_TEST_SKIP_ACCOUNT_GATE`), 720p30, a 5 s delay. Game
+(red, a 440 Hz tone, a shared 3 kHz tone) and Chat (blue, 1 kHz, the shared tone) delayed, Other
+(green) not. The collection started as an earlier version leaves it: Game in the wrapper with the
+video filter on it. The delayed view was sampled from the wrapper 20 times a second; sound from
+obs-websocket's `InputVolumeMeters`. Run twice, the second after a restart on the saved collection:
+
+| Check | Measured | Result |
+|---|---|---|
+| Migration | The filter left on Game removed, Game out of the wrapper; the wrapper holds the holder, the holder Game (0,0) and Chat (2624,0); one video filter, on the holder; none on Game or Chat | Pass |
+| Switch from obs-websocket (Game to Chat) | Delayed view red until 4.97 s, blue from 5.02 s (both runs) | Pass |
+| Sound with it | Game's tone silent 5.17 / 5.07 s after, Chat's heard 5.10 / 4.97 s after (meter events every ~50 ms); before: Game 76/76 samples, Chat 0/76; after: Game 0/40, Chat 40/40; the shared tone 129/129 throughout | Pass |
+| Picked in OBS's scene list (Game, Fade 300 ms) | Program back on the wrapper; delayed view red 5.33 / 5.38 s after the click (the 300 ms transition, shown live, then the delay) | Pass, with the documented leak |
+| A scene not in the list (Other) | Left on Program, the delay unchanged | Pass |
+| Hotkey `scene2` | Chat in the delay | Pass |
+| Disable | Program on Chat (the scene in the delay), live; gates open, audio filters off | Pass |
+| Saved and restarted | `live_scenes` [Game, Chat] saved and read back; the holder found, not created again | Pass |
 
 ## 4. v0.3.0: real MJPEG compression of the RAM ring
 

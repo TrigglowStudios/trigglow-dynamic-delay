@@ -181,6 +181,18 @@ void TestDefaultLoadingScene()
 	CHECK(IsDefaultLoadingSceneName(kDefaultLoadingScene));
 	CHECK(!IsDefaultLoadingSceneName(kWrapperScene));
 	CHECK(!IsDefaultLoadingSceneName("Gameplay"));
+
+	// v1.0.0: the delayed scenes' holder, and every helper scene at once.
+	CHECK(IsDelayedScenesName(kDelayedScenes));
+	CHECK(!IsDelayedScenesName(kWrapperScene));
+	CHECK(!IsDelayedScenesName("Gameplay"));
+	CHECK(LookupNames(Kind::DelayedScenes) == std::vector<std::string>{kDelayedScenes});
+	CHECK(IsHelperSceneName(kWrapperScene));
+	CHECK(IsHelperSceneName("Trigglow Delay Buffer (no tocar)"));
+	CHECK(IsHelperSceneName(kDelayedScenes));
+	CHECK(IsHelperSceneName(kDefaultLoadingScene));
+	CHECK(!IsHelperSceneName("Gameplay"));
+	CHECK(!IsHelperSceneName(""));
 	CHECK(!IsDefaultLoadingSceneName("Trigglow Delay Loading (auto) 2"));
 	CHECK(!IsWrapperSceneName(kDefaultLoadingScene));
 	// Spanish for any "es" locale, English for everything else.

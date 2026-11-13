@@ -93,6 +93,13 @@ private:
 	// Defaults button or obs-websocket can't put audio out of step with the
 	// video. Applies on the caller's thread.
 	static void SetManagedDelaySecondsProc(void *data, calldata_t *params);
+	// v1.0.0, several delayed scenes: "set_gate_open(in bool open)". Closed,
+	// the source's audio goes into the delay as silence (AudioDelayLine::
+	// WriteGated), so it stops one delay later, when the delayed video leaves
+	// the scene it belongs to. ObsFrontendBridge::SetAudioDelayGates() opens
+	// the sources of the scene viewers see and closes the rest. Open by
+	// default; not saved.
+	static void SetGateOpenProc(void *data, calldata_t *params);
 
 	obs_source_t *filterSource_; // Not owned; valid for this object's lifetime.
 	// Written by Update() (UI thread), read by FilterAudio() (audio thread).
@@ -107,6 +114,8 @@ private:
 	// Bumped by Update() whenever the "reset_token" setting changes (the
 	// bridge does this on every Enable); consumed by the audio thread.
 	std::atomic<bool> resetRequested_{false};
+	// See SetGateOpenProc(). Written on the UI thread, read on the audio thread.
+	std::atomic<bool> gateOpen_{true};
 	int64_t lastResetToken_ = 0;
 
 	// Timestamp (ns) at which the next chunk is expected to start if the

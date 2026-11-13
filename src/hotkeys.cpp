@@ -44,6 +44,14 @@ constexpr HotkeyDef kHotkeys[] = {
 	{DelayHotkeys::Action::Preset1, "trigglow_dynamic_delay.preset1", "Hotkey.Preset1"},
 	{DelayHotkeys::Action::Preset2, "trigglow_dynamic_delay.preset2", "Hotkey.Preset2"},
 	{DelayHotkeys::Action::Preset3, "trigglow_dynamic_delay.preset3", "Hotkey.Preset3"},
+	{DelayHotkeys::Action::Scene1, "trigglow_dynamic_delay.scene1", "Hotkey.Scene1"},
+	{DelayHotkeys::Action::Scene2, "trigglow_dynamic_delay.scene2", "Hotkey.Scene2"},
+	{DelayHotkeys::Action::Scene3, "trigglow_dynamic_delay.scene3", "Hotkey.Scene3"},
+	{DelayHotkeys::Action::Scene4, "trigglow_dynamic_delay.scene4", "Hotkey.Scene4"},
+	{DelayHotkeys::Action::Scene5, "trigglow_dynamic_delay.scene5", "Hotkey.Scene5"},
+	{DelayHotkeys::Action::Scene6, "trigglow_dynamic_delay.scene6", "Hotkey.Scene6"},
+	{DelayHotkeys::Action::Scene7, "trigglow_dynamic_delay.scene7", "Hotkey.Scene7"},
+	{DelayHotkeys::Action::Scene8, "trigglow_dynamic_delay.scene8", "Hotkey.Scene8"},
 };
 } // namespace
 
@@ -122,6 +130,16 @@ void DelayHotkeys::RunOnUiThread(void *param)
 		break;
 	case Action::Preset3:
 		router.ApplyPreset(2);
+		break;
+	case Action::Scene1:
+	case Action::Scene2:
+	case Action::Scene3:
+	case Action::Scene4:
+	case Action::Scene5:
+	case Action::Scene6:
+	case Action::Scene7:
+	case Action::Scene8:
+		router.SelectDelayedSceneSlot(static_cast<size_t>(b->action) - static_cast<size_t>(Action::Scene1));
 		break;
 	case Action::Count:
 		break;
