@@ -23,7 +23,7 @@ helper scene, **Trigglow Delay Scenes (auto)**, and the delay buffers that one, 
 and the same RAM** however many you add. The scene in the delay sits on the canvas and the others
 just off it, still running (a little GPU, and their sources keep playing, silenced in the delay).
 While the delay is on, switch with the dock's buttons, the hotkeys "Delayed scene 1" to "8",
-obs-websocket's `SetDelayedScene` or the Stream Deck: the new scene enters the buffer at once and
+or obs-websocket's `SetDelayedScene`: the new scene enters the buffer at once and
 viewers see it when the delay catches up, with its sound; the previous scene's sound stops at the
 same moment. Picking a delayed scene in OBS's own scene list also works, but OBS has already shown
 it live for its transition by the time the plugin takes it back, so use the others while you're

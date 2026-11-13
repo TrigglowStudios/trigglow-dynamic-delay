@@ -23,7 +23,7 @@ sign-in are kept.
   "Report a problem" sit at the bottom of the panel.
 - **Several delayed scenes, one buffer.** In all of OBS, add up to 8 scenes under **Delayed
   scenes** (Add scene). With the delay on, switch between them from the dock's buttons, the new
-  hotkeys "Delayed scene 1" to "8", obs-websocket (`SetDelayedScene`) or the Stream Deck: viewers
+  hotkeys "Delayed scene 1" to "8", or obs-websocket (`SetDelayedScene`): viewers
   see the switch when the delay catches up, picture and sound together, never live. They all share
   the one buffer, so more scenes take no more RAM (the scenes not on screen keep rendering off the
   canvas, a little GPU). Picking one in OBS's own scene list works too, but OBS shows its transition

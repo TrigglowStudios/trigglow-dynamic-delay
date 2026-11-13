@@ -22,7 +22,7 @@ shows (if you choose none, a Trigglow "Adding delay" video); then Program shows 
 so **your stream and your recording are both delayed**. The seconds change live, and the streaming
 output is never touched, so it works with any output and any service. Your delayed scenes (up to
 8, one buffer for all of them) are what's delayed: switch between them from the dock, the hotkeys or
-the Stream Deck while the delay is on; any other scene shows live. It costs more RAM and CPU (table
+obs-websocket while the delay is on; any other scene shows live. It costs more RAM and CPU (table
 below).
 Details: `docs/SPEC.md`.
 
@@ -329,7 +329,7 @@ are at the bottom.
 3. Change the seconds while it's on: lowering them skips forward at once; raising them holds the
    picture for up to 3 s, and shows the loading scene for the extra seconds only above that.
 4. Keep the delayed view on Program and switch between your delayed scenes with the dock's buttons
-   (they show while the delay is on), the hotkeys "Delayed scene 1" to "8" or the Stream Deck:
+   (they show while the delay is on), the hotkeys "Delayed scene 1" to "8" or obs-websocket:
    viewers see the switch when the delay catches up, picture and sound together. Picking a delayed
    scene in OBS's own scene list works too, but OBS shows its transition live for a moment first. A
    scene that isn't one of them shows without delay; to switch to any scene freely, use only the

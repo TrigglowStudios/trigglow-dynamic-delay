@@ -24,7 +24,7 @@ inicio de sesión se mantienen.
   panel.
 - **Varias escenas con delay, un solo búfer.** En todo OBS, añade hasta 8 escenas en **Escenas con
   delay** (Añadir escena). Con el delay activo, cambia entre ellas con los botones del dock, los
-  atajos nuevos "Escena con delay 1" a "8", obs-websocket (`SetDelayedScene`) o el Stream Deck: tu
+  atajos nuevos "Escena con delay 1" a "8", u obs-websocket (`SetDelayedScene`): tu
   audiencia ve el cambio cuando el delay llega a él, imagen y sonido juntos, nunca en directo.
   Todas comparten el mismo búfer, así que más escenas no gastan más RAM (las que no están en
   pantalla siguen renderizándose fuera del lienzo, algo de GPU). También puedes elegirlas en la
