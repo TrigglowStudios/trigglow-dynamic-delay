@@ -545,8 +545,10 @@ void AlignSharedSettings(trigglow::BufferModeController &scene, trigglow::Stream
 // Local test builds only (CMake refuses the option in CI): with
 // TRIGGLOW_TEST_DOCK_SHOTS=<folder> in OBS's environment, the plugin polls
 // <folder>/request.txt, runs its lines, then renames it to request.done:
-//   shot <name> <width> [open]  the dock rendered offscreen to <name>.png
-//                               (RenderForTest(); "open": sections open)
+//   shot <name> <width> [open|closed] [height]
+//                               the dock rendered offscreen to <name>.png
+//                               (RenderForTest(); "open": sections open;
+//                               height: at least that tall)
 //   apply all|stream            what the delay applies to
 //   enable | disable            through the router, like a hotkey
 //   delay <seconds>             through the router
@@ -582,7 +584,8 @@ void StartDockShots()
 			TRIGGLOW_LOG_INFO(kComponent, "test request: %s", line.trimmed().toUtf8().constData());
 			if (w[0] == QLatin1String("shot") && w.size() >= 3) {
 				const QImage image = g_state->dock->RenderForTest(
-					w[2].toInt(), w.size() > 3 && w[3] == QLatin1String("open"));
+					w[2].toInt(), w.size() > 3 && w[3] == QLatin1String("open"),
+					w.size() > 4 ? w[4].toInt() : 0);
 				image.save(folder + QLatin1Char('/') + w[1] + QStringLiteral(".png"));
 			} else if (w[0] == QLatin1String("apply") && w.size() >= 2) {
 				g_state->streamController->SetApplyTo(w[1] == QLatin1String("stream")
