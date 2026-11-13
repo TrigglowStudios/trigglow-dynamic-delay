@@ -313,6 +313,21 @@ bool LoadBufferSettings(trigglow::BufferModeController &controller)
 				loadingScene ? loadingScene : "", showOverlay,
 				static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")), bufferOutputCap,
 				codecWorkers, bufferCodecAuto);
+	// v1.0.0: the delayed scenes ("live_scenes"), live_scene being the first;
+	// a file from an earlier version has live_scene only.
+	if (obs_data_array_t *scenes = obs_data_get_array(data, "live_scenes")) {
+		std::vector<std::string> names;
+		for (size_t i = 0; i < obs_data_array_count(scenes); ++i) {
+			obs_data_t *item = obs_data_array_item(scenes, i);
+			const char *name = obs_data_get_string(item, "name");
+			if (name && *name)
+				names.emplace_back(name);
+			obs_data_release(item);
+		}
+		obs_data_array_release(scenes);
+		if (!names.empty())
+			controller.SetLiveScenes(std::move(names));
+	}
 
 	TRIGGLOW_LOG_INFO(kComponent,
 			  "settings loaded (delay=%us, min_res=%up, live=\"%s\", loading=\"%s\", output_cap=%s, "
@@ -341,6 +356,15 @@ void SaveBufferSettings(const trigglow::BufferModeController &controller)
 	obs_data_set_int(data, "delay_seconds", snapshot.delaySeconds);
 	obs_data_set_int(data, "min_resolution_height", snapshot.minResolutionHeight);
 	obs_data_set_string(data, "live_scene", snapshot.liveSceneName.c_str());
+	obs_data_array_t *scenes = obs_data_array_create();
+	for (const std::string &name : snapshot.liveSceneNames) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "name", name.c_str());
+		obs_data_array_push_back(scenes, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "live_scenes", scenes);
+	obs_data_array_release(scenes);
 	obs_data_set_string(data, "loading_scene", snapshot.loadingSceneName.c_str());
 	obs_data_set_bool(data, "show_overlay", snapshot.showOverlay);
 	obs_data_set_int(data, "overlay_corner", snapshot.overlayCorner);

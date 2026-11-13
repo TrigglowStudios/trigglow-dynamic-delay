@@ -21,8 +21,9 @@ macOS) y la reproduce de 1 a 600 s más tarde en una escena auxiliar. Mientras s
 muestra tu escena de carga (si no eliges ninguna, un vídeo de Trigglow "Poniendo delay"); después el
 Programa muestra la escena con delay, así que **tu directo y tu grabación van los dos con delay**.
 Los segundos cambian en directo y el output de streaming no se toca nunca, así que funciona con
-cualquier salida y cualquier servicio. Solo va con delay tu escena en directo: déjala en el Programa
-mientras el delay está activo. Gasta más RAM y CPU (tabla de abajo). Detalles: `docs/SPEC-es.md`.
+cualquier salida y cualquier servicio. Lo que va con delay son tus escenas con delay (hasta 8, un
+solo búfer para todas): cambia entre ellas desde el dock, los atajos o el Stream Deck con el delay
+activo; cualquier otra escena se ve en directo. Gasta más RAM y CPU (tabla de abajo). Detalles: `docs/SPEC-es.md`.
 
 **Solo a la emisión (avanzado: "Aplicar el delay solo a la emisión (la grabación y la vista previa
 no se retrasan)", Windows).** El modo stream, nuevo en la 1.0.0: el plugin guarda el stream que OBS
@@ -59,7 +60,7 @@ Stream Deck.
 ```
 A todo OBS (por defecto, modo escena, todas las plataformas)
 
-  escena en directo -> filtros de delay de vídeo/audio -> ring en RAM (HEVC o MJPEG) -> escena auxiliar
+    escenas con delay -> filtros de delay de vídeo/audio -> ring en RAM (HEVC o MJPEG) -> escena auxiliar
                     -> Programa de OBS -> encoders de OBS -> tu servicio y tu grabación
                        (el output no se toca)
 
@@ -322,8 +323,8 @@ versión y **Reportar un problema** están abajo del todo.
 
 ### A todo OBS (por defecto; todas las plataformas)
 
-1. Elige tu **escena en directo** (obligatoria — la escena con tu contenido real) y,
-   opcionalmente, una **escena de carga** para mostrar mientras se acumula el delay en vez de
+1. Elige tus **escenas con delay** (la primera es obligatoria — las escenas con tu contenido real;
+   **Añadir escena** para tener hasta 8) y, opcionalmente, una **escena de carga** para mostrar mientras se acumula el delay en vez de
    quedarte en la escena en directo sin delay (si no eliges ninguna, sale un vídeo de Trigglow
    "Poniendo delay": "Trigglow (por defecto)" en el selector). Pon el **Delay** (1-600 s) y, en
    Opciones, la **calidad mínima** (480p, 720p, 1080p, 1440p (2K) o 2160p (4K)) por debajo de la
@@ -342,15 +343,19 @@ versión y **Reportar un problema** están abajo del todo.
 3. Cambia los segundos con el delay activo: al bajarlos se salta hacia delante al momento; al
    subirlos la imagen se congela hasta 3 s, y por encima de eso se ve la escena de carga solo
    durante los segundos de más.
-4. Deja la vista con delay en el Programa: solo va con delay tu escena en directo, así que poner
-   otra escena en el Programa la mostraría sin delay. Para cambiar de escena libremente, usa solo a
-   la emisión.
+4. Deja la vista con delay en el Programa y cambia entre tus escenas con delay con los botones del
+   dock (salen con el delay activo), los atajos "Escena con delay 1" a "8" o el Stream Deck: tu
+   audiencia ve el cambio cuando el delay llega a él, imagen y sonido juntos. También puedes elegir
+   una escena con delay en la lista de escenas de OBS, pero OBS muestra antes su transición sin
+   delay un momento. Una escena que no es de ellas se ve sin delay; para cambiar a cualquier escena
+   libremente, usa solo a la emisión.
 
-**Desactivar delay** libera el buffer de RAM al instante y vuelve a la escena que estaba antes de
-activarlo.
+**Desactivar delay** libera el buffer de RAM al instante y muestra en directo la escena que estaba
+en el delay (si lo desactivas mientras aún se prepara, la escena que estaba antes de activarlo).
 
-A todo OBS gestiona por su cuenta unos pocos objetos de tu colección de escenas: la escena
-**Trigglow Delay Buffer (auto)**, los filtros **Trigglow Buffer Mode Delay (auto)** y `Trigglow
+A todo OBS gestiona por su cuenta unos pocos objetos de tu colección de escenas: las escenas
+**Trigglow Delay Buffer (auto)** y **Trigglow Delay Scenes (auto)** (guarda tus escenas con delay;
+el filtro de vídeo va en ella), los filtros **Trigglow Buffer Mode Delay (auto)** y `Trigglow
 Audio Delay (auto) - <fuente>`, la imagen de la insignia **Trigglow Delay Badge (auto)** y, si no
 eliges escena de carga, la escena **Trigglow Delay Loading (auto)**. La insignia la puedes mover o
 escalar en OBS y se queda donde la pongas; los demás no los renombres ni los borres. Solo a la
@@ -401,6 +406,7 @@ En `Ajustes → Atajos`, busca "Trigglow". Manejan el modo elegido en el dock, y
 | Trigglow: Delay +5 s / Delay -5 s *(nuevos)* | cambia el delay en directo (1-600) | cambia el delay en directo (1-600) |
 | Trigglow: Borrar lo que aún no se ha emitido *(nuevo)* | nada | borra |
 | Trigglow: Preset de delay 1 / 2 / 3 *(nuevos)* | los segundos del preset, con el delay activado | los segundos del preset, con el delay activado |
+| Trigglow: Escena con delay 1 ... 8 *(nuevos)* | pone esa escena con delay (en el orden del dock) en el delay | nada |
 
 Los tres atajos originales mantienen su nombre interno, así que las teclas que ya tenías asignadas
 se conservan. Con OBS en inglés se llaman "Trigglow: Toggle Dynamic Delay", "Trigglow: Enable
@@ -421,12 +427,14 @@ y uno de estos `requestType`:
 | `AdjustDelay` | `{"delta": N}` | suma N segundos (en negativo, los baja) |
 | `DumpDelay` | — | borra lo que aún no se ha emitido (solo a la emisión); `dumped` dice si había algo que descartar |
 | `ApplyPreset` | `{"index": 0-2}` | preset 1-3 |
+| `SetDelayedScene` | `{"sceneName": "..."}` o `{"slot": 1-8}` | todo OBS, con el delay activo: pone esa escena con delay en el delay; `selected` dice si lo hizo |
 
-Las peticiones van al modo elegido en el dock. Cada respuesta lleva `ok` y el estado: `mode`
+Las peticiones van al modo elegido en el dock (`SetDelayedScene`, siempre a todo OBS). Cada respuesta lleva `ok` y el estado: `mode`
 (`scene` para todo OBS, `stream` para solo a la emisión), `state` (modo stream: `idle`,
 `live`, `delayed`, `draining`; modo escena: `inactive`, `filling`, `active`, `error`), `delayOn`,
 `delaySeconds`, `appliedSeconds` (lo que reciben ahora los espectadores, 0 en directo),
-`behindSeconds` y `ramMegabytes` (modo stream). El evento del vendor **`StatusChanged`** lleva los
+`behindSeconds` y `ramMegabytes` (modo stream), `delayedScenes` (`[{"sceneName"}]`, la lista de todo
+OBS) y `delayedScene` (la que está en el delay, vacío si está desactivado). El evento del vendor **`StatusChanged`** lleva los
 mismos campos salvo `behindSeconds` y `ramMegabytes`, y se envía cuando cambia alguno de ellos.
 
 ## Mapear un botón de Stream Deck
@@ -572,7 +580,7 @@ src/
                                      de red: WinHTTP en Windows, libcurl en macOS y Linux
   i18n.hpp                         → helper Str() (obs_module_text()) — todo el texto visible de
                                      este plugin pasa por aquí; ver data/locale/*.ini
-  hotkeys.{hpp,cpp}                → registro de los 10 atajos nativos de OBS, a través de
+  hotkeys.{hpp,cpp}                → registro de los 18 atajos nativos de OBS, a través de
                                      DelayRouter
   logging.{hpp,cpp}                → wrapper de logging con prefijo de componente
   delay-controller.{hpp,cpp}       → lógica heredada del modo reconexión del diseño original

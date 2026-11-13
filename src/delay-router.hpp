@@ -32,6 +32,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace trigglow {
 
@@ -43,6 +44,10 @@ struct RouterStatus {
 	uint32_t appliedSeconds = 0; // What viewers get right now (0 when live).
 	double behindSeconds = 0.0;  // Stream mode: age of what the main destination sends.
 	double ramMegabytes = 0.0;   // Stream mode: the packet history.
+	// v1.0.0, all of OBS: the delayed scenes (in the dock's order) and, while
+	// the delay runs, the one viewers see. Filled in either mode.
+	std::vector<std::string> delayedScenes;
+	std::string delayedScene;
 };
 
 // One delay mode as the router sees it.
@@ -58,6 +63,10 @@ public:
 	virtual bool Dump() = 0;
 	virtual void ApplyPreset(int index) = 0;
 	virtual RouterStatus Status() const = 0;
+	// v1.0.0: all of OBS only: put one of the delayed scenes in the delay
+	// (by name, or by 0-based position). False when there's nothing to do.
+	virtual bool SelectDelayedScene(const std::string & /*sceneName*/) { return false; }
+	virtual bool SelectDelayedSceneSlot(size_t /*slot*/) { return false; }
 };
 
 class DelayRouter {
@@ -84,7 +93,20 @@ public:
 	bool Dump() { return Active().Dump(); }
 	// Preset 0-2: its seconds, delay on.
 	void ApplyPreset(int index) { Active().ApplyPreset(index); }
-	RouterStatus Status() const { return streamSelected_() ? stream_.Status() : all_.Status(); }
+	RouterStatus Status() const
+	{
+		RouterStatus out = streamSelected_() ? stream_.Status() : all_.Status();
+		if (streamSelected_()) {
+			RouterStatus scene = all_.Status();
+			out.delayedScenes = std::move(scene.delayedScenes);
+			out.delayedScene = std::move(scene.delayedScene);
+		}
+		return out;
+	}
+	// v1.0.0: the delayed scenes belong to all of OBS whatever is selected
+	// (only it has them; it does nothing while its delay is off).
+	bool SelectDelayedScene(const std::string &sceneName) { return all_.SelectDelayedScene(sceneName); }
+	bool SelectDelayedSceneSlot(size_t slot) { return all_.SelectDelayedSceneSlot(slot); }
 	bool StreamMode() const { return streamSelected_(); }
 
 private:

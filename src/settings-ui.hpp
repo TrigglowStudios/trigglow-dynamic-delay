@@ -133,8 +133,16 @@ private:
 		QLabel *count = nullptr;
 		QWidget *body = nullptr;
 		bool open = false;
+		// Shown in the header's chip while folded ("30 s", the live scene).
+		QString summary;
 	};
 	// One scene rule (stream mode): scene, action, seconds, remove.
+	// v1.0.0: a delayed scene after the first one: its picker and a remove button.
+	struct ExtraSceneRow {
+		QWidget *row = nullptr;
+		SceneComboBox *combo = nullptr;
+		QPushButton *remove = nullptr;
+	};
 	struct RuleRow {
 		QFrame *card = nullptr;
 		QComboBox *scene = nullptr;
@@ -156,6 +164,7 @@ private:
 	void BuildOptions(QVBoxLayout *body);
 	Section *AddSection(QVBoxLayout *parent, const QString &title, bool open);
 	void SetSectionOpen(Section &section, bool open);
+	void SetSectionSummary(Section &section, const QString &summary);
 	void BuildPresets(QVBoxLayout *body);
 	// settings-ui-stream.cpp: stream mode's parts.
 	void BuildStreamStatusRows(QVBoxLayout *body);
@@ -186,6 +195,13 @@ private:
 	void Refresh();
 	void RefreshSceneStatus(const BufferModeStatus &status);
 	void RefreshSceneFields(const BufferModeStatus &status);
+	// v1.0.0, several delayed scenes: a picker row under the first one, its
+	// removal, the list written to the controller, and the rows and the
+	// switch buttons brought in line with the status.
+	void AddExtraSceneRow(const std::string &scene);
+	void RemoveExtraSceneRow(QWidget *row);
+	void DelayedScenesChanged();
+	void RefreshDelayedScenes(const BufferModeStatus &status);
 	void RefreshDelayCard(uint32_t delaySeconds, bool streamOnly);
 	void RefreshApplyTo(const BufferModeStatus &scene, const StreamDelayStatus &stream);
 	void GuardWheel(QWidget *field);
@@ -377,6 +393,17 @@ private:
 	// (scene mode delays the live scene only).
 	QWidget *sceneSwitchRow_ = nullptr;
 	QLabel *sceneSwitchIcon_ = nullptr;
+	QLabel *sceneSwitchText_ = nullptr;
+	// v1.0.0, several delayed scenes: the pickers after the first one, "Add
+	// scene" (up to BufferModeController::kMaxDelayedScenes), and while the
+	// delay runs one button per delayed scene to put it in the delay.
+	std::vector<ExtraSceneRow> extraSceneRows_;
+	QVBoxLayout *extraScenesList_ = nullptr;
+	QPushButton *addSceneButton_ = nullptr;
+	QWidget *switchBlock_ = nullptr;
+	QVBoxLayout *switchList_ = nullptr;
+	std::vector<QPushButton *> switchButtons_;
+	std::vector<std::string> switchNames_; // What switchButtons_ were built for.
 	// (field, lock): the lock drawn inside the live/loading scene pickers and
 	// the quality while they're locked (Filling, Active), where their arrows
 	// were.
@@ -436,6 +463,9 @@ private:
 	Section *warningsSection_ = nullptr;
 	Section *rulesSection_ = nullptr;
 	Section *optionsSection_ = nullptr;
+	// The delay and scenes cards fold too (open by default).
+	Section *delaySection_ = nullptr;
+	Section *scenesSection_ = nullptr;
 	QWidget *rulesDivider_ = nullptr;
 	QVBoxLayout *rulesList_ = nullptr;
 	std::vector<RuleRow> ruleRows_;

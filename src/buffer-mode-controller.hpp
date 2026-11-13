@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <tuple>
 #include <vector>
 
+#include "auto-names.hpp"
 #include "obs-frontend-bridge.hpp"
 #include "pipeline-health.hpp"
 
@@ -88,7 +89,14 @@ struct BufferModeStatus {
 	// See VideoDelayFilter::EnsureRingSized. 720 matches
 	// kDefaultMinResolutionHeight.
 	uint32_t minResolutionHeight = 720;
-	std::string liveSceneName;    // Required to Enable(); the streamer's real content.
+	std::string liveSceneName; // Required to Enable(); the streamer's real content. = liveSceneNames[0].
+	// v1.0.0: the delayed scenes (1 to kMaxDelayedScenes, the first one is
+	// liveSceneName). All of them sit in the one buffer; viewers see one at a
+	// time and the streamer switches between them while the delay runs.
+	std::vector<std::string> liveSceneNames;
+	// While Filling/Active: the delayed scene viewers see (once the delay has
+	// caught up with the switch). Empty otherwise.
+	std::string selectedSceneName;
 	std::string loadingSceneName; // Optional; shown during Filling. Empty = no scene switch while filling.
 	// Show a "Delay Ns" text overlay on the delayed output while Active.
 	bool showOverlay = true;
@@ -111,6 +119,8 @@ public:
 	// silences the audio) for those seconds; a bigger one shows the loading
 	// scene for them instead, like Enable.
 	static constexpr uint32_t kHoldRaiseMaxSeconds = 3;
+	// v1.0.0: how many scenes the delay can hold (one buffer for all).
+	static constexpr size_t kMaxDelayedScenes = 8;
 
 	explicit BufferModeController(ObsFrontendBridge &bridge);
 
@@ -145,7 +155,20 @@ public:
 
 	void Toggle();
 
+	// The first delayed scene (the rest of the list stays).
 	void SetLiveScene(std::string sceneName);
+	// v1.0.0: the delayed scenes, in order (empty names, helper scenes and
+	// duplicates dropped, at most kMaxDelayedScenes). Ignored while the delay
+	// runs: the list is locked then, like the live scene was.
+	void SetLiveScenes(std::vector<std::string> sceneNames);
+	// v1.0.0: while Filling/Active, puts `sceneName` (one of the delayed
+	// scenes) in the delay: its picture enters the buffer now and viewers see
+	// it one delay later, its sources' audio with it (the others' fades out
+	// with their picture). Program doesn't change. False if the delay is off
+	// or the scene isn't one of them.
+	bool SelectDelayedScene(const std::string &sceneName);
+	// The same by position in the list (0-based): the hotkeys' "delayed scene N".
+	bool SelectDelayedSceneSlot(size_t slot);
 	void SetLoadingScene(std::string sceneName);
 	// Clamped to [kMinDelaySeconds, kMaxDelaySeconds]. v1.0.0: while
 	// Filling/Active the delay changes in place, the buffer is never emptied
@@ -185,7 +208,7 @@ public:
 	VideoDelayFilter::BufferFitEstimate EstimateBufferFit(uint32_t requestedDelaySeconds,
 							      uint32_t minResolutionHeight) const
 	{
-		return bridge_.EstimateBufferFit(status_.liveSceneName, requestedDelaySeconds, minResolutionHeight,
+		return bridge_.EstimateBufferFit(status_.liveSceneNames, requestedDelaySeconds, minResolutionHeight,
 						 bufferOutputCap_, PlannedRingClass());
 	}
 
@@ -241,6 +264,7 @@ public:
 		bool bufferOutputCap;
 		bool codecWorkers;
 		bool bufferCodecAuto;
+		std::vector<std::string> liveSceneNames; // v1.0.0: "live_scenes"; liveSceneName is the first.
 	};
 	SettingsSnapshot SaveSettings() const;
 
@@ -274,6 +298,15 @@ private:
 	void SetState(BufferModeState state, const char *messageKey = nullptr, std::string message = {});
 	void NotifyStatusChanged();
 	void OnFrontendEvent(FrontendEvent event);
+	// v1.0.0: Program changed scene. While the delay runs, a delayed scene
+	// clicked in OBS's scene list is put in the delay and Program goes back
+	// to the delayed view (the loading scene while Filling). OBS has already
+	// shown it live for its transition by then: the dock, the hotkeys and the
+	// Stream Deck switch without that.
+	void OnProgramSceneChanged();
+	bool IsDelayedScene(const std::string &sceneName) const;
+	// Keeps liveSceneName = liveSceneNames[0].
+	void NormalizeLiveScenes(std::vector<std::string> sceneNames);
 
 	// Disable()'s body: the filters, keep-alive and overlay switched off,
 	// Inactive with the message of `messageKey` (null: none, the dock's default
@@ -409,6 +442,15 @@ private:
 
 	ObsFrontendBridge &bridge_;
 	BufferModeStatus status_;
+	// v1.0.0: the scene the filters hang off -- the delayed scenes' holder
+	// (autonames::kDelayedScenes), which the wrapper shows. Every bridge call
+	// about the buffer names it, never one of the streamer's scenes.
+	const std::string host_ = autonames::kDelayedScenes;
+	// StopDelay() is running: the Program changes it makes aren't clicks.
+	bool stopping_ = false;
+	// This cycle already logged that a click in OBS's scene list showed the
+	// scene live for the transition.
+	bool warnedListSwitch_ = false;
 	// Scene that was on Program right before Enable() switched away from
 	// it, restored by Disable(). Empty when not currently enabled.
 	std::string sceneBeforeEnable_;

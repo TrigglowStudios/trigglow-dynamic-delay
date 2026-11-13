@@ -93,7 +93,19 @@ RouterStatus SceneDelayTarget::Status() const
 	out.delayOn = s.state == BufferModeState::Filling || s.state == BufferModeState::Active;
 	out.delaySeconds = s.delaySeconds;
 	out.appliedSeconds = s.state == BufferModeState::Active ? s.effectiveDelaySeconds : 0;
+	out.delayedScenes = s.liveSceneNames;
+	out.delayedScene = s.selectedSceneName;
 	return out;
+}
+
+bool SceneDelayTarget::SelectDelayedScene(const std::string &sceneName)
+{
+	return scene_.SelectDelayedScene(sceneName);
+}
+
+bool SceneDelayTarget::SelectDelayedSceneSlot(size_t slot)
+{
+	return scene_.SelectDelayedSceneSlot(slot);
 }
 
 // ---- Only the stream (stream mode) ----------------------------------------

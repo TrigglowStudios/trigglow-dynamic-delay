@@ -216,7 +216,7 @@ safe (all of OBS only delays the live scene picked in the dock).
 
 ## The delay badge
 
-While the delay is on and the stream goes through the relay, the "DELAY N s" badge (the same PNGs
+While the delay is on (also armed, before the stream starts), the "DELAY N s" badge (the same PNGs
 as scene mode, up to 600 s) is drawn on libobs output channel 61, over OBS's program after the
 scene. Viewers get it with the delayed picture. Because it is on the program, the recording (and
 anything else that takes the program) shows it too while the delay is on. On/off ("Show the delay

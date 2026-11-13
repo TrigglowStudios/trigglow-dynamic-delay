@@ -77,9 +77,32 @@ void FillStatus(obs_data_t *out)
 	obs_data_set_int(out, "appliedSeconds", s.appliedSeconds);
 	obs_data_set_double(out, "behindSeconds", std::round(s.behindSeconds * 10.0) / 10.0);
 	obs_data_set_double(out, "ramMegabytes", std::round(s.ramMegabytes * 10.0) / 10.0);
+	// v1.0.0: the delayed scenes (all of OBS) and the one in the delay now
+	// (empty while it's off).
+	obs_data_array_t *scenes = obs_data_array_create();
+	for (const std::string &name : s.delayedScenes) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "sceneName", name.c_str());
+		obs_data_array_push_back(scenes, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(out, "delayedScenes", scenes);
+	obs_data_array_release(scenes);
+	obs_data_set_string(out, "delayedScene", s.delayedScene.c_str());
 }
 
-enum class Op { Status, Enable, Disable, Toggle, SkipToLive, SetDelay, AdjustDelay, Dump, ApplyPreset };
+enum class Op {
+	Status,
+	Enable,
+	Disable,
+	Toggle,
+	SkipToLive,
+	SetDelay,
+	AdjustDelay,
+	Dump,
+	ApplyPreset,
+	SetDelayedScene
+};
 
 struct Job {
 	Op op;
@@ -122,6 +145,16 @@ void RunJob(void *param)
 	case Op::ApplyPreset:
 		g_router->ApplyPreset(static_cast<int>(obs_data_get_int(job->request, "index")));
 		break;
+	case Op::SetDelayedScene: {
+		// {"sceneName": "..."} or {"slot": 1..8} (the dock's list, 1-based).
+		const char *name = obs_data_get_string(job->request, "sceneName");
+		const long long slot = obs_data_get_int(job->request, "slot");
+		const bool selected =
+			name && *name ? g_router->SelectDelayedScene(name)
+				      : slot > 0 && g_router->SelectDelayedSceneSlot(static_cast<size_t>(slot - 1));
+		obs_data_set_bool(job->response, "selected", selected);
+		break;
+	}
 	}
 	FillStatus(job->response);
 	obs_data_set_bool(job->response, "ok", true);
@@ -174,6 +207,7 @@ void Register(DelayRouter &router)
 	RegisterRequest("AdjustDelay", &Handle<Op::AdjustDelay>);
 	RegisterRequest("DumpDelay", &Handle<Op::Dump>);
 	RegisterRequest("ApplyPreset", &Handle<Op::ApplyPreset>);
+	RegisterRequest("SetDelayedScene", &Handle<Op::SetDelayedScene>);
 	TRIGGLOW_LOG_INFO(kComponent, "obs-websocket vendor \"%s\" registered", kVendorName);
 }
 

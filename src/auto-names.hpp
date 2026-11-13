@@ -52,11 +52,16 @@ inline constexpr const char *kDefaultLoadingVideo = "Trigglow Delay Loading Vide
 // v1.0.0: the video's first frame as a still under it, so Program never shows
 // black while the video opens (it closes while not shown).
 inline constexpr const char *kDefaultLoadingStill = "Trigglow Delay Loading Still (auto)";
+// v1.0.0: the scene inside the wrapper that holds every delayed scene (one
+// scene item each, all visible; the one viewers see at 0,0, the others off
+// the canvas). The video delay filter sits on it, so one buffer covers them all.
+inline constexpr const char *kDelayedScenes = "Trigglow Delay Scenes (auto)";
 
 enum class Kind {
 	WrapperScene,
 	BufferFilter,
 	OverlayBadge,
+	DelayedScenes,
 };
 
 // Names to try, in order, when looking an object up: the current name first,
@@ -83,6 +88,12 @@ bool IsWrapperSceneName(std::string_view name);
 // The default loading scene: the plugin shows it by itself, so the dock never
 // offers it as a live or loading scene.
 bool IsDefaultLoadingSceneName(std::string_view name);
+// v1.0.0: the scene holding the delayed scenes (kDelayedScenes): shown only
+// inside the wrapper, never offered in the dock.
+bool IsDelayedScenesName(std::string_view name);
+// Any scene the plugin creates and shows by itself (the wrapper, the delayed
+// scenes' holder, the default loading scene): never a delayed or loading scene.
+bool IsHelperSceneName(std::string_view name);
 // The default loading video for an OBS locale ("es-ES", "en-US", ...), relative
 // to the plugin's data folder: Spanish for any "es" locale, English otherwise.
 std::string DefaultLoadingVideoFile(std::string_view locale);

@@ -67,6 +67,15 @@ public:
 		Preset1,
 		Preset2,
 		Preset3,
+		// v1.0.0: "Delayed scene 1".."8" (all of OBS: the dock's list).
+		Scene1,
+		Scene2,
+		Scene3,
+		Scene4,
+		Scene5,
+		Scene6,
+		Scene7,
+		Scene8,
 		Count
 	};
 

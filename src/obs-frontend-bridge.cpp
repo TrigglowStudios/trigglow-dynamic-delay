@@ -140,6 +140,10 @@ void ObsFrontendBridge::Shutdown()
 		obs_source_release(wrapperKeepAlive_);
 		wrapperKeepAlive_ = nullptr;
 	}
+	if (delayedScenesKeepAlive_) {
+		obs_source_release(delayedScenesKeepAlive_);
+		delayedScenesKeepAlive_ = nullptr;
+	}
 #endif
 
 	if (g_eventBridge == this)
@@ -748,8 +752,12 @@ bool ObsFrontendBridge::EnsureBufferWrapperScene(const std::string &liveSceneNam
 		&ctx);
 	for (obs_sceneitem_t *staleItem : ctx.stale) {
 		obs_source_t *oldSource = obs_sceneitem_get_source(staleItem);
-		if (OBSSourceAutoRelease oldFilter = FindBufferFilterOn(oldSource))
+		// v1.0.0: the filter lives on the delayed scenes' holder now; the one
+		// an earlier version put on this scene goes.
+		if (OBSSourceAutoRelease oldFilter = FindBufferFilterOn(oldSource)) {
 			obs_source_set_enabled(oldFilter, false);
+			obs_source_filter_remove(oldSource, oldFilter);
+		}
 		TRIGGLOW_LOG_INFO(kComponent, "buffer mode: removing previous live scene \"%s\" from the wrapper",
 				  obs_source_get_name(oldSource));
 		obs_sceneitem_remove(staleItem);
@@ -1605,6 +1613,217 @@ void ObsFrontendBridge::MigrateLegacyAutoNames() const
 		TRIGGLOW_LOG_INFO(kComponent, "migrated %d auto-managed object(s) to the \"(auto)\" names", renamed);
 }
 
+namespace {
+// Owned (+1) reference to the delayed scenes' holder, or null.
+obs_source_t *GetDelayedScenesSourceRef()
+{
+	for (const std::string &name : autonames::LookupNames(Kind::DelayedScenes)) {
+		obs_source_t *source = obs_get_source_by_name(name.c_str());
+		if (!source)
+			continue;
+		if (obs_scene_from_source(source))
+			return source;
+		obs_source_release(source); // Something else (an input) carries that name.
+	}
+	return nullptr;
+}
+
+// A scene's items, each with its own reference (obs_sceneitem_release()).
+// Collected first: obs_scene_enum_items() holds the scene's mutex, which
+// moving or removing an item takes again.
+std::vector<obs_sceneitem_t *> CollectItems(obs_scene_t *scene)
+{
+	std::vector<obs_sceneitem_t *> items;
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
+			obs_sceneitem_addref(item);
+			static_cast<std::vector<obs_sceneitem_t *> *>(param)->push_back(item);
+			return true;
+		},
+		&items);
+	return items;
+}
+
+std::string ItemSourceName(obs_sceneitem_t *item)
+{
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	const char *name = source ? obs_source_get_name(source) : nullptr;
+	return name ? name : "";
+}
+
+// The selected scene at 0,0, every other one off the canvas: two canvas
+// widths to the right, where nothing of it reaches the holder's frame. All
+// stay visible, so active: heard, and their sources keep running.
+bool PlaceDelayedScenes(obs_scene_t *holder, const std::string &selected)
+{
+	obs_video_info ovi = {};
+	const float width = obs_get_video_info(&ovi) && ovi.base_width > 0 ? static_cast<float>(ovi.base_width)
+									   : 1920.0f;
+	std::vector<obs_sceneitem_t *> items = CollectItems(holder);
+	bool found = false;
+	for (obs_sceneitem_t *item : items)
+		found = found || ItemSourceName(item) == selected;
+	bool placed = false;
+	for (obs_sceneitem_t *item : items) {
+		// Not found: the first one shows, never an empty frame.
+		const bool shown = found ? ItemSourceName(item) == selected : !placed;
+		placed = placed || shown;
+		vec2 pos = {};
+		pos.x = shown ? 0.0f : width * 2.0f + 64.0f;
+		obs_sceneitem_set_pos(item, &pos);
+		if (!obs_sceneitem_visible(item))
+			obs_sceneitem_set_visible(item, true);
+		obs_sceneitem_release(item);
+	}
+	return found;
+}
+} // namespace
+
+bool ObsFrontendBridge::EnsureDelayedScenes(const std::vector<std::string> &scenes, const std::string &selected) const
+{
+	if (scenes.empty())
+		return false;
+	obs_source_t *holderSource = GetDelayedScenesSourceRef();
+	obs_scene_t *holder = holderSource ? obs_scene_from_source(holderSource) : nullptr;
+	const bool found = holderSource != nullptr;
+	if (!holderSource) {
+		holder = obs_scene_create(autonames::kDelayedScenes);
+		holderSource = holder ? obs_scene_get_source(holder) : nullptr; // The creation's reference.
+	}
+	if (!holder || !holderSource) {
+		TRIGGLOW_LOG_ERROR(kComponent, "delayed scenes: could not create/find \"%s\"",
+				   autonames::kDelayedScenes);
+		if (holderSource)
+			obs_source_release(holderSource);
+		return false;
+	}
+#ifdef TRIGGLOW_CORE_ONLY
+	if (delayedScenesKeepAlive_ != holderSource) {
+		if (delayedScenesKeepAlive_)
+			obs_source_release(delayedScenesKeepAlive_);
+		delayedScenesKeepAlive_ = obs_source_get_ref(holderSource);
+	}
+#endif
+
+	// Exactly one item per listed scene: duplicates and scenes no longer
+	// listed go, missing ones are added.
+	std::vector<std::string> present;
+	for (obs_sceneitem_t *item : CollectItems(holder)) {
+		const std::string name = ItemSourceName(item);
+		const bool listed = std::find(scenes.begin(), scenes.end(), name) != scenes.end();
+		if (!listed || std::find(present.begin(), present.end(), name) != present.end()) {
+			TRIGGLOW_LOG_INFO(kComponent, "delayed scenes: removing \"%s\"", name.c_str());
+			obs_sceneitem_remove(item);
+		} else {
+			present.push_back(name);
+		}
+		obs_sceneitem_release(item);
+	}
+	for (const std::string &name : scenes) {
+		if (name.empty() || autonames::IsHelperSceneName(name) ||
+		    std::find(present.begin(), present.end(), name) != present.end())
+			continue;
+		OBSSourceAutoRelease source = obs_get_source_by_name(name.c_str());
+		if (!source || !obs_scene_from_source(source)) {
+			TRIGGLOW_LOG_WARN(kComponent, "delayed scenes: no scene called \"%s\", skipped", name.c_str());
+			continue;
+		}
+		// Null when the scene holds the delay itself: libobs refuses the loop.
+		if (!obs_scene_add(holder, source)) {
+			TRIGGLOW_LOG_WARN(kComponent,
+					  "delayed scenes: couldn't add \"%s\" (does it contain the delay?)",
+					  name.c_str());
+			continue;
+		}
+		present.push_back(name);
+	}
+	TRIGGLOW_LOG_INFO(kComponent, "delayed scenes: %s \"%s\" with %zu scene(s), \"%s\" in the delay",
+			  found ? "found" : "created", autonames::kDelayedScenes, present.size(), selected.c_str());
+	if (!present.empty())
+		PlaceDelayedScenes(holder, selected);
+	obs_source_release(holderSource);
+	return !present.empty();
+}
+
+bool ObsFrontendBridge::SelectDelayedScene(const std::string &selected) const
+{
+	OBSSourceAutoRelease holderSource = GetDelayedScenesSourceRef();
+	obs_scene_t *holder = holderSource ? obs_scene_from_source(holderSource) : nullptr;
+	return holder && PlaceDelayedScenes(holder, selected);
+}
+
+std::string ObsFrontendBridge::SelectedDelayedScene() const
+{
+	OBSSourceAutoRelease holderSource = GetDelayedScenesSourceRef();
+	obs_scene_t *holder = holderSource ? obs_scene_from_source(holderSource) : nullptr;
+	if (!holder)
+		return {};
+	std::string selected;
+	for (obs_sceneitem_t *item : CollectItems(holder)) {
+		vec2 pos = {};
+		obs_sceneitem_get_pos(item, &pos);
+		if (selected.empty() && pos.x == 0.0f && pos.y == 0.0f)
+			selected = ItemSourceName(item);
+		obs_sceneitem_release(item);
+	}
+	return selected;
+}
+
+void ObsFrontendBridge::RemoveStrayBufferFilters() const
+{
+	std::vector<obs_source_t *> scenes; // Strong refs.
+	obs_enum_scenes(
+		[](void *param, obs_source_t *source) -> bool {
+			if (obs_source_t *ref = obs_source_get_ref(source))
+				static_cast<std::vector<obs_source_t *> *>(param)->push_back(ref);
+			return true;
+		},
+		&scenes);
+	for (obs_source_t *scene : scenes) {
+		const char *name = obs_source_get_name(scene);
+		if (!(name && autonames::IsDelayedScenesName(name))) {
+			OBSSourceAutoRelease filter = FindBufferFilterOn(scene);
+			if (filter && !obs_source_enabled(filter)) {
+				TRIGGLOW_LOG_INFO(
+					kComponent,
+					"buffer mode: removing the delay filter an earlier version left on \"%s\" "
+					"(the delay now filters \"%s\")",
+					name ? name : "?", autonames::kDelayedScenes);
+				obs_source_filter_remove(scene, filter);
+			}
+		}
+		obs_source_release(scene);
+	}
+}
+
+bool ObsFrontendBridge::SetAudioDelayGates(const std::string &hostName, const std::string &selectedScene) const
+{
+	const std::vector<OBSSourceAutoRelease> all = GetAudioCapableChildren(hostName);
+	std::vector<OBSSourceAutoRelease> open;
+	if (!selectedScene.empty())
+		open = GetAudioCapableChildren(selectedScene);
+	bool any = false;
+	for (const OBSSourceAutoRelease &child : all) {
+		OBSSourceAutoRelease filter = FindAudioFilterOn(child.Get());
+		if (!filter)
+			continue;
+		const bool isOpen = selectedScene.empty() ||
+				    std::any_of(open.begin(), open.end(), [&child](const OBSSourceAutoRelease &source) {
+					    return source.Get() == child.Get();
+				    });
+		proc_handler_t *handler = obs_source_get_proc_handler(filter);
+		calldata_t cd = {};
+		calldata_set_bool(&cd, "open", isOpen);
+		if (!handler || !proc_handler_call(handler, "set_gate_open", &cd))
+			TRIGGLOW_LOG_WARN(kComponent, "audio delay: set_gate_open proc failed on \"%s\"",
+					  obs_source_get_name(filter));
+		calldata_free(&cd);
+		any = true;
+	}
+	return any;
+}
+
 bool ObsFrontendBridge::ShowBufferWrapperScene() const
 {
 	OBSSourceAutoRelease wrapperSource = GetWrapperSceneSourceRef();
@@ -2019,12 +2238,14 @@ uint64_t ObsFrontendBridge::GetBufferBudgetBytes() const
 	return VideoDelayFilter::GetBufferBudgetBytes();
 }
 
-VideoDelayFilter::BufferFitEstimate ObsFrontendBridge::EstimateBufferFit(const std::string &liveSceneName,
+VideoDelayFilter::BufferFitEstimate ObsFrontendBridge::EstimateBufferFit(const std::vector<std::string> &scenes,
 									 uint32_t requestedDelaySeconds,
 									 uint32_t minResolutionHeight, bool capToOutput,
 									 bufferfit::RingClass ringClass) const
 {
-	obs_source_t *liveSource = obs_get_source_by_name(liveSceneName.c_str());
+	if (scenes.empty())
+		return {};
+	obs_source_t *liveSource = obs_get_source_by_name(scenes.front().c_str());
 	if (!liveSource)
 		return {};
 
@@ -2054,10 +2275,26 @@ VideoDelayFilter::BufferFitEstimate ObsFrontendBridge::EstimateBufferFit(const s
 		fpsDen = ovi.fps_den;
 	}
 
-	return VideoDelayFilter::EstimateBufferFit(
-		requestedDelaySeconds, minResolutionHeight, width, height, baseWidth, baseHeight, outputWidth,
-		outputHeight, fpsNum, fpsDen, capToOutput, ringClass,
-		AudioBytesPerSecondFor(GetAudioCapableChildren(liveSceneName).size()));
+	return VideoDelayFilter::EstimateBufferFit(requestedDelaySeconds, minResolutionHeight, width, height, baseWidth,
+						   baseHeight, outputWidth, outputHeight, fpsNum, fpsDen, capToOutput,
+						   ringClass,
+						   AudioBytesPerSecondFor(GetAudioCapableChildrenOf(scenes).size()));
+}
+
+std::vector<OBSSourceAutoRelease>
+ObsFrontendBridge::GetAudioCapableChildrenOf(const std::vector<std::string> &scenes) const
+{
+	std::vector<OBSSourceAutoRelease> result;
+	for (const std::string &scene : scenes) {
+		for (OBSSourceAutoRelease &child : GetAudioCapableChildren(scene)) {
+			const bool seen =
+				std::any_of(result.begin(), result.end(),
+					    [&child](const OBSSourceAutoRelease &s) { return s.Get() == child.Get(); });
+			if (!seen)
+				result.push_back(std::move(child));
+		}
+	}
+	return result;
 }
 
 std::vector<ActiveVideoEncoder> ObsFrontendBridge::ListActiveVideoEncoders() const
@@ -2194,6 +2431,9 @@ void ObsFrontendBridge::FrontendEventCallback(enum obs_frontend_event event, voi
 		break;
 	case OBS_FRONTEND_EVENT_THEME_CHANGED:
 		mapped = FrontendEvent::ThemeChanged;
+		break;
+	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+		mapped = FrontendEvent::SceneChanged;
 		break;
 	default:
 		return; // Don't spam the handler with events we don't act on.

@@ -164,6 +164,11 @@ void AudioDelayLine::Write(const float *const *planes, size_t frames)
 		retired_.pop_back();
 }
 
+void AudioDelayLine::WriteGated(const float *const *planes, size_t frames, bool open)
+{
+	Write(open ? planes : nullptr, frames);
+}
+
 void AudioDelayLine::WriteSilence(size_t frames)
 {
 	Write(nullptr, frames);

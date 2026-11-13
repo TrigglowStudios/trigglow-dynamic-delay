@@ -128,7 +128,8 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	haveExpectedTimestamp_ = true;
 	expectedTimestamp_ = audio->timestamp + chunkNs;
 
-	line_.Write(reinterpret_cast<const float *const *>(audio->data), frames);
+	line_.WriteGated(reinterpret_cast<const float *const *>(audio->data), frames,
+			 gateOpen_.load(std::memory_order_relaxed));
 
 	// --- Read: the chunk that is delaySeconds old (silence while filling) ---
 	// Program is on the loading scene while it fills, so that silence is never
@@ -205,9 +206,12 @@ void *AudioDelayFilter::Create(obs_data_t *settings, obs_source_t *source)
 	auto *filter = new AudioDelayFilter(source);
 	filter->Update(settings);
 	filter->created_ = true;
-	if (proc_handler_t *procHandler = obs_source_get_proc_handler(source))
+	if (proc_handler_t *procHandler = obs_source_get_proc_handler(source)) {
 		proc_handler_add(procHandler, "void set_managed_delay_seconds(in int seconds)",
 				 &AudioDelayFilter::SetManagedDelaySecondsProc, filter);
+		proc_handler_add(procHandler, "void set_gate_open(in bool open)", &AudioDelayFilter::SetGateOpenProc,
+				 filter);
+	}
 	return filter;
 }
 
@@ -231,6 +235,17 @@ void AudioDelayFilter::SetManagedDelaySecondsProc(void *data, calldata_t *params
 		obs_data_set_int(settings, kSettingDelaySeconds, seconds);
 		obs_data_release(settings);
 	}
+}
+
+void AudioDelayFilter::SetGateOpenProc(void *data, calldata_t *params)
+{
+	auto *filter = static_cast<AudioDelayFilter *>(data);
+	const bool open = calldata_bool(params, "open");
+	if (filter->gateOpen_.exchange(open, std::memory_order_relaxed) != open)
+		TRIGGLOW_LOG_INFO(
+			kComponent, "\"%s\": %s", obs_source_get_name(filter->filterSource_),
+			open ? "gate open: heard (in the delay, its scene's sound comes out one delay from now)"
+			     : "gate closed: what it already holds plays out, silent after that");
 }
 
 void AudioDelayFilter::UpdateCb(void *data, obs_data_t *settings)

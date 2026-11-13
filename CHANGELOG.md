@@ -18,7 +18,15 @@ sign-in are kept.
   Advanced, **"Apply the delay only to the stream (recording and preview stay live)"** switches to
   the new stream mode below; it's locked while a delay is on. The button, the hotkeys,
   obs-websocket and the Stream Deck drive the one you chose. If you tried a 1.0 test build with
-  "Use stream mode" ticked, you start on all of OBS again.
+  "Use stream mode" ticked, you start on all of OBS again. The Delay and Scenes cards fold too:
+  folded, their header still shows the seconds and the first delayed scene.
+- **Several delayed scenes, one buffer.** In all of OBS, add up to 8 scenes under **Delayed
+  scenes** (Add scene). With the delay on, switch between them from the dock's buttons, the new
+  hotkeys "Delayed scene 1" to "8", obs-websocket (`SetDelayedScene`) or the Stream Deck: viewers
+  see the switch when the delay catches up, picture and sound together, never live. They all share
+  the one buffer, so more scenes take no more RAM (the scenes not on screen keep rendering off the
+  canvas, a little GPU). Picking one in OBS's own scene list works too, but OBS shows its transition
+  live for a moment first. Turning the delay off shows the scene that was in the delay, live.
 - **Only the stream (the advanced option; Windows, macOS and Linux): the delay on your stream
   itself.** The plugin holds the stream OBS has already encoded and sends it out later, instead of keeping your
   rendered picture in RAM. There's no second encode, and you choose where the held seconds wait:

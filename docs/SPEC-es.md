@@ -3,7 +3,7 @@
 # Especificación técnica — Trigglow Dynamic Delay para OBS
 
 Estado: **v1.0.0 — estable en Windows; macOS y Linux en alpha**
-Última actualización: 2026-11-12 (v1.0.0: §3.11, el modo escena comprobado de principio a fin;
+Última actualización: 2026-11-13 (v1.0.0: §3.12, varias escenas con delay en un solo búfer; 2026-11-12: §3.11, el modo escena comprobado de principio a fin;
 2026-11-11: §1, §3.8, §8; el modo stream tiene su propio documento,
 `docs/STREAM_MODE-es.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; reescrita
 desde cero el 2026-08-26 — ver §0). Se preparó un hotfix v0.5.1 que nunca se publicó; todo
@@ -384,7 +384,7 @@ está en la propia fuente de la escena en directo (la contenedora la anida), as�
 directo mostrada tal cual sigue con delay, pero cualquier otra escena a la que el usuario (o una
 acción de Stream Deck u obs-websocket) cambie el Programa se emite en directo. Desde la v1.0.0 el dock
 lo dice mientras el delay está en marcha (`Dock.SceneSwitch.Note`): cambiar de escena con delay
-necesita el modo stream. §3.9 explica por qué el modo escena no lo hace en la 1.0.
+necesita el modo stream, o (v1.0.0, §3.12) añadir la escena a las escenas con delay.
 
 ### 3.4. Liberar el ring de RAM al hacer Disable
 
@@ -882,7 +882,9 @@ un filtro por escena. Un cambio de varias semanas con sus propias pruebas, nada 
 en la 1.0.
 
 En la 1.0 el dock muestra `Dock.SceneSwitch.Note` mientras el delay está en marcha: deja la vista
-con delay en el Programa y usa el modo stream para cambiar de escena con delay.
+con delay en el Programa y usa el modo stream para cambiar de escena con delay. **Sustituido en la
+1.0.0 por el §3.12**: cambiar entre una lista de escenas con delay guardadas en un solo búfer, que no
+necesita un filtro por escena ni que el Programa salga del wrapper.
 
 ### 3.10. v1.0.0: delays de hasta 600 s, y su RAM
 
@@ -1022,6 +1024,74 @@ actual antes de encenderse, y un filtro fuera de la escena en directo sigue apag
 **Sin comprobar:** macOS y Linux; los códecs de almacenamiento de NVIDIA e Intel; 600 s a 1080p60
 desde una activación nueva (los 600 s a 60 fps vinieron de una subida en directo); el Modo Estudio; el
 ingest de una plataforma real.
+
+### 3.12. v1.0.0: varias escenas con delay, un solo búfer
+
+El modo escena pone delay a una lista de escenas (hasta `BufferModeController::kMaxDelayedScenes`,
+8), no a una sola escena en directo, y el streamer cambia entre ellas con el delay activo. Esquiva
+los tres problemas del §3.9 porque el Programa nunca sale del wrapper para un cambio:
+
+- **Un solo búfer.** Las escenas con delay son elementos de una escena auxiliar,
+  `autonames::kDelayedScenes` ("Trigglow Delay Scenes (auto)"), que el wrapper contiene en vez de la
+  escena en directo. El filtro de vídeo va en esa escena (`ObsFrontendBridge::EnsureDelayedScenes()`,
+  luego `EnsureBufferWrapperScene(kDelayedScenes)`); toda llamada del bridge sobre el búfer nombra
+  esa escena, nunca una del streamer. La RAM es la misma con 1 o con 8 escenas; la estimación usa el
+  tamaño de la primera y las fuentes de audio de todas (`EstimateBufferFit(scenes, …)`).
+- **Un cambio mueve elementos.** Todos siguen visibles, así que todas sus fuentes siguen en el árbol
+  activo de OBS (`libobs/obs-scene.c`: `scene_enum_active_sources()` sigue `active_refs`, que solo
+  cambia con la visibilidad, no con la posición). La escena en el delay está en 0,0; las demás a dos
+  anchos de lienzo a la derecha, fuera del cuadro. `SelectDelayedScene()` las mueve: la imagen nueva
+  entra en el ring en el siguiente fotograma y sale un delay después. El Programa no cambia, así que
+  nada llega al canal 0 sin delay.
+- **Puertas de audio a la entrada.** Cada filtro de audio tiene una puerta (`set_gate_open`,
+  `AudioDelayLine::WriteGated()`): cerrada, las muestras de su fuente entran en el delay como
+  silencio. Las fuentes de la escena en el delay están abiertas (las compartidas, como un micro en
+  dos escenas, y los canales globales de Escritorio/Micro siguen abiertas, sin cortes); las demás,
+  cerradas. Un cambio en T las cambia en T: el sonido de la escena anterior suena lo que ya tiene
+  hasta T + delay y se corta; el de la nueva empieza en T + delay con su sonido desde T. Imagen y
+  sonido cambian juntos, y nada de lo que se ocultaba antes del cambio se oye después (§3.9,
+  punto 3).
+- **Formas de cambiar.** Los botones del dock (en Filling/Active, con dos o más escenas), los atajos
+  `trigglow_dynamic_delay.scene1`..`scene8`, `SetDelayedScene` de obs-websocket (`sceneName` o
+  `slot` desde 1; `GetStatus` da `delayedScenes` y `delayedScene`) y el Stream Deck a través de él.
+  Una escena con delay elegida en la lista de escenas de OBS se recoge con
+  `OBS_FRONTEND_EVENT_SCENE_CHANGED` (`FrontendEvent::SceneChanged`), se pone en el delay y el
+  Programa vuelve al wrapper (a la escena de carga en Filling), pero ese evento llega cuando la
+  transición ha terminado, así que la escena se vio en directo durante la transición: se registra
+  una vez por ciclo, y el dock y la documentación dicen que se usen las otras formas. Una escena que
+  no está en la lista se queda en el Programa, como antes.
+- **Ajustes.** `live_scenes` (un array de `{"name"}`) junto a `live_scene` (la primera, para builds
+  anteriores); un archivo sin él lee `live_scene`. La lista se bloquea con el delay activo. Al
+  activar se empieza con la escena del Programa si está en la lista, si no con la primera; al
+  desactivar desde la vista con delay se ve en directo la escena que estaba en el delay.
+- **Migración.** Las versiones anteriores ponían el filtro de vídeo en la propia escena en directo y
+  esa escena en el wrapper. Al activar, `RemoveStrayBufferFilters()` quita un filtro de vídeo
+  apagado de cualquier escena que no sea la auxiliar, y el elemento de la escena en directo anterior
+  sale del wrapper con su filtro.
+
+**Coste.** Las escenas que no están en el delay se siguen renderizando fuera del lienzo (GPU, cada
+fotograma) y sus fuentes siguen funcionando (una fuente multimedia no vuelve a empezar al cambiar a
+su escena; una fuente de navegador mantiene su página). Están en silencio dentro del delay, no en
+los medidores de OBS.
+
+**Comprobado el 2026-11-13** en la build portable oficial de OBS 33.0.1 (`--portable --multi`, su
+propio puerto de websocket, el plugin compilado con `TRIGGLOW_TEST_SKIP_ACCOUNT_GATE`), 720p30, un
+delay de 5 s. Game (rojo, un tono de 440 Hz, un tono compartido de 3 kHz) y Chat (azul, 1 kHz, el
+tono compartido) con delay; Other (verde) sin. La colección empezaba como la deja una versión
+anterior: Game en el wrapper con el filtro de vídeo puesto. La vista con delay se muestreó del
+wrapper 20 veces por segundo; el sonido, con `InputVolumeMeters` de obs-websocket. Dos pasadas, la
+segunda tras reiniciar con la colección guardada:
+
+| Comprobación | Medido | Resultado |
+|---|---|---|
+| Migración | Quitado el filtro que quedaba en Game, Game fuera del wrapper; el wrapper contiene la escena auxiliar, esta Game (0,0) y Chat (2624,0); un filtro de vídeo, en la auxiliar; ninguno en Game ni en Chat | OK |
+| Cambio desde obs-websocket (de Game a Chat) | Vista con delay roja hasta 4,97 s, azul desde 5,02 s (las dos pasadas) | OK |
+| El sonido con él | El tono de Game calla 5,17 / 5,07 s después, el de Chat suena 5,10 / 4,97 s después (eventos del medidor cada ~50 ms); antes: Game 76/76 muestras, Chat 0/76; después: Game 0/40, Chat 40/40; el tono compartido 129/129 todo el rato | OK |
+| Elegida en la lista de escenas de OBS (Game, Fade 300 ms) | El Programa vuelve al wrapper; vista con delay roja 5,33 / 5,38 s tras el clic (la transición de 300 ms, en directo, y luego el delay) | OK, con la fuga documentada |
+| Una escena fuera de la lista (Other) | Se queda en el Programa, el delay sin cambios | OK |
+| Atajo `scene2` | Chat en el delay | OK |
+| Desactivar | Programa en Chat (la escena del delay), en directo; puertas abiertas, filtros de audio apagados | OK |
+| Guardado y reiniciado | `live_scenes` [Game, Chat] guardado y leído; la escena auxiliar se encuentra, no se vuelve a crear | OK |
 
 ## 4. v0.3.0: compresión real MJPEG del ring de RAM
 
