@@ -316,7 +316,8 @@ sesión una vez desde el dock con tu cuenta gratuita de Trigglow.
 El dock es un solo panel. De arriba abajo: el **estado**, el único botón **Activar delay** /
 **Desactivar delay**, la tarjeta **Delay** (1-600 s, -5/+5 y tus tres presets como atajos rápidos),
 tus **escenas** y, plegadas, **Presets con atajo** y **Opciones** (la calidad mínima y la
-estimación de RAM, la insignia de delay para los espectadores y su esquina, y **Avanzado**). La
+estimación de RAM, la insignia de delay para los espectadores, con o sin los segundos, y su esquina,
+y **Avanzado**). La
 versión y **Reportar un problema** están abajo del todo.
 
 ### A todo OBS (por defecto; todas las plataformas)

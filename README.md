@@ -304,7 +304,7 @@ it. Sign in once with your free Trigglow account from the dock.
 The dock is one panel. Top to bottom: the **status**, the one **Turn delay on** / **Turn delay off**
 button, the **Delay** card (1-600 s, -5/+5 and your three presets as quick picks), your **scenes**,
 then folded sections: **Hotkey presets** and **Options** (the minimum quality and the RAM estimate,
-the delay badge for viewers and its corner, and **Advanced**). The version and **Report a problem**
+the delay badge for viewers, with or without the seconds, and its corner, and **Advanced**). The version and **Report a problem**
 are at the bottom.
 
 ### All of OBS (the default; every platform)

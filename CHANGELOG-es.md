@@ -60,6 +60,9 @@ inicio de sesión se mantienen.
 - **La insignia de delay para los espectadores también solo a la emisión**, en la esquina que
   elijas, hasta 600 s. Un solo "Mostrar la insignia de delay a los espectadores" y una sola esquina
   (Opciones) para las dos.
+- **La insignia sin los segundos.** Desmarca "Mostrar los segundos en la insignia" (Opciones) y tu
+  audiencia ve solo el logo de Dynamic Delay y "Dynamic Delay by Trigglow", sin saber cuánto delay
+  llevas. Funciona en los dos modos y cambia al momento, también con el delay activo.
 - **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
   automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
   emisión propio de OBS está activado (se suman).

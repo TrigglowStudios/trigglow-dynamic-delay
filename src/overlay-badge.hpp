@@ -44,6 +44,8 @@ namespace trigglow::ui {
 // ("30 s"), `signature` as given in small type under them, inside the plate
 // ("Dynamic Delay by Trigglow"; nothing when empty). Shrinks each text to fit if a fallback
 // font runs wider than the bundled ones.
+// An empty `label` draws `value` alone on the first line, in mist: the badge
+// without the seconds ("Dynamic Delay" over "by Trigglow").
 QImage RenderDelayBadge(const QString &label, const QString &value, const QString &signature);
 
 // Writes one PNG per seconds value into a folder (the plugin's config folder,
@@ -60,8 +62,13 @@ public:
 	// couldn't be written (logged once per value), or when called off the UI
 	// thread with nothing rendered yet.
 	QString PathFor(uint32_t seconds, const QString &label, const QString &value, const QString &signature);
+	// The same for the badge without the seconds: the mark, `name` and `byline`.
+	QString BrandPath(const QString &name, const QString &byline);
 
 private:
+	// `slot`: the seconds (1-600), or 0 for the badge without them.
+	QString PathForFile(uint32_t slot, const QString &fileName, const QString &label, const QString &value,
+			    const QString &signature);
 	void RemoveStaleFiles();
 
 	QString directory_;

@@ -56,6 +56,9 @@ sign-in are kept.
   in a file only your user can read.
 - **The delay badge for viewers with only the stream too**, in the corner you choose, up to 600 s.
   One "Show the delay badge to viewers" and one corner (Options) for both.
+- **The badge without the seconds.** Untick "Show the seconds on the badge" (Options) and viewers
+  see only the Dynamic Delay logo and "Dynamic Delay by Trigglow", not how long the delay is. It
+  works in both modes and changes at once, even while the delay is on.
 - **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
   delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
 - **Dump what viewers haven't seen (only the stream).** Something slipped on screen? One button or

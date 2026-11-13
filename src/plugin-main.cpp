@@ -168,6 +168,22 @@ void LoadBrandFonts()
 	}
 }
 
+// The badge PNG both modes show: "DELAY 30 s", or only the Dynamic Delay mark
+// and name when the streamer turned the seconds off (one setting, kept by the
+// stream controller). UI thread.
+std::string BadgeImagePath(trigglow::ui::DelayBadgeFiles &files, uint32_t seconds)
+{
+	if (g_state && g_state->streamController && !g_state->streamController->OverlayShowSeconds())
+		return files
+			.BrandPath(QString::fromUtf8(Str("Overlay.Brand.Name")),
+				   QString::fromUtf8(Str("Overlay.Brand.Byline")))
+			.toStdString();
+	const QString label = QString::fromUtf8(Str("Overlay.Label"));
+	const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
+	const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
+	return files.PathFor(seconds, label, value, signature).toStdString();
+}
+
 // Moves an unreadable settings file out of the way (rename, or copy if that
 // fails) to "<file>.<yyyyMMdd-HHmmss>.invalid" next to it, so the defaults
 // SaveBufferSettings() writes on exit never silently replace what the user (or
@@ -413,6 +429,9 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
 		controller.SetOverlayCorner(static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")));
+	// Both modes' badge. Missing (settings from before the choice): the seconds show.
+	if (obs_data_has_user_value(data, "overlay_show_seconds"))
+		controller.SetOverlayShowSeconds(obs_data_get_bool(data, "overlay_show_seconds"));
 	for (int i = 0; i < 3; ++i) {
 		const std::string key = "preset" + std::to_string(i + 1);
 		if (obs_data_has_user_value(data, key.c_str()))
@@ -459,6 +478,7 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 			    trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
+	obs_data_set_bool(data, "overlay_show_seconds", controller.OverlayShowSeconds());
 	for (int i = 0; i < 3; ++i)
 		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
 	obs_data_array_t *rules = obs_data_array_create();
@@ -618,10 +638,7 @@ bool obs_module_load(void)
 			std::make_unique<trigglow::ui::DelayBadgeFiles>(rawDir ? QString::fromUtf8(rawDir) : QString());
 		bfree(rawDir);
 		g_state->bridge.SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
-			const QString label = QString::fromUtf8(Str("Overlay.Label"));
-			const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
-			const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
-			return files->PathFor(seconds, label, value, signature).toStdString();
+			return BadgeImagePath(*files, seconds);
 		});
 	}
 
@@ -676,12 +693,8 @@ bool obs_module_load(void)
 		g_state->streamController->SetAuthorizationCheck(nullptr);
 	}
 #endif
-	g_state->streamController->SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
-		const QString label = QString::fromUtf8(Str("Overlay.Label"));
-		const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
-		const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
-		return files->PathFor(seconds, label, value, signature).toStdString();
-	});
+	g_state->streamController->SetOverlayImageProvider(
+		[files = g_state->badgeFiles.get()](uint32_t seconds) { return BadgeImagePath(*files, seconds); });
 	LoadStreamSettings(*g_state->streamController);
 	g_state->streamController->Init();
 	AlignSharedSettings(*g_state->bufferController, *g_state->streamController);

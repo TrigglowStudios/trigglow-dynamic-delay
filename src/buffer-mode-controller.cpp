@@ -192,6 +192,11 @@ void BufferModeController::SetOverlayCorner(uint32_t corner)
 	UpdateOverlay();
 }
 
+void BufferModeController::RefreshOverlay()
+{
+	UpdateOverlay();
+}
+
 void BufferModeController::UpdateOverlay()
 {
 	bool visible = status_.showOverlay && status_.state == BufferModeState::Active;

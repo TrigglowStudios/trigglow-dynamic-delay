@@ -155,6 +155,11 @@ public:
 	bool ShowOverlay() const { return showOverlay_; }
 	void SetOverlayCorner(uint32_t corner);
 	uint32_t OverlayCorner() const { return overlayCorner_; }
+	// True: the badge says "DELAY 30 s". False: only the Dynamic Delay mark
+	// and name, no seconds. One setting for both modes, kept (and saved) here;
+	// plugin-main.cpp's image provider reads it for scene mode's badge too.
+	void SetOverlayShowSeconds(bool show);
+	bool OverlayShowSeconds() const { return overlayShowSeconds_; }
 	// Path of the badge PNG for `seconds` (overlay-badge.hpp), UI thread.
 	void SetOverlayImageProvider(std::function<std::string(uint32_t)> provider)
 	{
@@ -226,6 +231,7 @@ private:
 
 	bool showOverlay_ = true;
 	uint32_t overlayCorner_ = 1;
+	bool overlayShowSeconds_ = true;
 	std::function<std::string(uint32_t)> overlayImage_;
 	obs_scene_t *overlayScene_ = nullptr;
 	obs_source_t *overlaySource_ = nullptr;

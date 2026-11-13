@@ -158,6 +158,9 @@ public:
 	// Toggles the "Delay Ns" overlay; takes effect immediately if Active.
 	void SetShowOverlay(bool show);
 	void SetOverlayCorner(uint32_t corner);
+	// Asks for the badge image again (with or without the seconds changed);
+	// keeps where the streamer placed it.
+	void RefreshOverlay();
 
 	BufferModeStatus GetStatus() const { return status_; }
 

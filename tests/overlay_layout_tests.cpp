@@ -258,6 +258,10 @@ void TestFileNames()
 	CHECK(BadgeFileName(0) == "delay-badge-r4-1s.png");
 	CHECK(BadgeFileName(600) == "delay-badge-r4-600s.png");
 	CHECK(BadgeFileName(9000) == "delay-badge-r4-600s.png");
+	// The badge without the seconds: its own name, current, never a seconds value.
+	CHECK(BadgeBrandFileName() == "delay-badge-r4-brand.png");
+	CHECK(!IsStaleBadgeFile(BadgeBrandFileName()));
+	CHECK(IsStaleBadgeFile("delay-badge-r3-brand.png"));
 	CHECK(ClampSeconds(0) == kMinSeconds);
 	CHECK(ClampSeconds(601) == kMaxSeconds);
 	CHECK(ClampSeconds(61) == 61);

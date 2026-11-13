@@ -142,6 +142,8 @@ QImage RenderDelayBadge(const QString &label, const QString &value, const QStrin
 	const QString labelText = WithNoBreakSpaces(label.toUpper());
 	const QString valueText = WithNoBreakSpaces(value);
 
+	// No label (the badge without the seconds): the value starts the line.
+	const qreal gap = labelText.isEmpty() ? 0.0 : kGap;
 	qreal factor = 1.0;
 	QFont labelFont;
 	QFont valueFont;
@@ -155,7 +157,7 @@ QImage RenderDelayBadge(const QString &label, const QString &value, const QStrin
 #endif
 		labelWidth = QFontMetricsF(labelFont).horizontalAdvance(labelText);
 		const qreal valueWidth = QFontMetricsF(valueFont).horizontalAdvance(valueText);
-		if (kTextLeft + labelWidth + kGap + valueWidth <= kTextRight)
+		if (kTextLeft + labelWidth + gap + valueWidth <= kTextRight)
 			break;
 		factor *= 0.95;
 	}
@@ -164,7 +166,7 @@ QImage RenderDelayBadge(const QString &label, const QString &value, const QStrin
 	p.drawText(QPointF(kTextLeft, kValueBaseline), labelText);
 	p.setFont(valueFont);
 	p.setPen(kMist);
-	p.drawText(QPointF(kTextLeft + labelWidth + kGap, kValueBaseline), valueText);
+	p.drawText(QPointF(kTextLeft + labelWidth + gap, kValueBaseline), valueText);
 
 	// "Dynamic Delay by Trigglow": caption-sized, mist at 70 % (8.9:1 on the
 	// plate), drawn as given -- it's a name, never uppercased.
@@ -191,11 +193,23 @@ DelayBadgeFiles::DelayBadgeFiles(QString directory) : directory_(std::move(direc
 QString DelayBadgeFiles::PathFor(uint32_t seconds, const QString &label, const QString &value, const QString &signature)
 {
 	seconds = overlaylayout::ClampSeconds(seconds);
+	return PathForFile(seconds, QString::fromStdString(overlaylayout::BadgeFileName(seconds)), label, value,
+			   signature);
+}
+
+QString DelayBadgeFiles::BrandPath(const QString &name, const QString &byline)
+{
+	return PathForFile(0, QString::fromStdString(overlaylayout::BadgeBrandFileName()), QString(), name, byline);
+}
+
+QString DelayBadgeFiles::PathForFile(uint32_t seconds, const QString &fileName, const QString &label,
+				     const QString &value, const QString &signature)
+{
 	if (directory_.isEmpty())
 		return {};
 	// The name carries the render version, so a PNG an older build drew
 	// differently is never picked up, not even off the UI thread below.
-	const QString path = QDir(directory_).filePath(QString::fromStdString(overlaylayout::BadgeFileName(seconds)));
+	const QString path = QDir(directory_).filePath(fileName);
 	// In memory only: every value is redrawn the first time it is asked for
 	// in a session, before the badge is shown, so a PNG left on disk with
 	// other texts or fonts (OBS language switched since) is never what OBS
