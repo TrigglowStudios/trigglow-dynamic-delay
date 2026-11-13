@@ -730,7 +730,7 @@ void VideoDelayFilter::StopCycle(bool releaseCodecs)
 	for (auto &slot : stagingSlots_)
 		slot.pending = false;
 	stagingNext_ = 0;
-	lastCaptureCell_ = UINT64_MAX;
+	lastCaptureFrameNs_ = 0;
 	InvalidatePlaybackCache();
 	effectiveDelaySeconds_ = 0;
 	cycleRunning_ = false;
@@ -1295,7 +1295,7 @@ void VideoDelayFilter::EnsureRingSized(uint32_t origWidth, uint32_t origHeight)
 	}
 
 	stagingNext_ = 0;
-	lastCaptureCell_ = UINT64_MAX;
+	lastCaptureFrameNs_ = 0;
 	InvalidatePlaybackCache();
 
 	const degradation::Rung &lowest = policy_.Ladder().back();
@@ -1342,7 +1342,7 @@ void VideoDelayFilter::ApplyCurrentRung()
 	captureHeight_ = rung.height;
 	if (captureDivisor_ != rung.captureDivisor) {
 		captureDivisor_ = rung.captureDivisor;
-		lastCaptureCell_ = UINT64_MAX; // Cells are numbered per interval: start counting again.
+		lastCaptureFrameNs_ = 0; // The new interval counts from the next capture.
 	}
 	if (pipeline_) {
 		pipeline_->SetCaptureInterval(frameIntervalNs_ * captureDivisor_);
@@ -2068,19 +2068,21 @@ void VideoDelayFilter::Render()
 	const uint64_t nowNs = os_gettime_ns();
 	MaybeEvaluateDegradation(nowNs);
 
-	// Capture at most once per 1/fps wall-clock cell (2/fps on the half-rate
-	// rung). The old design wrote one ring slot per Render() CALL and assumed
-	// that was exactly fps per second; measured live (support log,
-	// 2026-10-04) it ran 48-90 slots/s at 60fps. frameIntervalNs_ is exact
-	// (16.683ms at 59.94fps, v0.5.1).
+	// Capture each OBS frame once (every other one on the half-rate rung). The
+	// old design wrote one ring slot per Render() CALL and assumed that was
+	// exactly fps per second; measured live (support log, 2026-10-04) it ran
+	// 48-90 slots/s at 60fps. v1.0.0: stamped with OBS's frame time, not the
+	// wall clock at this call (bufferfit::FrameClockNs()): the delayed picture
+	// then shows each frame exactly `delay` after it was captured, instead of
+	// repeating and skipping frames by a frame of render jitter.
+	const uint64_t frameNs = bufferfit::FrameClockNs(obs_get_video_frame_time(), nowNs);
 	const uint64_t captureIntervalNs = frameIntervalNs_ * captureDivisor_;
-	const uint64_t captureCell = nowNs / captureIntervalNs;
-	if (captureCell != lastCaptureCell_) {
-		lastCaptureCell_ = captureCell;
-		CaptureFrame(target, width, height, nowNs);
+	if (bufferfit::CaptureDue(frameNs, lastCaptureFrameNs_, frameIntervalNs_, captureIntervalNs)) {
+		lastCaptureFrameNs_ = frameNs;
+		CaptureFrame(target, width, height, frameNs);
 	}
 
-	DrawDelayed(width, height, nowNs);
+	DrawDelayed(width, height, frameNs);
 
 	FinishRenderSample(renderStartNs);
 }
@@ -2279,10 +2281,15 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 	if (nowNs <= delayNs)
 		return;
 	const uint64_t captureIntervalNs = frameIntervalNs_ * captureDivisor_;
-	// The playback target, chosen by capture AGE (wall clock), never by
+	// The playback target, chosen by capture AGE (frame clock), never by
 	// counting slots back: Render() can run slower than fps under load, and
 	// counting slots would then stretch the delay away from the audio's.
-	uint64_t targetNs = nowNs - delayNs;
+	// v1.0.0: half a frame of tolerance: OBS's frame interval is the integer
+	// floor of the real one (16666666 ns at 60 fps), so `delay` seconds of
+	// frames span a few hundred ns less than `delay` and the frame captured
+	// exactly `delay` ago was taken for too young -- the picture ran one frame
+	// later than the audio (measured 10.017 s for a 10 s delay).
+	uint64_t targetNs = nowNs - delayNs + frameIntervalNs_ / 2;
 	uint64_t oldestNs = 0;
 	if (!ring_->OldestCaptureNs(oldestNs))
 		return;
@@ -2324,6 +2331,12 @@ void VideoDelayFilter::DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, 
 			for (int p = 0; p < 3; ++p)
 				gs_texture_set_image(playbackTextures_[p], image.plane[p], image.stride[p], false);
 			perf_.upload.Push(os_gettime_ns() - uploadStartNs);
+			if (!havePlaybackFrame_) {
+				// v1.0.0: the delayed picture starts: the decoder catching up
+				// to its first due frames is no load, as after a live change.
+				liveChangeGraceUntilNs_ =
+					std::max(liveChangeGraceUntilNs_, os_gettime_ns() + kLiveChangeGraceNs);
+			}
 			havePlaybackFrame_ = true;
 			++perf_.uploads;
 		}

@@ -94,6 +94,24 @@ uint64_t FrameIntervalNs(uint32_t fpsNum, uint32_t fpsDen)
 	return 1000000000ULL * fpsDen / fpsNum;
 }
 
+uint64_t FrameClockNs(uint64_t videoFrameNs, uint64_t wallNs)
+{
+	// A frame time is never far from the wall clock in OBS: rendering runs at
+	// most a few frames late. Anything else isn't the same clock.
+	constexpr uint64_t kMaxSkewNs = 2000000000ULL;
+	if (videoFrameNs == 0)
+		return wallNs;
+	const uint64_t skew = videoFrameNs > wallNs ? videoFrameNs - wallNs : wallNs - videoFrameNs;
+	return skew <= kMaxSkewNs ? videoFrameNs : wallNs;
+}
+
+bool CaptureDue(uint64_t frameNs, uint64_t lastCaptureNs, uint64_t frameIntervalNs, uint64_t captureIntervalNs)
+{
+	if (lastCaptureNs == 0 || frameNs < lastCaptureNs)
+		return true;
+	return frameNs - lastCaptureNs + frameIntervalNs / 2 >= captureIntervalNs;
+}
+
 double OutputCapScale(const Input &in)
 {
 	// Escape hatch (buffer_output_cap = false): v0.5.0 sizing, no cap.

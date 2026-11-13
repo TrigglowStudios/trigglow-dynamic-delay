@@ -20,6 +20,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <vector>
 
 // v1.0.0: the delay line behind AudioDelayFilter, pure C++ (no OBS) so
@@ -37,6 +39,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // History is never thrown away by a change: the ring grows (keeping it) when
 // the delay needs more room and shrinks once a lowered delay has settled.
 //
+// v1.0.0: the history lives in fixed blocks (kBlockFrames per channel), added
+// as samples are written and released as they leave it. Before, the ring was
+// one array per channel sized for the whole delay: turning the delay on at
+// 600 s zero-filled 115 MB per channel, and a raise copied the history into a
+// bigger one, on the source's own audio thread (a microphone's or desktop
+// capture's) -- a stall of tens of ms per source. Now a raise only moves a
+// number; memory comes one block at a time.
+//
 // Single-threaded: AudioDelayFilter calls everything from OBS's audio thread
 // (the delay comes in through an atomic it reads at each chunk).
 namespace trigglow {
@@ -46,6 +56,8 @@ public:
 	// Extra room on top of the delay and the chunk, so a write can never
 	// reach a sample still to be read.
 	static constexpr uint32_t kMarginSeconds = 1;
+	// Frames per channel in a storage block (~0.34 s at 48 kHz, 64 KB a channel).
+	static constexpr size_t kBlockFrames = 16384;
 
 	// Channels and sample rate; a change empties the history.
 	void Configure(uint32_t channels, uint32_t sampleRate);
@@ -72,17 +84,34 @@ public:
 	// delay reached becomes the target's at once.
 	void Reset();
 
+	// The history the line keeps room for (frames per channel), and what it
+	// holds of it.
 	size_t CapacityFrames() const { return capacity_; }
 	uint64_t HistoryFrames() const { return valid_; }
+	// Frames per channel in the blocks allocated right now (spares and blocks
+	// waiting to be freed included).
+	size_t AllocatedFrames() const { return (blocks_.size() + spare_.size() + retired_.size()) * kBlockFrames; }
 
 private:
 	void EnsureCapacity(uint64_t needed);
-	void Reallocate(uint64_t capacity);
+	// The history kept becomes at most `capacity` frames (the newest).
+	void SetCapacity(uint64_t capacity);
 	uint64_t MarginFrames() const { return static_cast<uint64_t>(kMarginSeconds) * sampleRate_; }
+	// The block holding absolute frame `pos`, allocated (or reused) if new.
+	float *BlockFor(uint64_t pos);
+	// Releases the blocks wholly older than the history, and every block
+	// when there's none.
+	void ReleaseOldBlocks();
+	void ReleaseBlock(std::unique_ptr<float[]> block);
 
 	uint32_t channels_ = 0;
 	uint32_t sampleRate_ = 0;
-	std::vector<std::vector<float>> ring_; // ring_[channel][absolute % capacity_]
+	// blocks_[i] holds absolute frames [(firstBlock_ + i) * kBlockFrames, +kBlockFrames),
+	// planar: channel c at c * kBlockFrames.
+	std::deque<std::unique_ptr<float[]>> blocks_;
+	uint64_t firstBlock_ = 0;
+	std::vector<std::unique_ptr<float[]>> spare_;   // A few released blocks, reused before allocating.
+	std::vector<std::unique_ptr<float[]>> retired_; // Released beyond the spares, freed a few per Write().
 	size_t capacity_ = 0;
 	uint64_t written_ = 0; // Absolute frames written since Reset().
 	uint64_t valid_ = 0;   // The newest frames of history held, <= capacity_.

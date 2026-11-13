@@ -316,7 +316,8 @@ private:
 	void CaptureFrame(obs_source_t *target, uint32_t sourceWidth, uint32_t sourceHeight, uint64_t nowNs);
 	void HarvestStagingSlot(StagingSlot &slot, uint64_t nowNs);
 	// Playback: upload the newest decoded frame not younger than now - delay
-	// (when it changed) and draw it, or redraw the last one.
+	// (when it changed) and draw it, or redraw the last one. nowNs is the
+	// frame time the captures are stamped with (bufferfit::FrameClockNs()).
 	void DrawDelayed(uint32_t sourceWidth, uint32_t sourceHeight, uint64_t nowNs);
 	bool EnsureEffect();
 	bool EnsurePlaybackTextures(uint32_t width, uint32_t height);
@@ -533,12 +534,12 @@ private:
 	// A ring exists (written on G): PlannedEffectiveDelaySeconds() (any thread)
 	// then applies the delay on G and returns what the ring really uses.
 	std::atomic<bool> cycleRunning_{false};
-	// Index of the capture cell (now / capture interval) of the last capture.
+	// Frame time (bufferfit::FrameClockNs()) of the last capture, 0 for none.
 	// Render() can be called several times per OBS frame (preview,
 	// projectors, a second canvas, the keep-alive callback...) or slower than
-	// fps under load; capturing at most once per cell keeps the ring at <= fps
-	// slots/second.
-	uint64_t lastCaptureCell_ = UINT64_MAX;
+	// fps under load; bufferfit::CaptureDue() captures each frame once (every
+	// other one on the half-rate rung), keeping the ring at <= fps slots/second.
+	uint64_t lastCaptureFrameNs_ = 0;
 	// Exact frame rate and frame interval from obs_get_video_info()
 	// (RefreshVideoInfo(): constructor, then every Tick(); v0.5.1). The 30fps
 	// values below only stand if OBS had no video info at creation.

@@ -3,7 +3,8 @@
 # Especificación técnica — Trigglow Dynamic Delay para OBS
 
 Estado: **v1.0.0 — estable en Windows; macOS y Linux en alpha**
-Última actualización: 2026-11-11 (v1.0.0: §1, §3.8, §8; el modo stream tiene su propio documento,
+Última actualización: 2026-11-12 (v1.0.0: §3.11, el modo escena comprobado de principio a fin;
+2026-11-11: §1, §3.8, §8; el modo stream tiene su propio documento,
 `docs/STREAM_MODE-es.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; reescrita
 desde cero el 2026-08-26 — ver §0). Se preparó un hotfix v0.5.1 que nunca se publicó; todo
 lo que llevaba salió en la v0.6.0, así que este documento fecha esos cambios en la v0.6.0.
@@ -95,8 +96,9 @@ máquina de estados:
 Un filtro de OBS solo `OBS_SOURCE_VIDEO`, adjunto a una **escena contenedora** oculta que contiene la
 escena en directo elegida por el usuario. En cada llamada a `video_render` (desde la v0.6.0):
 
-1. Como mucho una vez por celda de captura (un intervalo de reloj de `1e9 × fps_den / fps_num` ns,
-   dos en el peldaño de degradación a mitad de fps, §4.7), renderiza la escena en directo en un único
+1. Una vez por frame de OBS (uno de cada dos en el peldaño de degradación a mitad de fps, §4.7;
+   v1.0.0: por el tiempo de frame de OBS, `obs_get_video_frame_time()`, no por el reloj de pared,
+   §3.11), renderiza la escena en directo en un único
    render target de captura RGBA reutilizable al tamaño actual del buffer — su proyección ortogonal
    sigue abarcando el tamaño real de la escena, así que la GPU rasteriza la escena reducida.
 2. Convierte ese frame RGBA a **I420** — Y, más U y V a la mitad de ancho y de alto (promediados por
@@ -150,7 +152,9 @@ vídeo, en espacio de muestras (`ring_[channel][frame]`). El vídeo y el audio u
 vídeo, ambos usan en su lugar el mismo delay efectivo en segundos enteros (§3.3). Desde la v1.0.0
 el ring de cada filtro es un `AudioDelayLine` (`src/audio-delay-line.*`, puro, con pruebas): conserva
 su historial al cambiar el delay, salta hacia delante cuando se baja y se queda en silencio mientras
-se acumula una subida, al mismo paso que el vídeo (§3.3).
+se acumula una subida, al mismo paso que el vídeo (§3.3). Guarda ese historial en bloques de 16.384
+frames por canal, que se reservan según se escriben las muestras y se liberan de pocos en pocos, nunca
+el ring entero de golpe en el hilo de audio de la fuente (§3.11).
 
 ### 3.3. `BufferModeController` — la máquina de estados
 
@@ -462,9 +466,11 @@ en orden:
 
 El número de frames usa el ritmo exacto: `ceil(delay × fps_num / fps_den)` más un cuarto de segundo
 de holgura (el jitter de captura nunca debe dejar el slot más antiguo más joven que el delay) más un
-slot, así que 30s a 60000/1001 necesitan 1815 slots en vez de un recuento truncado a 59fps. La celda
-de captura es `1e9 × fps_den / fps_num` ns (16.683.333ns a 59,94fps); antes de la v0.6.0 era
-`1e9 / 59` en ese caso, lo que perdía casi un frame real por segundo. Desde la v0.7.0 la holgura es
+slot, así que 30s a 60000/1001 necesitan 1815 slots en vez de un recuento truncado a 59fps. El intervalo
+de frame es `1e9 × fps_den / fps_num` ns (16.683.333ns a 59,94fps); antes de la v0.6.0 era
+`1e9 / 59` en ese caso, lo que perdía casi un frame real por segundo. Desde la v1.0.0 la captura sigue
+los tiempos de frame de OBS en vez de celdas de reloj de ese intervalo (`bufferfit::CaptureDue()`,
+§3.11). Desde la v0.7.0 la holgura es
 de al menos un GOP (medio segundo) cuando el ciclo puede guardar un códec inter-frame, y el ratio de
 compresión supuesto sale de la clase de almacenamiento del ciclo: 5x para MJPEG, 12x cuando un
 códec por hardware ya ha funcionado en la sesión (§4.8).
@@ -890,7 +896,8 @@ suelo de calidad y después duración. Dos novedades:
   `VideoBudgetBytes()`, nunca por debajo de un cuarto del presupuesto), también la estimación del
   dock.
 - `AudioDelayLine` agranda su ring cuando el delay necesita más sitio (conservando el historial) y
-  devuelve el sitio cuando un delay rebajado se ha asentado, si sobran al menos 10 s de muestras.
+  devuelve el sitio cuando un delay rebajado se ha asentado, si sobran al menos 10 s de muestras. Las
+  dos cosas, bloque a bloque (§3.11).
 
 Medido en el OBS portable de §3.3 (Windows 11, 31 GB de RAM así que 15,5 GB de presupuesto, AMD
 Radeon RX 7800 XT, OBS 33.0.1, lienzo y salida 1080p60, la escena en directo un clip 1080p60 en bucle
@@ -918,6 +925,103 @@ esta única fuente estéreo), los pools de frames sin comprimir y decodificados 
 4,7 GB según la estimación, 1,4 GB y 0,8 GB de verdad. Tras Desactivar, el proceso conserva
 150-270 MB sobre la base (memoria del heap y del driver que las liberaciones del hilo de limpieza no
 devuelven al momento); un nuevo Activar la reutiliza.
+
+### 3.11. v1.0.0: el modo escena comprobado de principio a fin en OBS 33
+
+El modo escena (el delay en todo OBS: el directo y la grabación) se probó en un OBS real el
+2026-11-12, con el modo stream apagado, manejado solo por obs-websocket.
+
+**Montaje.** El zip oficial de OBS Studio 33.0.1 para Windows, `--portable`, con su propio puerto y
+contraseña de websocket y el plugin en su propia carpeta `plugins/` (compilado con
+`TRIGGLOW_TEST_SKIP_ACCOUNT_GATE`); Windows 11, AMD Radeon RX 7800 XT (códec de almacenamiento
+`hevc_amf`), 31 GB de RAM (15,9 GB de presupuesto). La escena en directo: un fondo 1080p60 con mucho
+movimiento (`testsrc2` con ruido, 20 Mbps) y encima un clip reloj, el código Gray de 16 bits de su
+propio número de frame en 16 barras, con un pitido de 1 kHz en cada segundo entero de su tiempo. Una
+segunda escena; ninguna escena de carga elegida, así que sale el vídeo "Poniendo delay" por defecto.
+OBS grababa (x264, mkv) y emitía (x264, 6 Mbps) a la vez a un receptor RTMP local de FFmpeg. Los dos
+archivos se decodificaron frame a frame: el reloj de cada frame da la antigüedad de lo que muestra,
+así que el delay de cada frame, los frames repetidos y saltados, los negros y los de otras escenas;
+el inicio de cada pitido frente al frame que había en pantalla en ese momento da el audio frente al
+vídeo. "A/V" abajo es ese desfase. Con el delay apagado es el desfase propio y constante de OBS para
+el clip (entre -48 y +25 ms según la prueba y la salida), así que un delay correcto lo deja igual.
+Peticiones usadas: las del vendor `EnableDelay`, `DisableDelay`, `SetDelay`, `AdjustDelay` y
+`GetStatus`; las de OBS `StartRecord`, `StartStream`, `GetCurrentProgramScene`,
+`GetSourceScreenshot`, `GetStats` y `TriggerHotkeyByName`.
+
+| Comprobación | Medido (la grabación y el directo coinciden al frame salvo que se diga) | Resultado |
+|---|---|---|
+| Activar a 10 s | Program en la escena de carga dentro de la petición (1 ms); el vídeo por defecto se reproduce (cambia la mitad de los frames; va en bucle); 10,0 s (601 frames a 60 fps); luego la vista con delay a **10,000 s en todos los frames**, 0 repetidos, 0 saltados, 0 negros; A/V igual que con el delay apagado (-21,5 ms grabación, -8,5 ms directo) | Correcto |
+| Activar a 30 s | Escena de carga 30,0 s (1.800 frames); **30,000 s** en los 908 frames, 0 repetidos o saltados; A/V igual que con el delay apagado (-20,0 / -7,3 ms) | Correcto |
+| Bajar en directo, de 30 a 10 s | Un frame de 30,000 a 10,000 s (la audiencia salta hacia delante); A/V sin cambios | Correcto |
+| Subir en directo 3 s (de 10 a 13) | La imagen se queda quieta 3,00 s (181 frames) con el sonido en silencio lo mismo; luego **13,000 s** | Correcto |
+| Subir en directo 12 s (de 13 a 25) | La escena de carga 12,0 s (721 frames), luego **25,000 s**; nada se volvió a llenar | Correcto |
+| Largo, 1080p60 | Activar a 120 s: ring a 1920x1080, **120,000 s**, OBS +723 MB (arena 400 MB, 55x). Subido en directo a 600 s: escena de carga 480,0 s, luego **600,000 s** en los 1.845 frames, OBS +1.962 MB (arena 1.424 MB, 54x). Sin recorte; la subida bajó la captura a 1552x872 (ver abajo) | Correcto |
+| Largo, 1080p30 | Activar a 600 s: ring a 1920x1080, escena de carga 600,0 s, luego **600,000 s**, OBS +1.708 MB (arena 1.144 MB, 47x); sin recorte. Bajado en directo a 120 s: un frame, **120,000 s**, OBS +595 MB 22 s después | Correcto |
+| En directo 10, 310, 10 s (1080p30) | 310,000 s, luego 10,000 s; A/V -20,4 ms en todas las partes, antes, durante y después | Correcto |
+| Desactivar | Program en la escena en directo dentro de la petición; un frame de la imagen con delay al directo (30,000 a 0,000 s, 25,000 a 0,000 s) | Correcto |
+| Insignia | Dibujada sobre la vista con delay mientras está puesto, en la esquina elegida, con 30, 10, 13 (durante la pausa), 13 y 25 s según se pusieron | Correcto |
+| Atajos | `enable`, `delay_up` (+5 s: carga 5,0 s, luego 15,000 s), `delay_down` (10,000 s), `preset2` y `preset1` (15 y 5 s), `toggle` apagar y encender, `preset3` (45 s: carga los 40 s de más), `skip_live`, `disable`: cada uno medido como arriba | Correcto |
+| Filtros de audio tras reiniciar | Filtros guardados a 60 s, delay guardado 30 s (reproducido el log del product owner: "60s" al cargar). Activar pone todos los filtros de la escena en directo a 30 s antes de encenderlos; audio medido a **30,000 s**, A/V sin cambios | Correcto |
+| Frente a la v0.7.3 | La misma secuencia de Program y de desactivar. La vista con delay de la v0.7.3 repetía y saltaba frames (36 + 37 en 12 s; 107 + 104 en 8 s en su segunda activación) y su A/V se movía uno o dos frames; esta versión: ninguno | Correcto |
+
+**Errores encontrados y corregidos:**
+- **Tirones.** El filtro marcaba sus capturas, y elegía el frame a mostrar, con el reloj de pared
+  leído en `Render()`, que baila hasta un frame frente a los tiempos de frame de OBS: mostraba un
+  frame uno antes una vez y uno después la siguiente (167 repetidos y 157 saltados en 15 s a 60 fps,
+  con el A/V bailando un frame). Ahora usa el tiempo de frame de OBS (`bufferfit::FrameClockNs()` y
+  `CaptureDue()`, con pruebas) y elige con medio frame de tolerancia: el intervalo de frame entero
+  de OBS hace que `delay` segundos de frames se queden unos cientos de ns cortos, y la imagen iba un
+  frame tarde (10,017 s). La v0.7.3 tiene el mismo código y los mismos tirones.
+- **Imagen congelada al volver a poner el delay.** La comprobación rápida del códec de
+  almacenamiento por hardware (cada activación después de la primera de una sesión, cada cambio de
+  peldaño) no entregaba decodificador, así que el hilo de decodificación abría uno con el primer
+  frame que tocaba: ~130 ms por frame, medio segundo quieto y luego un salto, y la política de
+  degradación lo tomaba por carga y bajaba el buffer a 1592x896 para todo el ciclo. Ahora la
+  comprobación rápida también deja un decodificador listo, y el arranque de la reproducción tiene el
+  mismo margen que un cambio en directo.
+- **Destello negro al activar.** El vídeo de carga por defecto se abre cuando se muestra (de 3 a 14
+  frames negros). La escena de carga por defecto lleva ahora debajo del vídeo su primer frame como
+  imagen fija (`autonames::kDefaultLoadingStill`, `data/images/adding-delay-*.jpg`).
+- **Audio un tick tarde para siempre tras cambios largos.** Poner, subir o bajar minutos de delay
+  movía todo el audio de OBS 21,3 ms (un tick de 1.024 muestras) más tarde que el vídeo hasta
+  reiniciar OBS, a escalones (dos en una prueba de 11 minutos: +42,7 ms), también después con el delay
+  apagado. La causa más probable, coherente con todas las pruebas: `AudioDelayLine` dimensionaba su
+  ring de golpe en el hilo de audio de la propia fuente (115 MB llenos de ceros por canal a 600 s,
+  una subida copiando el historial, una bajada liberándolo), y una fuente así de tarde hace que OBS
+  añada un tick de buffering de audio. Ahora la línea guarda su historial en bloques de 16.384 frames
+  que se añaden según se escribe, conserva unos pocos de repuesto y libera el resto de cuatro en
+  cuatro por trozo (`audio_delay_line_tests`, "memory in blocks"). Desde entonces: ningún escalón al
+  activar a 600 s, en una prueba de 10, 310, 10 s ni al bajar de 600 a 120 s.
+- El filtro de audio tomaba el tiempo que estaba apagado entre dos ciclos por un hueco en su fuente
+  y lo registraba; un reinicio de la línea ahora empieza de nuevo la línea de tiempo de la fuente. Su
+  línea al cargar dice ahora que el valor es el último que tuvo.
+
+**Los 60 s / 30 s del log del product owner** no hacen daño. Cada filtro de audio guarda con la
+colección de escenas el último delay que recibió, y carga apagado. Esa colección tiene dos escenas
+que han sido la escena en directo en algún momento (las dos llevan el filtro de vídeo): la usada a
+30 s dejó 30 s en sus fuentes, la usada después a 60 s dejó 60 s en las suyas, también las
+compartidas (CAM, Mic, Desktop, Game). Al activar, cada filtro de la escena en directo recibe el delay
+actual antes de encenderse, y un filtro fuera de la escena en directo sigue apagado.
+
+**Encontrado, sin cambiar:**
+- La primera activación en una colección de escenas crea las escenas, fuentes y filtros auxiliares:
+  OBS se retrasó de 3 a 12 frames en ese momento, y la audiencia ve ese momento como un pequeño
+  tirón `delay` segundos después. Una vez por colección; la v0.7.3 hace lo mismo.
+- El primer delay de una sesión de OBS dimensiona su ring con el 5x supuesto de MJPEG (el códec por
+  hardware aún no se ha probado, invariante I9). La estimación del dock es ese mismo cálculo, así que
+  coincide con lo que pasa, pero es unas diez veces el uso real: la subida en directo a 600 s a
+  1080p60 bajó la captura a 1552x872 para que cupiera, mientras el ring ocupaba 1,4 GB de 15,9 GB de
+  presupuesto. Los ciclos siguientes dimensionan con 12x.
+- Tras desactivar, OBS se queda con 200 a 400 MB más que sin haber puesto el delay (memoria del heap y
+  del driver).
+- Una captura de una fuente (`GetSourceScreenshot`) renderiza la escena fuera del frame de OBS y puede
+  mostrar en ese instante un frame uno o dos frames desplazado. Los únicos otros casos de un frame
+  fueron en cambios en directo (el frame antes de una bajada; en el directo, el primer pitido tras una
+  subida).
+
+**Sin comprobar:** macOS y Linux; los códecs de almacenamiento de NVIDIA e Intel; 600 s a 1080p60
+desde una activación nueva (los 600 s a 60 fps vinieron de una subida en directo); el Modo Estudio; el
+ingest de una plataforma real.
 
 ## 4. v0.3.0: compresión real MJPEG del ring de RAM
 
@@ -1197,7 +1301,8 @@ del log".
 
 ### 4.6. v0.6.0: hilos de códec, ring y arena
 
-Invariantes del diseño: el delay de vídeo es exacto por reloj de pared, los frames se eligen por
+Invariantes del diseño: el delay de vídeo es exacto por el reloj de frames de OBS (el reloj de pared
+hasta la v1.0.0, §3.11), los frames se eligen por
 antigüedad de captura, y vídeo y audio comparten un único delay en segundos enteros (§3.3); "nunca
 corta": en `Active` el ring solo se vacía por un cambio real de geometría; todo lo que es `gs_*` se
 queda en el hilo gráfico (los hilos de códec nunca tocan la GPU); y cada `AVCodecContext` lo usa un

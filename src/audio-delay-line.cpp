@@ -23,13 +23,29 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace trigglow {
 
+namespace {
+// Released blocks kept for reuse: the steady state releases one and needs one
+// every kBlockFrames, so a couple spare means no allocation at all then.
+constexpr size_t kMaxSpareBlocks = 4;
+// Released blocks freed per Write() at most. Freeing a lowered 600 s delay's
+// blocks at once (~1,400 per source) stalled the source's audio thread long
+// enough for OBS to add a tick (21 ms) of audio buffering to the whole output
+// for the rest of the session (measured in OBS 33); at 4 per chunk they go in
+// seconds, never in one call.
+constexpr size_t kMaxFreesPerWrite = 4;
+} // namespace
+
 void AudioDelayLine::Configure(uint32_t channels, uint32_t sampleRate)
 {
 	if (channels == channels_ && sampleRate == sampleRate_)
 		return;
 	channels_ = channels;
 	sampleRate_ = sampleRate;
-	ring_.assign(channels, {});
+	// Blocks are sized for the channel count: none of them fits any more.
+	blocks_.clear();
+	spare_.clear();
+	retired_.clear();
+	firstBlock_ = 0;
 	capacity_ = 0;
 	Reset();
 }
@@ -40,6 +56,7 @@ void AudioDelayLine::Reset()
 	valid_ = 0;
 	lagFrames_ = targetFrames_;
 	fadeIn_ = true;
+	ReleaseOldBlocks(); // Nothing held: every block goes (a few are kept for reuse).
 }
 
 void AudioDelayLine::SetDelayFrames(uint64_t frames)
@@ -55,25 +72,55 @@ void AudioDelayLine::SetDelayFrames(uint64_t frames)
 	// Raised: Read() lets the lag build up, one chunk of silence at a time.
 }
 
-void AudioDelayLine::Reallocate(uint64_t capacity)
+void AudioDelayLine::ReleaseBlock(std::unique_ptr<float[]> block)
 {
-	const auto newCapacity = static_cast<size_t>(std::max<uint64_t>(1, capacity));
-	const uint64_t keep = std::min<uint64_t>(valid_, newCapacity);
-	for (auto &channelRing : ring_) {
-		std::vector<float> next(newCapacity, 0.0f);
-		// Contiguous runs: neither ring wraps inside one.
-		for (uint64_t pos = written_ - keep; pos < written_;) {
-			const auto from = static_cast<size_t>(pos % capacity_);
-			const auto to = static_cast<size_t>(pos % newCapacity);
-			const auto run = static_cast<size_t>(
-				std::min<uint64_t>({written_ - pos, capacity_ - from, newCapacity - to}));
-			std::memcpy(next.data() + to, channelRing.data() + from, run * sizeof(float));
-			pos += run;
+	if (spare_.size() < kMaxSpareBlocks)
+		spare_.push_back(std::move(block));
+	else
+		retired_.push_back(std::move(block)); // Freed a few at a time by Write().
+}
+
+void AudioDelayLine::ReleaseOldBlocks()
+{
+	if (valid_ == 0) {
+		while (!blocks_.empty()) {
+			ReleaseBlock(std::move(blocks_.front()));
+			blocks_.pop_front();
 		}
-		channelRing.swap(next);
+		firstBlock_ = written_ / kBlockFrames;
+		return;
 	}
-	capacity_ = newCapacity;
-	valid_ = keep;
+	const uint64_t oldestHeld = written_ - valid_;
+	while (!blocks_.empty() && (firstBlock_ + 1) * kBlockFrames <= oldestHeld) {
+		ReleaseBlock(std::move(blocks_.front()));
+		blocks_.pop_front();
+		++firstBlock_;
+	}
+}
+
+float *AudioDelayLine::BlockFor(uint64_t pos)
+{
+	const uint64_t block = pos / kBlockFrames;
+	if (blocks_.empty())
+		firstBlock_ = block;
+	while (block >= firstBlock_ + blocks_.size()) {
+		if (!spare_.empty()) {
+			blocks_.push_back(std::move(spare_.back()));
+			spare_.pop_back();
+		} else {
+			// Not zeroed: every frame is written before it can be read.
+			blocks_.push_back(
+				std::unique_ptr<float[]>(new float[static_cast<size_t>(channels_) * kBlockFrames]));
+		}
+	}
+	return blocks_[static_cast<size_t>(block - firstBlock_)].get();
+}
+
+void AudioDelayLine::SetCapacity(uint64_t capacity)
+{
+	capacity_ = static_cast<size_t>(std::max<uint64_t>(1, capacity));
+	valid_ = std::min<uint64_t>(valid_, capacity_);
+	ReleaseOldBlocks();
 }
 
 void AudioDelayLine::EnsureCapacity(uint64_t needed)
@@ -81,13 +128,11 @@ void AudioDelayLine::EnsureCapacity(uint64_t needed)
 	if (needed <= capacity_)
 		return;
 	if (capacity_ == 0 || valid_ == 0) {
-		capacity_ = static_cast<size_t>(needed + MarginFrames());
-		for (auto &channelRing : ring_)
-			channelRing.assign(capacity_, 0.0f);
 		valid_ = 0;
+		SetCapacity(needed + MarginFrames());
 		return;
 	}
-	Reallocate(needed + MarginFrames()); // Keeps every frame held.
+	SetCapacity(needed + MarginFrames()); // Keeps every frame held.
 }
 
 void AudioDelayLine::Write(const float *const *planes, size_t frames)
@@ -95,24 +140,28 @@ void AudioDelayLine::Write(const float *const *planes, size_t frames)
 	if (channels_ == 0 || sampleRate_ == 0 || frames == 0)
 		return;
 	EnsureCapacity(targetFrames_ + frames + MarginFrames());
-	const auto start = static_cast<size_t>(written_ % capacity_);
-	const size_t firstPart = std::min(frames, capacity_ - start);
-	for (uint32_t c = 0; c < channels_; ++c) {
-		std::vector<float> &channelRing = ring_[c];
-		const float *in = planes ? planes[c] : nullptr;
-		if (!in) {
-			// Silence rather than samples from a previous lap of the ring.
-			std::fill_n(channelRing.begin() + static_cast<std::ptrdiff_t>(start), firstPart, 0.0f);
-			if (firstPart < frames)
-				std::fill_n(channelRing.begin(), frames - firstPart, 0.0f);
-			continue;
+	uint64_t pos = written_;
+	size_t done = 0;
+	while (done < frames) {
+		float *block = BlockFor(pos);
+		const auto inBlock = static_cast<size_t>(pos % kBlockFrames);
+		const size_t run = std::min(frames - done, kBlockFrames - inBlock);
+		for (uint32_t c = 0; c < channels_; ++c) {
+			float *dst = block + static_cast<size_t>(c) * kBlockFrames + inBlock;
+			const float *in = planes ? planes[c] : nullptr;
+			if (in)
+				std::memcpy(dst, in + done, run * sizeof(float));
+			else
+				std::fill_n(dst, run, 0.0f); // Silence rather than an older lap's samples.
 		}
-		std::memcpy(channelRing.data() + start, in, firstPart * sizeof(float));
-		if (firstPart < frames)
-			std::memcpy(channelRing.data(), in + firstPart, (frames - firstPart) * sizeof(float));
+		pos += run;
+		done += run;
 	}
 	written_ += frames;
 	valid_ = std::min<uint64_t>(valid_ + frames, capacity_);
+	ReleaseOldBlocks();
+	for (size_t i = 0; i < kMaxFreesPerWrite && !retired_.empty(); ++i)
+		retired_.pop_back();
 }
 
 void AudioDelayLine::WriteSilence(size_t frames)
@@ -142,19 +191,24 @@ bool AudioDelayLine::Read(float *const *out, size_t frames)
 	const size_t count = frames - first;
 
 	for (uint32_t c = 0; c < channels_; ++c) {
-		float *dst = out[c];
-		if (!dst)
-			continue;
-		std::fill_n(dst, first, 0.0f);
-		if (count == 0)
-			continue;
-		const std::vector<float> &channelRing = ring_[c];
-		const auto start =
-			static_cast<size_t>(static_cast<uint64_t>(base + static_cast<int64_t>(missing)) % capacity_);
-		const size_t firstPart = std::min(count, capacity_ - start);
-		std::memcpy(dst + first, channelRing.data() + start, firstPart * sizeof(float));
-		if (firstPart < count)
-			std::memcpy(dst + first + firstPart, channelRing.data(), (count - firstPart) * sizeof(float));
+		if (out[c])
+			std::fill_n(out[c], first, 0.0f);
+	}
+	// Held frames only: every block from oldestHeld on is there.
+	uint64_t pos = static_cast<uint64_t>(base + static_cast<int64_t>(missing));
+	size_t done = 0;
+	while (done < count) {
+		const float *block = blocks_[static_cast<size_t>(pos / kBlockFrames - firstBlock_)].get();
+		const auto inBlock = static_cast<size_t>(pos % kBlockFrames);
+		const size_t run = std::min(count - done, kBlockFrames - inBlock);
+		for (uint32_t c = 0; c < channels_; ++c) {
+			if (out[c])
+				std::memcpy(out[c] + first + done,
+					    block + static_cast<size_t>(c) * kBlockFrames + inBlock,
+					    run * sizeof(float));
+		}
+		pos += run;
+		done += run;
 	}
 
 	if (count == 0) {
@@ -179,7 +233,7 @@ bool AudioDelayLine::Read(float *const *out, size_t frames)
 	if (lagFrames_ == targetFrames_) {
 		const uint64_t needed = targetFrames_ + frames + 2 * MarginFrames();
 		if (capacity_ > 2 * needed && capacity_ - needed > 10ULL * sampleRate_)
-			Reallocate(needed);
+			SetCapacity(needed);
 	}
 	return true;
 }

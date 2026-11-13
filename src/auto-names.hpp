@@ -49,6 +49,9 @@ inline constexpr const char *kAudioFilterPrefix = "Trigglow Audio Delay (auto) -
 // looping video it holds (ObsFrontendBridge::EnsureDefaultLoadingScene).
 inline constexpr const char *kDefaultLoadingScene = "Trigglow Delay Loading (auto)";
 inline constexpr const char *kDefaultLoadingVideo = "Trigglow Delay Loading Video (auto)";
+// v1.0.0: the video's first frame as a still under it, so Program never shows
+// black while the video opens (it closes while not shown).
+inline constexpr const char *kDefaultLoadingStill = "Trigglow Delay Loading Still (auto)";
 
 enum class Kind {
 	WrapperScene,
@@ -83,6 +86,8 @@ bool IsDefaultLoadingSceneName(std::string_view name);
 // The default loading video for an OBS locale ("es-ES", "en-US", ...), relative
 // to the plugin's data folder: Spanish for any "es" locale, English otherwise.
 std::string DefaultLoadingVideoFile(std::string_view locale);
+// v1.0.0: that video's first frame (JPEG), same rule, relative to the data folder.
+std::string DefaultLoadingStillFile(std::string_view locale);
 // Any overlay item the wrapper scene may hold, current or old: never the live
 // scene the delay filter attaches to.
 bool IsOverlayName(std::string_view name);

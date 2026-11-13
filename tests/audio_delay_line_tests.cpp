@@ -275,6 +275,68 @@ void TestSilenceAndMissingPlanes()
 	CHECK_EQ(line.Channels(), 1u);
 }
 
+// v1.0.0: the history's memory comes block by block as it's written, never
+// the whole delay at once on the audio thread (a 600 s delay used to zero-fill
+// 115 MB per channel at its first chunk), follows a lowered delay down, and a
+// Reset gives it back but for a few spare blocks.
+void TestMemoryComesInBlocks()
+{
+	testcheck::g_currentTest = "memory in blocks";
+	constexpr uint32_t kObsRate = 48000;
+	constexpr size_t kObsChunk = 1024;
+	constexpr size_t kBlock = AudioDelayLine::kBlockFrames;
+	AudioDelayLine line;
+	line.Configure(2, kObsRate);
+	line.SetDelayFrames(600ULL * kObsRate);
+	std::vector<float> l(kObsChunk), r(kObsChunk), outL(kObsChunk), outR(kObsChunk);
+	const float *in[2] = {l.data(), r.data()};
+	float *out[2] = {outL.data(), outR.data()};
+	uint64_t next = 0;
+	auto step = [&] {
+		for (size_t i = 0; i < kObsChunk; ++i) {
+			l[i] = static_cast<float>((next + i) % 100000);
+			r[i] = -l[i];
+		}
+		line.Write(in, kObsChunk);
+		next += kObsChunk;
+		line.Read(out, kObsChunk);
+	};
+	step();
+	CHECK(line.CapacityFrames() >= 600u * kObsRate);
+	CHECK(line.AllocatedFrames() <= kBlock); // One block, not 600 s of samples.
+	bool bounded = true;
+	for (int i = 0; i < 3000; ++i) { // ~64 s
+		step();
+		bounded = bounded && line.AllocatedFrames() <= line.HistoryFrames() + 6 * kBlock;
+	}
+	CHECK(bounded);
+	// A raise moves a number: no new memory beyond the next block.
+	const size_t before = line.AllocatedFrames();
+	line.SetDelayFrames(900ULL * kObsRate);
+	step();
+	CHECK(line.AllocatedFrames() <= before + kBlock);
+	// Lowered to 5 s while 600 s of room were kept: once it settles, the room
+	// and the blocks follow it down.
+	line.SetDelayFrames(5ULL * kObsRate);
+	for (int i = 0; i < 300; ++i) // ~6 s
+		step();
+	CHECK(line.CapacityFrames() < 20u * kObsRate);
+	CHECK(line.AllocatedFrames() <= line.CapacityFrames() + 6 * kBlock);
+	// What comes out is still what went in exactly 5 s before.
+	CHECK(outL[kObsChunk - 1] == static_cast<float>((next - 1 - 5ULL * kObsRate) % 100000));
+	CHECK(outR[kObsChunk - 1] == -outL[kObsChunk - 1]);
+	// The blocks a lowering or a Reset releases are freed a few per chunk,
+	// never all in one call (a stall on the source's audio thread).
+	const size_t held = line.AllocatedFrames();
+	line.Reset();
+	CHECK(line.AllocatedFrames() == held);
+	step();
+	CHECK(line.AllocatedFrames() + 4 * kBlock >= held);
+	for (int i = 0; i < 200; ++i)
+		step();
+	CHECK(line.AllocatedFrames() <= line.HistoryFrames() + 6 * kBlock);
+}
+
 } // namespace
 
 int main()
@@ -287,5 +349,6 @@ int main()
 	TestGrowKeepsHistoryAndShrinks();
 	TestReset();
 	TestSilenceAndMissingPlanes();
+	TestMemoryComesInBlocks();
 	return testcheck::Finish("audio_delay_line_tests");
 }
