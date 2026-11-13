@@ -24,7 +24,7 @@ escena auxiliar, **Trigglow Delay Scenes (auto)**, y el delay guarda esa, así q
 y la misma RAM** por muchas que añadas. La escena que está en el delay queda en el lienzo y las
 demás justo fuera, funcionando (algo de GPU, y sus fuentes siguen sonando, silenciadas dentro del
 delay). Con el delay activo, cambia con los botones del dock, los atajos "Escena con delay 1" a
-"8", `SetDelayedScene` de obs-websocket o el Stream Deck: la escena nueva entra en el búfer al
+"8" o `SetDelayedScene` de obs-websocket: la escena nueva entra en el búfer al
 momento y tu audiencia la ve cuando el delay llega a ella, con su sonido; el sonido de la anterior
 se corta en ese mismo momento. Elegir una escena con delay en la lista de escenas de OBS también
 funciona, pero OBS ya la ha mostrado en directo durante su transición cuando el plugin la recoge,

@@ -22,7 +22,7 @@ muestra tu escena de carga (si no eliges ninguna, un vídeo de Trigglow "Poniend
 Programa muestra la escena con delay, así que **tu directo y tu grabación van los dos con delay**.
 Los segundos cambian en directo y el output de streaming no se toca nunca, así que funciona con
 cualquier salida y cualquier servicio. Lo que va con delay son tus escenas con delay (hasta 8, un
-solo búfer para todas): cambia entre ellas desde el dock, los atajos o el Stream Deck con el delay
+solo búfer para todas): cambia entre ellas desde el dock, los atajos u obs-websocket con el delay
 activo; cualquier otra escena se ve en directo. Gasta más RAM y CPU (tabla de abajo). Detalles: `docs/SPEC-es.md`.
 
 **Solo a la emisión (avanzado: "Aplicar el delay solo a la emisión (la grabación y la vista previa
@@ -344,7 +344,7 @@ versión y **Reportar un problema** están abajo del todo.
    subirlos la imagen se congela hasta 3 s, y por encima de eso se ve la escena de carga solo
    durante los segundos de más.
 4. Deja la vista con delay en el Programa y cambia entre tus escenas con delay con los botones del
-   dock (salen con el delay activo), los atajos "Escena con delay 1" a "8" o el Stream Deck: tu
+   dock (salen con el delay activo), los atajos "Escena con delay 1" a "8" u obs-websocket: tu
    audiencia ve el cambio cuando el delay llega a él, imagen y sonido juntos. También puedes elegir
    una escena con delay en la lista de escenas de OBS, pero OBS muestra antes su transición sin
    delay un momento. Una escena que no es de ellas se ve sin delay; para cambiar a cualquier escena
