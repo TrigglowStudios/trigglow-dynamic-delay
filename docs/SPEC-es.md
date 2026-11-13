@@ -152,7 +152,16 @@ vídeo, en espacio de muestras (`ring_[channel][frame]`). El vídeo y el audio u
 vídeo, ambos usan en su lugar el mismo delay efectivo en segundos enteros (§3.3). Desde la v1.0.0
 el ring de cada filtro es un `AudioDelayLine` (`src/audio-delay-line.*`, puro, con pruebas): conserva
 su historial al cambiar el delay, salta hacia delante cuando se baja y se queda en silencio mientras
-se acumula una subida, al mismo paso que el vídeo (§3.3). Guarda ese historial en bloques de 16.384
+se acumula una subida, al mismo paso que el vídeo (§3.3). OBS mezcla un solo audio para todos los
+lienzos, así que los filtros de audio retrasan también el sonido de otros lienzos (Aitum Vertical, el
+lienzo vertical de la Emisión mejorada): desde la v1.0.0, en el modo escena, en cada lienzo que no es
+el principal cada escena que se llama como una de las escenas con delay (§3.12) recibe un `VideoDelayFilter`
+**espejo**, que se adjunta en `Enable()`, se ajusta y se activa con el filtro principal, sigue el
+delay efectivo del audio y se quita en `Disable()` (uno que quedó se quita al cargar una colección).
+Cada espejo es un ring propio con sus códecs, dimensionado en su primer render: el dock avisa de que
+el delay cuesta entonces el doble de RAM, CPU y GPU, aproximadamente. Ese lienzo cambia de escena por
+su cuenta, así que el ring de un espejo empieza a llenarse cuando su escena se ve allí por primera
+vez, y se ve en negro hasta que contiene el delay; un ring lleno se queda hasta `Disable()`. Guarda ese historial en bloques de 16.384
 frames por canal, que se reservan según se escriben las muestras y se liberan de pocos en pocos, nunca
 el ring entero de golpe en el hilo de audio de la fuente (§3.11).
 

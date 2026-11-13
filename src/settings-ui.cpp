@@ -56,6 +56,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -417,6 +418,40 @@ void TrigglowDelayDock::BuildUi()
 		cardLayout->addLayout(body);
 	}
 	root->addWidget(statusCard_);
+
+	// --- Other-canvas notice: right under the status card, hidden unless
+	// a delayed scene is also on another canvas (RefreshFitEstimate()). ---
+	canvasNotice_ = new QFrame(this);
+	canvasNotice_->setProperty("tgCard", QStringLiteral("true"));
+	{
+		auto *noticeLayout = new QVBoxLayout(canvasNotice_);
+		noticeLayout->setContentsMargins(0, 0, 0, 0);
+		noticeLayout->setSpacing(0);
+		auto *rule = new QFrame(canvasNotice_);
+		rule->setFixedHeight(2);
+		rule->setProperty("tgRule", QStringLiteral("warning"));
+		noticeLayout->addWidget(rule);
+		auto *body = new QVBoxLayout();
+		body->setContentsMargins(12, 10, 12, 12);
+		body->setSpacing(6);
+		auto *titleRow = new QHBoxLayout();
+		titleRow->setSpacing(8);
+		canvasIcon_ = MakeIconLabel(canvasNotice_, kAccountIconSize);
+		canvasTitle_ = new QLabel(T("Dock.Canvas.Title"), canvasNotice_);
+		canvasTitle_->setWordWrap(true);
+		SetRole(canvasTitle_, "headline", ui::FontRole::Headline);
+		canvasTitle_->setProperty("tgTone", QStringLiteral("warning"));
+		titleRow->addWidget(canvasIcon_, 0, Qt::AlignVCenter);
+		titleRow->addWidget(canvasTitle_, 1);
+		body->addLayout(titleRow);
+		canvasBody_ = new QLabel(canvasNotice_);
+		canvasBody_->setWordWrap(true);
+		SetRole(canvasBody_, "muted");
+		body->addWidget(canvasBody_);
+		noticeLayout->addLayout(body);
+	}
+	canvasNotice_->setVisible(false);
+	root->addWidget(canvasNotice_);
 
 	// --- Free-account row -- see RefreshAccountUi(). Its own card, right
 	// under the status, so it's the first thing a logged-out user notices,
@@ -1520,6 +1555,7 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
 	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
+	SetIcon(canvasIcon_, ui::IconId::AlertTriangle, QStringLiteral("warning"), kAccountIconSize);
 	for (const auto &[field, lock] : fieldLocks_)
 		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
 					       lock->devicePixelRatioF()));
@@ -1544,6 +1580,19 @@ void TrigglowDelayDock::ApplyStaticIcons()
 
 void TrigglowDelayDock::RefreshFitEstimate()
 {
+	// The other-canvas notice: the same triggers as the estimate (live scene,
+	// settings, every status change), and the same "what would Enable do".
+	QStringList canvases;
+	for (const std::string &name : bufferController_.MirrorCanvases())
+		canvases << QString::fromStdString(name);
+	if (!canvases.isEmpty())
+		canvasBody_->setText(T("Dock.Canvas.Body").arg(canvases.join(QStringLiteral(", "))));
+	if (canvasNotice_->isHidden() != canvases.isEmpty()) {
+		canvasNotice_->setVisible(!canvases.isEmpty());
+		if (!canvases.isEmpty())
+			Announce(QStringLiteral("%1. %2").arg(canvasTitle_->text(), canvasBody_->text()), false);
+	}
+
 	auto estimate =
 		bufferController_.EstimateBufferFit(static_cast<uint32_t>(secondsSpin_->value()),
 						    static_cast<uint32_t>(minResolutionCombo_->currentData().toInt()));
