@@ -204,6 +204,16 @@ void StreamDelayController::SetShowOverlay(bool show)
 	Notify();
 }
 
+void StreamDelayController::SetOverlayShowSeconds(bool show)
+{
+	if (overlayShowSeconds_ == show)
+		return;
+	overlayShowSeconds_ = show;
+	overlaySeconds_ = 0; // Redraw it with or without the seconds.
+	UpdateOverlay();
+	Notify();
+}
+
 void StreamDelayController::SetOverlayCorner(uint32_t corner)
 {
 	overlayCorner_ = corner > 3 ? 0 : corner;

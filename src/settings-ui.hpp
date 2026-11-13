@@ -394,6 +394,9 @@ private:
 	// which pushed narrow docks wider than their window). Clicking it toggles.
 	QLabel *overlayText_ = nullptr;
 	QComboBox *overlayCornerCombo_ = nullptr; // Which canvas corner the overlay sits in.
+	// "Show the seconds on the badge": off leaves only the mark and the name.
+	QCheckBox *overlaySecondsCheck_ = nullptr;
+	QLabel *overlaySecondsText_ = nullptr;
 	// Rows that reflow to a column when the dock is narrow -- see ApplyNarrowLayout().
 	QBoxLayout *accountLayout_ = nullptr; // Text | inline button; stacked when narrow.
 	QBoxLayout *buttonRow_ = nullptr;

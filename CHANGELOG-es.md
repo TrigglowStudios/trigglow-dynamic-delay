@@ -19,11 +19,11 @@ inicio de sesión se mantienen.
   retrasan)"** cambia al nuevo modo stream de abajo; se bloquea mientras hay un delay activo. El
   botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
   de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS.
-- **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu directo, casi
-  sin coste.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
+- **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu
+  directo.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un
   archivo temporal cifrado en tu disco (su clave solo en la memoria de OBS, el archivo se borra al
-  terminar el directo), donde el delay ocupa unos 15 MB de RAM con cualquier duración hasta 600 s
+  terminar el directo), donde el delay ocupa unos 11-16 MB de RAM con cualquier duración hasta 600 s
   (medido a 6 Mbps; unos 450 MB en disco). Con él:
   - **De 0 a 600 s de delay, cambiable en directo.** Actívalo, quítalo, súbelo o bájalo cuando
     quieras; tu directo nunca se reconecta. Al activarlo, los espectadores vuelven a ver los
@@ -38,7 +38,7 @@ inicio de sesión se mantienen.
     WHIP, el dock lo dice: retrasa todo OBS en su lugar.
   - **Tú eliges dónde vive el búfer del delay** (Opciones > Búfer del delay): Memoria (más RAM,
     nada se escribe en disco) o Disco (poca RAM, pero el directo se escribe en un archivo temporal
-    cifrado, unos 2,7 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
+    cifrado, unos 2,8 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
     y Disco en un disco duro, y el dock dice cuál ha detectado. Al lado, hasta dónde puedes subir el
     delay al instante: hasta 600 s con Disco, hasta tu preset o regla por escena más alto con
     Memoria.
@@ -60,6 +60,9 @@ inicio de sesión se mantienen.
 - **La insignia de delay para los espectadores también solo a la emisión**, en la esquina que
   elijas, hasta 600 s. Un solo "Mostrar la insignia de delay a los espectadores" y una sola esquina
   (Opciones) para las dos.
+- **La insignia sin los segundos.** Desmarca "Mostrar los segundos en la insignia" (Opciones) y tu
+  audiencia ve solo el logo de Dynamic Delay y "Dynamic Delay by Trigglow", sin saber cuánto delay
+  llevas. Funciona en los dos modos y cambia al momento, también con el delay activo.
 - **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
   automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
   emisión propio de OBS está activado (se suman).

@@ -124,6 +124,8 @@ bool ShouldPlace(const AppliedLayout &applied, const ItemTransform &current, flo
 // OBS reloads the image source when the value changes. Values outside
 // [kMinSeconds, kMaxSeconds] are clamped.
 std::string BadgeFileName(uint32_t seconds);
+// The badge without the seconds: only the mark and "Dynamic Delay by Trigglow".
+std::string BadgeBrandFileName();
 uint32_t ClampSeconds(uint32_t seconds);
 
 // True for a badge PNG of another render version ("delay-badge-30s.png" from

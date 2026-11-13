@@ -20,10 +20,10 @@ sign-in are kept.
   obs-websocket and the Stream Deck drive the one you chose. If you tried a 1.0 test build with
   "Use stream mode" ticked, you start on all of OBS again.
 - **Only the stream (the advanced option; Windows, macOS and Linux): the delay on your stream
-  itself, at almost no cost.** The plugin holds the stream OBS has already encoded and sends it out later, instead of keeping your
+  itself.** The plugin holds the stream OBS has already encoded and sends it out later, instead of keeping your
   rendered picture in RAM. There's no second encode, and you choose where the held seconds wait:
   in RAM, or in an encrypted temp file on your disk (its key only in OBS's memory, the file deleted
-  when the stream ends), where the delay takes about 15 MB of RAM at any length up to 600 s
+  when the stream ends), where the delay takes about 11-16 MB of RAM at any length up to 600 s
   (measured at 6 Mbps; about 450 MB on disk). With it:
   - **0 to 600 s of delay, changed while you're live.** Turn it on, off, up or down at any moment;
     your stream never reconnects. Turning it on, viewers see the last seconds again and never
@@ -37,7 +37,7 @@ sign-in are kept.
     delay all of OBS instead.
   - **You choose where the delay buffer lives** (Options > Delay buffer): Memory (more RAM,
     nothing written to disk) or Disk (little RAM, but the stream is written to an encrypted temp
-    file, about 2.7 GB per hour at 6 Mbps). Automatic, the default, picks Memory on an SSD and Disk
+    file, about 2.8 GB per hour at 6 Mbps). Automatic, the default, picks Memory on an SSD and Disk
     on a hard drive, and the dock says which it found. Next to it, how far you can raise the delay
     instantly: up to 600 s with Disk, up to your highest preset or scene rule with Memory.
   - The dock shows where your stream goes and its state, the RAM and disk used and the bitrate.
@@ -56,6 +56,9 @@ sign-in are kept.
   in a file only your user can read.
 - **The delay badge for viewers with only the stream too**, in the corner you choose, up to 600 s.
   One "Show the delay badge to viewers" and one corner (Options) for both.
+- **The badge without the seconds.** Untick "Show the seconds on the badge" (Options) and viewers
+  see only the Dynamic Delay logo and "Dynamic Delay by Trigglow", not how long the delay is. It
+  works in both modes and changes at once, even while the delay is on.
 - **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
   delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
 - **Dump what viewers haven't seen (only the stream).** Something slipped on screen? One button or

@@ -1018,6 +1018,10 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 	body->addWidget(MakeDivider(host));
 	body->addSpacing(2);
 	body->addWidget(MakeCheckRow(host, overlayCheck_, overlayText_, T("Dock.Overlay.Label")));
+	body->addWidget(MakeCheckRow(host, overlaySecondsCheck_, overlaySecondsText_, T("Dock.Overlay.Seconds.Label")));
+	overlaySecondsCheck_->setToolTip(T("Dock.Overlay.Seconds.Tooltip"));
+	overlaySecondsCheck_->setAccessibleDescription(T("Dock.Overlay.Seconds.Tooltip"));
+	overlaySecondsText_->setToolTip(T("Dock.Overlay.Seconds.Tooltip"));
 	overlayCornerCombo_ = new QComboBox(host);
 	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopLeft"), 0);
 	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopRight"), 1);
@@ -1038,6 +1042,15 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 		streamController_.SetShowOverlay(checked);
 		SettingsChanged();
 		Refresh();
+	});
+	connect(overlaySecondsCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+		if (refreshing_)
+			return;
+		// Kept by the stream controller for both modes; scene mode's badge
+		// asks for its image again.
+		streamController_.SetOverlayShowSeconds(checked);
+		bufferController_.RefreshOverlay();
+		SettingsChanged();
 	});
 	connect(overlayCornerCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
 		if (refreshing_ || index < 0)
@@ -1219,6 +1232,8 @@ bool TrigglowDelayDock::eventFilter(QObject *watched, QEvent *event)
 		QCheckBox *check = nullptr;
 		if (watched == overlayText_)
 			check = overlayCheck_;
+		else if (watched == overlaySecondsText_)
+			check = overlaySecondsCheck_;
 		else if (watched == drainText_)
 			check = drainCheck_;
 		else if (watched == applyText_)
@@ -1409,6 +1424,8 @@ void TrigglowDelayDock::Refresh()
 	if (cornerIndex >= 0)
 		overlayCornerCombo_->setCurrentIndex(cornerIndex);
 	overlayCornerCombo_->setEnabled(showOverlay);
+	overlaySecondsCheck_->setChecked(streamController_.OverlayShowSeconds());
+	overlaySecondsCheck_->setEnabled(showOverlay);
 	const QString overlayTip = T(streamOnly ? "Dock.Overlay.Tooltip.Stream" : "Dock.Overlay.Tooltip");
 	overlayCheck_->setToolTip(overlayTip);
 	overlayCheck_->setAccessibleDescription(overlayTip);

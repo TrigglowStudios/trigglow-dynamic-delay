@@ -54,8 +54,8 @@ mostly in an encrypted temp file on disk, where the RAM it takes stays about the
 - **Memory:** the whole history stays in RAM and nothing is written to disk: the bitrate times the
   seconds kept (45 MB per minute at 6 Mbps). It reaches back the delay or the highest preset or
   delay-on scene rule (see Changing the delay live), so raises past that wait for the missing seconds.
-- **Disk:** the spill below. RAM stays at 13-15 MB at any delay and every raise up to 600 s is
-  instant, but the whole stream is written to the disk while streaming (about 2.7 GB per hour at
+- **Disk:** the spill below. RAM stays at 11-16 MB at any delay and every raise up to 600 s is
+  instant, but the whole stream is written to the disk while streaming (about 2.8 GB per hour at
   6 Mbps), and read back for long delays.
 - **Automatic** (the default, also for settings saved before the choice existed): Memory when the
   temp folder is on an SSD, Disk when it is on a spinning hard drive. An SSD gains little from the
