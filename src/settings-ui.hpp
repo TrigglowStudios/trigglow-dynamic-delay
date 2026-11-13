@@ -133,6 +133,8 @@ private:
 		QLabel *count = nullptr;
 		QWidget *body = nullptr;
 		bool open = false;
+		// Shown in the header's chip while folded ("30 s", the live scene).
+		QString summary;
 	};
 	// One scene rule (stream mode): scene, action, seconds, remove.
 	struct RuleRow {
@@ -156,6 +158,7 @@ private:
 	void BuildOptions(QVBoxLayout *body);
 	Section *AddSection(QVBoxLayout *parent, const QString &title, bool open);
 	void SetSectionOpen(Section &section, bool open);
+	void SetSectionSummary(Section &section, const QString &summary);
 	void BuildPresets(QVBoxLayout *body);
 	// settings-ui-stream.cpp: stream mode's parts.
 	void BuildStreamStatusRows(QVBoxLayout *body);
@@ -436,6 +439,9 @@ private:
 	Section *warningsSection_ = nullptr;
 	Section *rulesSection_ = nullptr;
 	Section *optionsSection_ = nullptr;
+	// The delay and scenes cards fold too (open by default).
+	Section *delaySection_ = nullptr;
+	Section *scenesSection_ = nullptr;
 	QWidget *rulesDivider_ = nullptr;
 	QVBoxLayout *rulesList_ = nullptr;
 	std::vector<RuleRow> ruleRows_;

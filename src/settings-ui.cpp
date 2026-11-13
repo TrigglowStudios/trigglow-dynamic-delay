@@ -663,11 +663,15 @@ QFrame *TrigglowDelayDock::BuildDelayCard()
 	// "DELAY": the selected mode's seconds (both change live, 1-600 s), 5 s
 	// steps, and the three presets as quick picks (seconds only; the hotkey
 	// presets also turn the delay on).
+	// Folds like the sections below: the header says "Delay" and, folded,
+	// the seconds.
 	auto *card = new QFrame(this);
 	card->setProperty("tgCard", QStringLiteral("true"));
-	auto *layout = new QVBoxLayout(card);
-	layout->setContentsMargins(12, 12, 12, 12);
-	layout->setSpacing(6);
+	auto *cardLayout = new QVBoxLayout(card);
+	cardLayout->setContentsMargins(6, 6, 6, 6);
+	cardLayout->setSpacing(0);
+	delaySection_ = AddSection(cardLayout, T("Dock.Delay.Label"), true);
+	auto *layout = qobject_cast<QVBoxLayout *>(delaySection_->body->layout());
 
 	secondsSpin_ = new QSpinBox(card);
 	// Typed values apply on Enter or when the field loses focus, not on every
@@ -678,7 +682,6 @@ QFrame *TrigglowDelayDock::BuildDelayCard()
 	secondsSpin_->setSuffix(T("Dock.Delay.Suffix"));
 	secondsSpin_->setAccessibleName(T("Dock.Delay.Label"));
 	GuardWheel(secondsSpin_);
-	layout->addWidget(MakeEyebrow(T("Dock.Delay.Label"), secondsSpin_, card));
 
 	auto *row = new QHBoxLayout();
 	row->setSpacing(6);
@@ -741,10 +744,14 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 {
 	// All of OBS only: which scene is delayed, and what shows while the delay
 	// builds up.
+	// Folds too: folded, the header names the live scene.
 	auto *card = new QFrame(this);
 	card->setProperty("tgCard", QStringLiteral("true"));
-	auto *layout = new QVBoxLayout(card);
-	layout->setContentsMargins(12, 12, 12, 12);
+	auto *cardLayout = new QVBoxLayout(card);
+	cardLayout->setContentsMargins(6, 6, 6, 6);
+	cardLayout->setSpacing(0);
+	scenesSection_ = AddSection(cardLayout, T("Dock.Section.Scenes"), true);
+	auto *layout = qobject_cast<QVBoxLayout *>(scenesSection_->body->layout());
 	layout->setSpacing(5);
 
 	liveSceneCombo_ = new SceneComboBox(card);
@@ -879,11 +886,23 @@ void TrigglowDelayDock::SetSectionOpen(Section &section, bool open)
 		section.header->setChecked(open);
 	}
 	section.body->setVisible(open);
+	section.count->setVisible(!open && !section.summary.isEmpty());
 	if (!themeApplied_)
 		return;
 	const QString tone = section.header->property("tgTone").toString();
 	SetButtonIcon(section.header, open ? ui::IconId::ChevronDown : ui::IconId::ChevronRight,
 		      ToneColor(tone.isEmpty() ? QStringLiteral("text") : tone));
+}
+
+void TrigglowDelayDock::SetSectionSummary(Section &section, const QString &summary)
+{
+	if (section.summary == summary)
+		return;
+	section.summary = summary;
+	// Long scene names are cut so the chip never widens a narrow dock.
+	section.count->setText(section.count->fontMetrics().elidedText(summary, Qt::ElideRight, 140));
+	section.count->setToolTip(summary);
+	section.count->setVisible(!section.open && !summary.isEmpty());
 }
 
 void TrigglowDelayDock::BuildPresets(QVBoxLayout *body)
@@ -1620,12 +1639,19 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 			? 0
 			: loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
 	loadingSceneCombo_->setCurrentIndex(loadingIndex >= 0 ? loadingIndex : 0);
+
+	SetSectionSummary(*scenesSection_, liveIndex >= 0 ? liveName : QString());
+	// The live scene is required: folded without one, the section opens so
+	// the picker is in sight.
+	if (liveIndex < 0 && !busy && !scenesSection_->open)
+		SetSectionOpen(*scenesSection_, true);
 }
 
 void TrigglowDelayDock::RefreshDelayCard(uint32_t delaySeconds, bool streamOnly)
 {
 	if (secondsSpin_->value() != static_cast<int>(delaySeconds))
 		secondsSpin_->setValue(static_cast<int>(delaySeconds));
+	SetSectionSummary(*delaySection_, T("Dock.Status.Seconds").arg(delaySeconds));
 	const QString tip = streamOnly ? T("Dock.Delay.Tooltip.Stream").arg(BufferModeController::kMaxDelaySeconds)
 				       : T("Dock.Delay.Tooltip");
 	secondsSpin_->setToolTip(tip);

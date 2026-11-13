@@ -18,7 +18,9 @@ inicio de sesión se mantienen.
   Opciones > Avanzado, **"Aplicar el delay solo a la emisión (la grabación y la vista previa no se
   retrasan)"** cambia al nuevo modo stream de abajo; se bloquea mientras hay un delay activo. El
   botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
-  de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS.
+  de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS. Las
+  tarjetas Delay y Escenas también se pliegan: plegadas, su cabecera sigue mostrando los segundos y
+  la escena en directo.
 - **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu
   directo.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un
