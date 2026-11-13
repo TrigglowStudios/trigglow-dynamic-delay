@@ -235,7 +235,7 @@ dock).
 
 ## La insignia de delay
 
-Mientras el delay está activo y el directo pasa por el relay, la insignia "DELAY N s" (los mismos
+Mientras el delay está activo (también armado, antes de empezar el directo), la insignia "DELAY N s" (los mismos
 PNG que en el modo escena, hasta 600 s) se dibuja en el canal de salida 61 de libobs, sobre el
 Programa de OBS, después de la escena. Los espectadores la reciben con la imagen retrasada. Como está
 en el Programa, la grabación (y todo lo que tome el Programa) también la muestra mientras el delay

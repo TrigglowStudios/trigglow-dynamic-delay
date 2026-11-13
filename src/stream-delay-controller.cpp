@@ -225,11 +225,14 @@ void StreamDelayController::SetOverlayCorner(uint32_t corner)
 // The badge goes on a libobs output channel, which draws over the main view
 // (program) after the scene: the stream, so viewers get it with the delayed
 // picture, and the recording too. Channels 0-6 are OBS's own (transition,
-// global audio); downstream-keyer style plugins use the low ones.
+// global audio); downstream-keyer style plugins use the low ones. Shown from
+// the moment the delay is on, also armed before the stream starts, so the
+// streamer sees it in OBS right away, as in scene mode. Armed only counts
+// while this mode is the selected one (all of OBS draws its own badge).
 void StreamDelayController::UpdateOverlay()
 {
 	constexpr uint32_t kOverlayChannel = 61;
-	const bool want = showOverlay_ && engaged_ && delayOn_ && overlayImage_;
+	const bool want = showOverlay_ && delayOn_ && overlayImage_ && (engaged_ || HandlesControls());
 	if (!want) {
 		if (overlayShown_) {
 			obs_set_output_source(kOverlayChannel, nullptr);
