@@ -59,8 +59,8 @@ un grabador:
   segundos guardados (45 MB por minuto a 6 Mbps). Llega hasta el delay o el preset o la regla por
   escena con delay más alto (ver Cambiar el delay en directo), así que subir por encima de eso espera
   a los segundos que faltan.
-- **Disco:** el volcado de abajo. La RAM se queda en 13-15 MB con cualquier delay y toda subida hasta
-  600 s es al instante, pero todo el directo se escribe en disco mientras emites (unos 2,7 GB por
+- **Disco:** el volcado de abajo. La RAM se queda en 11-16 MB con cualquier delay y toda subida hasta
+  600 s es al instante, pero todo el directo se escribe en disco mientras emites (unos 2,8 GB por
   hora a 6 Mbps), y se vuelve a leer con delays largos.
 - **Automático** (el valor por defecto, también para ajustes guardados antes de existir la opción):
   Memoria si la carpeta temporal está en un SSD, Disco si está en un disco duro mecánico. Un SSD gana

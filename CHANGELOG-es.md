@@ -19,11 +19,11 @@ inicio de sesión se mantienen.
   retrasan)"** cambia al nuevo modo stream de abajo; se bloquea mientras hay un delay activo. El
   botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
   de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS.
-- **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu directo, casi
-  sin coste.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
+- **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu
+  directo.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
   RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un
   archivo temporal cifrado en tu disco (su clave solo en la memoria de OBS, el archivo se borra al
-  terminar el directo), donde el delay ocupa unos 15 MB de RAM con cualquier duración hasta 600 s
+  terminar el directo), donde el delay ocupa unos 11-16 MB de RAM con cualquier duración hasta 600 s
   (medido a 6 Mbps; unos 450 MB en disco). Con él:
   - **De 0 a 600 s de delay, cambiable en directo.** Actívalo, quítalo, súbelo o bájalo cuando
     quieras; tu directo nunca se reconecta. Al activarlo, los espectadores vuelven a ver los
@@ -38,7 +38,7 @@ inicio de sesión se mantienen.
     WHIP, el dock lo dice: retrasa todo OBS en su lugar.
   - **Tú eliges dónde vive el búfer del delay** (Opciones > Búfer del delay): Memoria (más RAM,
     nada se escribe en disco) o Disco (poca RAM, pero el directo se escribe en un archivo temporal
-    cifrado, unos 2,7 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
+    cifrado, unos 2,8 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
     y Disco en un disco duro, y el dock dice cuál ha detectado. Al lado, hasta dónde puedes subir el
     delay al instante: hasta 600 s con Disco, hasta tu preset o regla por escena más alto con
     Memoria.

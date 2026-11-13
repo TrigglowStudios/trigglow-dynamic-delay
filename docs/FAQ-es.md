@@ -32,7 +32,7 @@ predeterminado en un SSD, se quedan en RAM y no se escribe nada en disco. Con Di
 predeterminado en un disco duro, el plugin guarda los últimos 600 s (así el delay se puede subir en
 directo hasta el máximo sin esperar) pero en RAM solo quedan los segundos más recientes: el resto
 espera en un archivo temporal cifrado en tu disco, que se borra al terminar el directo; medido a
-6 Mbps, unos 15 MB de RAM con cualquier delay hasta 600 s, y unos 2,7 GB escritos por hora. A todo
+6 Mbps, unos 11-16 MB de RAM con cualquier delay hasta 600 s, y unos 2,8 GB escritos por hora. A todo
 OBS (modo escena) guarda frames con una calidad cercana a la de tu
 fuente, y por eso ocupa de ~190 MB a ~2,3 GB para 30–60 s.
 
@@ -405,7 +405,7 @@ obs-websocket). Ver `docs/STREAM_DECK-es.md`.
 En Windows, sí: la **v1.0.0** es la primera versión estable, pensada para un uso real en directo,
 con un alcance deliberadamente acotado (ver `docs/ROADMAP-es.md` para lo que viene después). Las
 versiones de macOS y Linux siguen en alpha: compilan y pasan la CI, pero aún no se han usado en un
-directo, y solo tienen el modo escena. "Solo a la emisión" (el modo stream) es nuevo en la 1.0.0 y
+directo. "Solo a la emisión" (el modo stream) es nuevo en la 1.0.0 y
 aún no se ha usado en un directo a una plataforma real (ver "¿Está probado "solo a la emisión"?" más
 arriba). Una zona de
 riesgo — un crash de GPU observado bajo un diseño anterior — que se cree reducida pero todavía no

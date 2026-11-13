@@ -29,8 +29,8 @@ per minute at 6 Mbps). You choose where they wait (Options > Delay buffer). With
 default on an SSD, they stay in RAM and nothing is written to disk. With Disk, the default on a
 hard drive, the plugin keeps the last 600 s (so the delay can be raised live up to the maximum with
 no wait) but only the newest seconds stay in RAM: the rest waits in an encrypted temp file on your
-disk, deleted when the stream ends; measured at 6 Mbps, about 15 MB of RAM at any delay up to
-600 s, and about 2.7 GB written per hour. All of OBS (scene mode) stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
+disk, deleted when the stream ends; measured at 6 Mbps, about 11-16 MB of RAM at any delay up to
+600 s, and about 2.8 GB written per hour. All of OBS (scene mode) stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
 30–60 s.
 
 **Which streams can use only the stream?**
@@ -379,8 +379,7 @@ obs-websocket tool can use too). See `docs/STREAM_DECK.md`.
 **Is it a finished product?**
 On Windows, yes: **v1.0.0** is the first stable release, meant for real live use, with a
 deliberately focused scope (see `docs/ROADMAP.md` for what comes next). The macOS and Linux builds
-are still alpha: they build and pass CI, but haven't been run on a live stream yet, and they only
-have scene mode. "Only the stream" (stream mode) is new in 1.0.0 and hasn't been run on a live
+are still alpha: they build and pass CI, but haven't been run on a live stream yet. "Only the stream" (stream mode) is new in 1.0.0 and hasn't been run on a live
 stream to a real platform yet (see "Is "only the stream" tested?" above). One risk
 area — a GPU crash observed under an earlier design — that's believed reduced but not yet
 specifically re-confirmed (`docs/SPEC.md` §7).

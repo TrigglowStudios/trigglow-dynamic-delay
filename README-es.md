@@ -9,7 +9,7 @@ aparte: todo vive dentro del propio proceso de OBS, y tu stream va directamente 
 plataforma.
 
 **Estado: 1.0.0. Estable en Windows. Las versiones de macOS y Linux están en alpha: compilan y
-pasan la CI, pero aún no se han usado en un directo, y solo tienen el modo escena.**
+pasan la CI, pero aún no se han usado en un directo.**
 
 ## A qué se aplica el delay
 
@@ -29,7 +29,7 @@ no se retrasan)", Windows).** El modo stream, nuevo en la 1.0.0: el plugin guard
 ya ha codificado y lo envía a tu plataforma más tarde. No se decodifica ni se vuelve a codificar
 nada, así que casi no gasta CPU, y tú eliges dónde esperan los segundos retenidos: en RAM (lo
 predeterminado en un SSD, sin escribir nada en disco) o en un archivo temporal cifrado en tu disco
-(lo predeterminado en un disco duro, unos 15 MB de RAM con cualquier delay hasta 600 s, medido a
+(lo predeterminado en un disco duro, unos 11-16 MB de RAM con cualquier delay hasta 600 s, medido a
 6 Mbps). A cambio, el delay solo lo recibe tu plataforma: la grabación, el Replay Buffer, la cámara
 virtual y la vista previa de OBS siguen en directo, y no hay escena de carga. Con él:
 
@@ -153,7 +153,7 @@ delay):
 - **Disco:** en RAM solo quedan los segundos más recientes y lo que está a punto de enviarse. El
   plugin guarda los últimos 600 s (así cualquier subida es al instante) en un archivo temporal
   cifrado en la carpeta temporal del sistema (la clave solo existe en la memoria de OBS), que se
-  borra al terminar el directo. Todo tu directo se escribe en disco mientras emites: unos 2,7 GB por
+  borra al terminar el directo. Todo tu directo se escribe en disco mientras emites: unos 2,8 GB por
   hora a 6 Mbps, 225-600 MB en disco a la vez (tu bitrate por 600 s).
 - **Automático** (lo predeterminado): Memoria si tu carpeta temporal está en un SSD, para ahorrarle
   horas de escrituras constantes, y Disco en un disco duro. Si no se puede saber el tipo de unidad,

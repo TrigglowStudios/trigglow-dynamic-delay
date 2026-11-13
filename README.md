@@ -9,7 +9,7 @@ everything lives inside the OBS process, and your stream goes straight from your
 platform.
 
 **Status: 1.0.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
-but haven't been run on a live stream yet, and they only have scene mode.**
+but haven't been run on a live stream yet.**
 
 ## What the delay applies to
 
@@ -28,7 +28,7 @@ Details: `docs/SPEC.md`.
 live)", Windows).** Stream mode, new in 1.0.0: the plugin holds the stream OBS has already encoded
 and sends it to your platform later. Nothing is decoded or encoded again, so it costs almost no
 CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing written to
-disk) or in an encrypted temp file on your disk (the default on a hard drive, about 15 MB of RAM at
+disk) or in an encrypted temp file on your disk (the default on a hard drive, about 11-16 MB of RAM at
 any delay up to 600 s, measured at 6 Mbps). The trade-off: only your platform gets the delay.
 Recording, the Replay Buffer, the virtual camera and OBS's preview stay live, and there is no
 loading scene. With it:
@@ -144,7 +144,7 @@ the delay; the dock shows an amber notice while that happens.
 - **Disk:** only the newest seconds and what is about to be sent stay in RAM. The plugin keeps the
   last 600 s (so any raise is instant) in an encrypted temp file in your system's temp folder (the
   key exists only in OBS's memory), deleted when the stream ends. Your whole stream is written to
-  disk while you stream: about 2.7 GB per hour at 6 Mbps, 225-600 MB on disk at a time (your
+  disk while you stream: about 2.8 GB per hour at 6 Mbps, 225-600 MB on disk at a time (your
   bitrate times 600 s).
 - **Automatic** (the default): Memory if your temp folder is on an SSD, to spare it hours of
   constant writes, and Disk on a hard drive. If the drive type can't be told, Memory. The dock
