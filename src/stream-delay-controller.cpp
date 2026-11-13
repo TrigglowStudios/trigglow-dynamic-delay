@@ -91,7 +91,7 @@ void StreamDelayController::Init()
 	// few storage queries, no I/O on the drive itself.
 	driveKind_ = relay::DetectDriveKind(relay::SpillFile::TempDirectory());
 	TRIGGLOW_LOG_INFO(kComponent, "stream mode %s (%s)", relay::RelayAvailable() ? "available" : "unavailable",
-			  modeEnabled_ ? "on" : "off");
+			  applyTo_ == ApplyTo::Stream ? "on" : "off");
 }
 
 void StreamDelayController::Shutdown()
@@ -305,12 +305,14 @@ void StreamDelayController::CheckObsSettings(obs_output_t *output)
 		TRIGGLOW_LOG_INFO(kComponent, "settings check: %s", w.c_str());
 }
 
-void StreamDelayController::SetModeEnabled(bool enabled)
+void StreamDelayController::SetApplyTo(ApplyTo applyTo)
 {
-	if (modeEnabled_ == enabled)
+	if (applyTo_ == applyTo)
 		return;
-	modeEnabled_ = enabled;
-	TRIGGLOW_LOG_INFO(kComponent, "stream mode %s (applies from the next stream)", enabled ? "on" : "off");
+	applyTo_ = applyTo;
+	TRIGGLOW_LOG_INFO(kComponent, "delay applies to: %s (stream mode %s from the next stream)",
+			  applyTo == ApplyTo::Stream ? "only the stream" : "all of OBS",
+			  applyTo == ApplyTo::Stream ? "on" : "off");
 	Notify();
 }
 
@@ -400,19 +402,14 @@ void StreamDelayController::CutDrain()
 
 bool StreamDelayController::HandlesControls() const
 {
-	if (!modeEnabled_ || !relay::RelayAvailable())
-		return false;
-	// Streaming without the relay (ineligible service): scene mode handles it.
-	if (obs_frontend_streaming_active() && !engaged_)
-		return false;
-	return true;
+	return ControlsGoToStream(applyTo_, relay::RelayAvailable());
 }
 
 StreamDelayStatus StreamDelayController::GetStatus() const
 {
 	StreamDelayStatus status;
 	status.available = relay::RelayAvailable();
-	status.modeEnabled = modeEnabled_;
+	status.applyTo = applyTo_;
 	status.engaged = engaged_;
 	status.delayOn = delayOn_;
 	status.delaySeconds = delaySeconds_;
@@ -491,7 +488,7 @@ void StreamDelayController::OnStreamingStarting()
 		std::lock_guard<std::mutex> lock(eventMutex_);
 		lastEvent_.clear();
 	}
-	if (!modeEnabled_) {
+	if (applyTo_ != ApplyTo::Stream) {
 		Notify();
 		return;
 	}

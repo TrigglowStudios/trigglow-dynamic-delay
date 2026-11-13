@@ -37,6 +37,8 @@ using trigglow::bufferfit::RingClassName;
 using trigglow::bufferfit::Compute;
 using trigglow::bufferfit::DesiredFrames;
 using trigglow::bufferfit::EvenDim;
+using trigglow::bufferfit::CaptureDue;
+using trigglow::bufferfit::FrameClockNs;
 using trigglow::bufferfit::FrameIntervalNs;
 using trigglow::bufferfit::Input;
 using trigglow::bufferfit::KeyframeIntervalFrames;
@@ -1052,6 +1054,60 @@ void TestLiveChange()
 
 } // namespace
 
+// v1.0.0: the delay buffer's capture clock (FrameClockNs) and its once-per-
+// frame capture (CaptureDue), with OBS's integer frame interval (floor) next
+// to ours (bufferfit::FrameIntervalNs, also the floor here) and a few ns off.
+void TestFrameClock()
+{
+	const uint64_t wall = 5000000000000ULL;
+	CHECK(FrameClockNs(0, wall) == wall);                          // No frame time: the wall clock.
+	CHECK(FrameClockNs(wall - 16000000, wall) == wall - 16000000); // A frame behind: the frame time.
+	CHECK(FrameClockNs(wall + 1000000, wall) == wall + 1000000);
+	CHECK(FrameClockNs(wall - 3000000000ULL, wall) == wall); // Another clock: the wall clock.
+	CHECK(FrameClockNs(42, wall) == wall);
+
+	for (const uint32_t fps : {30u, 60u}) {
+		const uint64_t ours = FrameIntervalNs(fps, 1);
+		for (const uint64_t obsInterval : {ours, ours - 1, ours + 1}) {
+			// Every frame of a long run is captured once, whatever the
+			// number of Render() calls per frame.
+			uint64_t last = 0;
+			uint64_t captures = 0;
+			const uint64_t start = 7777777777ULL;
+			for (uint64_t k = 0; k < 100000; ++k) {
+				const uint64_t frame = start + k * obsInterval;
+				for (int call = 0; call < 3; ++call) {
+					if (CaptureDue(frame, last, ours, ours)) {
+						last = frame;
+						++captures;
+					}
+				}
+			}
+			CHECK(captures == 100000);
+			// The half-rate rung: every other frame.
+			last = 0;
+			captures = 0;
+			for (uint64_t k = 0; k < 100000; ++k) {
+				const uint64_t frame = start + k * obsInterval;
+				if (CaptureDue(frame, last, ours, 2 * ours)) {
+					last = frame;
+					++captures;
+				}
+			}
+			CHECK(captures == 50000);
+		}
+		// OBS skipped frames (lag): the next frame is captured.
+		CHECK(CaptureDue(1000 + 3 * ours, 1000, ours, ours));
+		CHECK(CaptureDue(1000 + 3 * ours, 1000, ours, 2 * ours));
+		// The same frame again, or one less than half a frame later: no.
+		CHECK(!CaptureDue(1000, 1000, ours, ours));
+		CHECK(!CaptureDue(1000 + ours / 3, 1000, ours, ours));
+		// The first capture, and after the clock went back (a video reset).
+		CHECK(CaptureDue(1000, 0, ours, ours));
+		CHECK(CaptureDue(500, 1000, ours, ours));
+	}
+}
+
 int main()
 {
 	TestNoCap();
@@ -1079,6 +1135,7 @@ int main()
 	TestEffectiveSecondsFor();
 	TestWindowBytes();
 	TestLiveChange();
+	TestFrameClock();
 
 	std::printf("buffer_fit_tests: %d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

@@ -213,6 +213,9 @@ Source: "{#PluginStageDir}\data\images\delay-badge.png"; DestDir: "{app}\data\im
 ; chosen (ObsFrontendBridge::EnsureDefaultLoadingScene).
 Source: "{#PluginStageDir}\data\videos\adding-delay-en.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
 Source: "{#PluginStageDir}\data\videos\adding-delay-es.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
+; Its first frame, a still under the video while the video opens.
+Source: "{#PluginStageDir}\data\images\adding-delay-en.jpg"; DestDir: "{app}\data\images"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\images\adding-delay-es.jpg"; DestDir: "{app}\data\images"; Flags: ignoreversion
 ; Brand fonts for the dock and the overlay (Archivo, Geist Mono; SIL OFL 1.1),
 ; with their licenses next to them as the OFL requires.
 Source: "{#PluginStageDir}\data\fonts\*.ttf"; DestDir: "{app}\data\fonts"; Flags: ignoreversion

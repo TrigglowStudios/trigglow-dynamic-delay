@@ -18,19 +18,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
-// v1.0.0: one entry point for every control that isn't the dock's own
-// buttons -- OBS hotkeys (hotkeys.cpp) and obs-websocket requests from the
-// Stream Deck (websocket-vendor.cpp). It sends each one to stream mode when
-// that handles the controls (StreamDelayController::HandlesControls()), to
-// scene mode otherwise. UI thread only.
+// v1.0.0: one entry point for every control -- the dock's one button, OBS
+// hotkeys (hotkeys.cpp) and obs-websocket requests from the Stream Deck
+// (websocket-vendor.cpp). Each goes to the mode the streamer selected in the
+// dock and only to it: stream mode when "Apply the delay only to the stream"
+// is ticked and stream mode can run (StreamDelayController::HandlesControls(),
+// apply-to.hpp), scene mode otherwise. UI thread only.
+//
+// Pure (no OBS): the two modes are DelayTargets (delay-targets.hpp wraps the
+// controllers), so tests/delay_router_tests.cpp drives it with fakes.
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <utility>
 
 namespace trigglow {
-
-class BufferModeController;
-class StreamDelayController;
 
 struct RouterStatus {
 	std::string mode;  // "stream" or "scene".
@@ -42,29 +45,54 @@ struct RouterStatus {
 	double ramMegabytes = 0.0;   // Stream mode: the packet history.
 };
 
+// One delay mode as the router sees it.
+class DelayTarget {
+public:
+	virtual ~DelayTarget() = default;
+	virtual void Enable() = 0;
+	virtual void Disable() = 0;
+	virtual void Toggle() = 0;
+	virtual void AdjustDelay(int deltaSeconds) = 0;
+	virtual void SetDelay(uint32_t seconds) = 0;
+	// False when there is nothing to drop (scene mode never has).
+	virtual bool Dump() = 0;
+	virtual void ApplyPreset(int index) = 0;
+	virtual RouterStatus Status() const = 0;
+};
+
 class DelayRouter {
 public:
-	DelayRouter(BufferModeController &scene, StreamDelayController &stream) : scene_(scene), stream_(stream) {}
+	// `streamOnly`: true while the controls go to stream mode (the dock's
+	// check box, if stream mode can run).
+	DelayRouter(DelayTarget &allOfObs, DelayTarget &streamOnly, std::function<bool()> streamSelected)
+		: all_(allOfObs),
+		  stream_(streamOnly),
+		  streamSelected_(std::move(streamSelected))
+	{
+	}
 
-	void Enable();
-	void Disable();
-	void Toggle();
-	// Stream mode: back to live (delay off). Scene mode: Disable.
-	void SkipToLive();
-	// Both modes change the delay live (scene mode since v1.0.0), 1-600 s.
-	void AdjustDelay(int deltaSeconds);
-	void SetDelay(uint32_t seconds);
+	void Enable() { Active().Enable(); }
+	void Disable() { Active().Disable(); }
+	void Toggle() { Active().Toggle(); }
+	// Back to live: the delay off, in either mode.
+	void SkipToLive() { Disable(); }
+	// Both modes change the delay live, 1-600 s.
+	void AdjustDelay(int deltaSeconds) { Active().AdjustDelay(deltaSeconds); }
+	void SetDelay(uint32_t seconds) { Active().SetDelay(seconds); }
 	// Stream mode only: drop what viewers haven't seen yet. False when there
 	// is nothing to drop (or in scene mode).
-	bool Dump();
-	// Preset 0-2: its seconds, delay on. Both modes take 1-600 s.
-	void ApplyPreset(int index);
-	RouterStatus Status() const;
-	bool StreamMode() const;
+	bool Dump() { return Active().Dump(); }
+	// Preset 0-2: its seconds, delay on.
+	void ApplyPreset(int index) { Active().ApplyPreset(index); }
+	RouterStatus Status() const { return streamSelected_() ? stream_.Status() : all_.Status(); }
+	bool StreamMode() const { return streamSelected_(); }
 
 private:
-	BufferModeController &scene_;
-	StreamDelayController &stream_;
+	DelayTarget &Active() { return streamSelected_() ? stream_ : all_; }
+
+	DelayTarget &all_;
+	DelayTarget &stream_;
+	std::function<bool()> streamSelected_;
 };
 
 } // namespace trigglow

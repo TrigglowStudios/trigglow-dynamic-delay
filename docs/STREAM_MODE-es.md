@@ -3,9 +3,38 @@
 # Modo stream (v1.0.0)
 
 El modo stream retrasa el stream que OBS **ya ha codificado**, en vez de los frames renderizados.
-Es el modo por defecto desde la v1.0.0 allí donde puede funcionar (Windows y, en alfa, macOS y
-Linux); el modo escena (modo buffer, `docs/SPEC-es.md`) se queda para los casos que el modo stream
-no cubre.
+En el dock es la opción avanzada **"Aplicar el delay solo a la emisión (la grabación y la vista
+previa no se retrasan)"** (Opciones > Avanzado), desmarcada por defecto: por defecto el delay se
+aplica a todo OBS, con el modo escena (modo buffer, `docs/SPEC-es.md`), como en la 0.7. El modo
+stream funciona allí donde existe su relay (Windows y, en alfa, macOS y Linux).
+
+## Un panel, dos motores
+
+El dock es un solo panel con un solo botón "Activar delay". La casilla elige el motor, guardado como
+`apply_to` (`"all"` o `"stream"`) en `stream-mode-settings.json` (`src/apply-to.*`):
+
+- **A todo OBS** (`"all"`, por defecto, también si falta la clave o no es uno de los dos valores):
+  el modo escena. Mientras se llena el buffer se ve la escena de carga, y después el Programa, y por
+  tanto el directo y la grabación, van con delay. El dock muestra los selectores de escena en
+  directo y de carga, la calidad mínima y la estimación de RAM.
+- **Solo a la emisión** (`"stream"`): el modo stream. El dock oculta eso y muestra a dónde va el
+  directo, Borrar, la comprobación de ajustes, el delay por escena, el búfer del delay y el envío al
+  parar.
+
+El botón del dock, los atajos, obs-websocket y el Stream Deck pasan todos por `DelayRouter`
+(`src/delay-router.hpp`), que manda cada orden solo al motor elegido:
+`StreamDelayController::HandlesControls()` es verdadero cuando se ha elegido "solo a la emisión" y
+el relay existe aquí (`ControlsGoToStream()`); un directo que no puede usar el relay no pasa los
+controles al modo escena, sino que el dock dice por qué. La casilla se bloquea mientras el delay de
+cualquiera de los dos motores está activo o enviando el resto ("Desactiva el delay para
+cambiarlo."); si se marca con OBS ya emitiendo, se aplica desde el siguiente directo. Al cambiarla,
+el motor nuevo empieza con los segundos que muestra el dock; la insignia (activada o no, y su
+esquina) se escribe en los dos. Al cargar, el motor que no está elegido toma los segundos y la
+insignia del elegido.
+
+Las builds de prueba de la 1.0 guardaban `mode_enabled` (true por defecto, "Usar el modo stream").
+La 1.0 nunca se publicó, así que esa clave se ignora y se borra al guardar, y esas instalaciones
+empiezan con todo OBS (`apply_to_tests` cubre la migración y el router).
 
 ## Por qué casi no cuesta nada
 
@@ -112,7 +141,7 @@ en RAM solo lo que está a punto de enviarse.
 ## Cómo funciona
 
 1. Con `OBS_FRONTEND_EVENT_STREAMING_STARTING` (después de que OBS cree la salida de emisión y
-   antes de que arranque), `StreamDelayController` comprueba que el directo es apto: el
+   antes de que arranque), si se ha elegido "solo a la emisión", `StreamDelayController` comprueba que el directo es apto: el
    `rtmp_output` de OBS, protocolo RTMP o RTMPS, sin Enhanced Broadcasting (multipista). Lee el
    servidor y la clave con `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto,
    incluido "auto").
@@ -201,7 +230,8 @@ por obs-websocket.
 
 La grabación, el Replay Buffer y la cámara virtual leen el Programa de OBS, que el modo stream
 nunca toca: mantienen la imagen en directo. Todas las escenas van con delay, así que cambiar de
-escena con el delay activo es seguro (el modo escena solo retrasa la escena elegida en el dock).
+escena con el delay activo es seguro (a todo OBS solo se retrasa la escena en directo elegida en el
+dock).
 
 ## La insignia de delay
 
@@ -210,7 +240,7 @@ PNG que en el modo escena, hasta 600 s) se dibuja en el canal de salida 61 de li
 Programa de OBS, después de la escena. Los espectadores la reciben con la imagen retrasada. Como está
 en el Programa, la grabación (y todo lo que tome el Programa) también la muestra mientras el delay
 está activo. Activarla o no ("Mostrar la insignia de delay a los espectadores") y la esquina están en
-el dock y se guardan.
+las Opciones del dock, un solo control para los dos motores, y se guardan.
 
 ## Comprobación de ajustes
 
@@ -224,15 +254,15 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 
 ## Controles
 
-- Dock: activar/quitar, volver al directo, segundos (1-600, +/-5), borrar, tres presets, delay por
-  escena, el búfer del delay (Automático / Memoria / Disco) con hasta dónde una subida es al
+- Dock (con "solo a la emisión" marcado): el único botón de activar/quitar, segundos (1-600, +/-5,
+  los presets como atajos rápidos), borrar, los tres presets (Presets con atajo), delay por escena, el búfer del delay (Automático / Memoria / Disco) con hasta dónde una subida es al
   instante (solo lectura; sustituye al ajuste "Guardar para subidas al instante", cuyo `keep_seconds` guardado se sigue leyendo y escribiendo sin cambios),
   envío al parar, la insignia, adónde va el directo (solo lectura: `Ajustes → Emisión` de OBS). Las
   estadísticas muestran la RAM y el disco que ocupa el historial.
 - Atajos (`Ajustes → Atajos` de OBS): Activar/desactivar, Activar, Desactivar (mismos nombres que
-  antes), Volver al directo, Delay +5 s, Delay -5 s, Borrar, Preset 1-3. Pasan por `DelayRouter`:
-  al modo stream cuando este lleva los controles, al modo escena si no (ahí los segundos también
-  cambian en directo, 1-600, un preset además activa el delay, y Borrar no hace nada).
+  antes), Volver al directo, Delay +5 s, Delay -5 s, Borrar, Preset 1-3. Pasan por `DelayRouter`,
+  solo al motor elegido en el dock (a todo OBS los segundos también cambian en directo, 1-600, un
+  preset además activa el delay, y Borrar no hace nada).
 - obs-websocket 5, vendor `trigglow-dynamic-delay`: `GetStatus`, `EnableDelay`, `DisableDelay`,
   `ToggleDelay`, `SkipToLive`, `SetDelay {seconds}`, `AdjustDelay {delta}`, `DumpDelay`,
   `ApplyPreset {index}` (0-2); evento `StatusChanged`. Para el plugin de Stream Deck de Trigglow;
@@ -242,8 +272,9 @@ La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
 
 ## Lo que aún no cubre
 
-- Enhanced Broadcasting (vídeo multipista) y los servicios SRT, RIST y WHIP: modo escena.
-- El delay por escena solo existe en el modo stream: el modo escena sigue retrasando la única
+- Enhanced Broadcasting (vídeo multipista) y los servicios SRT, RIST y WHIP: el dock dice que ese
+  directo no puede usarlo; a todo OBS (lo predeterminado) funciona con ellos.
+- El delay por escena solo existe con "solo a la emisión": a todo OBS sigue retrasando la única
   escena en directo elegida en el dock.
 
 ## Estado de la verificación

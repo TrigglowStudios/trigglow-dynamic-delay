@@ -11,8 +11,16 @@ builds are still alpha (they build and pass CI, but haven't been run on a live s
 sign-in are kept.
 
 **What's new:**
-- **Stream mode (Windows, macOS and Linux): the delay on your stream itself, at almost no cost.** The plugin now
-  holds the stream OBS has already encoded and sends it out later, instead of keeping your
+- **One panel, all of OBS by default.** The dock is one panel: the status, one "Turn delay on"
+  button, the delay (with -5/+5 and your presets), your live and loading scenes, and folded Hotkey
+  presets and Options. By default the delay applies to all of OBS, as in 0.7: your loading scene
+  shows while it builds up, then your stream and your recording are both delayed. Under Options >
+  Advanced, **"Apply the delay only to the stream (recording and preview stay live)"** switches to
+  the new stream mode below; it's locked while a delay is on. The button, the hotkeys,
+  obs-websocket and the Stream Deck drive the one you chose. If you tried a 1.0 test build with
+  "Use stream mode" ticked, you start on all of OBS again.
+- **Only the stream (the advanced option; Windows, macOS and Linux): the delay on your stream
+  itself, at almost no cost.** The plugin holds the stream OBS has already encoded and sends it out later, instead of keeping your
   rendered picture in RAM. There's no second encode, and you choose where the held seconds wait:
   in RAM, or in an encrypted temp file on your disk (its key only in OBS's memory, the file deleted
   when the stream ends), where the delay takes about 15 MB of RAM at any length up to 600 s
@@ -25,7 +33,8 @@ sign-in are kept.
   - **Your recording, Replay Buffer and virtual camera stay live.**
   - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
   - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
-    RTMPS server); nothing to change. Enhanced Broadcasting, SRT and WHIP use scene mode.
+    RTMPS server); nothing to change. With Enhanced Broadcasting, SRT or WHIP, the dock says so:
+    delay all of OBS instead.
   - **You choose where the delay buffer lives** (Options > Delay buffer): Memory (more RAM,
     nothing written to disk) or Disk (little RAM, but the stream is written to an encrypted temp
     file, about 2.7 GB per hour at 6 Mbps). Automatic, the default, picks Memory on an SSD and Disk
@@ -34,27 +43,28 @@ sign-in are kept.
   - The dock shows where your stream goes and its state, the RAM and disk used and the bitrate.
   - If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM, keeping as
     much as your highest preset or scene rule; the stream isn't interrupted.
-  - Scene mode is still there, folded under the new section, for what stream mode can't do.
   - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet
     run on a live stream. The plugin carries its own FFmpeg for it there (LGPL, linked in); RTMPS
     uses macOS's own TLS and, on Linux, the system's OpenSSL 3 (the packages now depend on it).
-- **Scene mode changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
+- **All of OBS changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
   once; raise it and the picture holds (or the loading scene shows, above 3 s) only for the extra
   seconds. The buffer never starts again from empty. Before, you had to turn the delay off to
-  change it, and the most was 60 s. To switch scenes while delayed, use stream mode; the dock
+  change it, and the most was 60 s. To switch scenes while delayed, use only the stream; the dock
   says so.
 - **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
   "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
   in a file only your user can read.
-- **The delay badge for viewers in stream mode**, in the corner you choose, up to 600 s.
+- **The delay badge for viewers with only the stream too**, in the corner you choose, up to 600 s.
+  One "Show the delay badge to viewers" and one corner (Options) for both.
 - **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
   delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
-- **Dump what viewers haven't seen (stream mode).** Something slipped on screen? One button or
+- **Dump what viewers haven't seen (only the stream).** Something slipped on screen? One button or
   hotkey and the seconds still waiting in the delay are never sent: the stream jumps to live and the
   delay comes back on its own.
-- **Delay by scene (stream mode).** Turn the delay on (with its own seconds) or off when you switch
+- **Delay by scene (only the stream).** Turn the delay on (with its own seconds) or off when you switch
   to a scene: on in your game scene, off in Just Chatting, without touching anything.
-- **Three delay presets**, each with its own hotkey.
+- **Three delay presets**, each with its own hotkey, with either choice; the dock's Delay card has
+  them as quick picks.
 - **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
   names and bindings.
 - **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the
@@ -74,6 +84,21 @@ sign-in are kept.
   instead of a blank screen. It lives in its own scene, "Trigglow Delay Loading (auto)", that the
   plugin creates the first time; the dock's loading-scene picker shows it as "Trigglow (default)".
   The delay badge with your seconds still shows over the delayed stream as before.
+
+**What it fixes (scene mode, checked frame by frame in OBS 33):**
+- **Smooth delayed video.** The delayed picture repeated one frame and skipped the next several
+  times a second at 60 fps (about one frame in six), so motion looked jerky and the sound was up to
+  two frames off. It now shows every frame exactly the delay after it happened, with the sound in
+  step. v0.7.3 had this too.
+- **No freeze when the delay starts again.** Turning the delay on a second time in an OBS session
+  (or after the buffer lowered its quality) froze the delayed picture for about half a second as it
+  started, then skipped ahead, and could lower the buffer's resolution for the rest of the delay.
+- **No black flash on the loading screen.** The default "Adding delay" video showed black for a few
+  frames each time the delay was turned on, while the video opened.
+- **Long delays keep the sound in step.** Turning on, raising or lowering a delay of a few minutes
+  could leave all of OBS's sound about 20 ms behind the picture until OBS restarted, a little more
+  each time: the delay's audio memory was set up or given back all at once on your audio sources'
+  own threads, and OBS took that pause for a late source. It now comes and goes a little at a time.
 
 ## v0.7.3 — 2026-11-11 (Early Access)
 

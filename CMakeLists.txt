@@ -370,10 +370,11 @@ else()
       src/stream-relay.hpp
       src/stream-delay-controller.cpp
       src/stream-delay-controller.hpp
-      src/stream-mode-panel.cpp
-      src/stream-mode-panel.hpp
-      src/delay-router.cpp
+      src/apply-to.cpp
+      src/apply-to.hpp
       src/delay-router.hpp
+      src/delay-targets.cpp
+      src/delay-targets.hpp
       src/websocket-vendor.cpp
       src/websocket-vendor.hpp
       src/delay-controller.cpp
@@ -382,6 +383,7 @@ else()
       src/obs-frontend-bridge.hpp
       src/settings-ui.cpp
       src/settings-ui.hpp
+      src/settings-ui-stream.cpp
       src/hotkeys.cpp
       src/hotkeys.hpp
       src/logging.cpp

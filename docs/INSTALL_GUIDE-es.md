@@ -107,12 +107,11 @@ esté marcado en ese mismo menú:
 
 ![Menú de paneles con Trigglow Dynamic Delay listado](images/obs-panel-2-reset-panels.png)
 
-El panel aparece. Su primera sección es **Modo stream**, marcada por defecto: no hay que
-configurar nada más antes de emitir (se recomienda un intervalo de fotogramas clave de 2 s en
-`Ajustes → Salida`). El modo escena, con su selector de escena en directo, está plegado en **Modo
-escena (compatibilidad)**. La captura de abajo es de una
-versión anterior, sin el modo stream. Ver "Usar el plugin" en `README-es.md` para qué configurar a
-continuación.
+El panel aparece: un solo panel con el estado, un solo botón **Activar delay**, el delay y tus
+escenas. Por defecto el delay se aplica a todo OBS (directo y grabación): elige tu **escena en
+directo** y listo. Para retrasar solo la emisión y dejar la grabación en directo, marca **Aplicar el
+delay solo a la emisión** en Opciones > Avanzado. La captura de abajo es de una versión anterior.
+Ver "Usar el plugin" en `README-es.md` para qué configurar a continuación.
 
 ![Panel de Trigglow Dynamic Delay, estado Inactive](images/obs-panel-3-dock.png)
 
@@ -220,8 +219,9 @@ un paquete o el `install.sh` del `.tar.xz`.
 
 Instala la versión nueva encima de la anterior, igual que antes (con OBS cerrado): tus escenas,
 ajustes, atajos e inicio de sesión se conservan. **De cualquier 0.x a la 1.0.0** no hay que hacer
-nada: en Windows el modo stream está activado por defecto desde tu siguiente directo, y tus tres
-atajos conservan sus teclas junto a los siete nuevos. **Desde la v0.5.x o anterior, actualizar es obligatorio**: el inicio
+nada: el delay se sigue aplicando a todo OBS, como antes, en el nuevo dock de un solo panel (el delay
+solo en la emisión es una opción en Opciones > Avanzado), y tus tres atajos conservan sus teclas
+junto a los siete nuevos. **Desde la v0.5.x o anterior, actualizar es obligatorio**: el inicio
 de sesión de esas versiones se apaga cuando se publica la v0.6.0, y las sesiones que ya tienen dejan
 de funcionar tras un periodo de transición. En el primer arranque tu inicio de sesión pasa
 solo al formato nuevo; si el dock te pide iniciar sesión, hazlo una vez (paso 6). Desde la v0.6.0

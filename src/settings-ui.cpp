@@ -19,11 +19,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "settings-ui.hpp"
 #include "api-client.hpp"
 #include "auth-manager.hpp"
+#include "delay-router.hpp"
 #include "diagnostics-collector.hpp"
-#include "i18n.hpp"
 #include "logging.hpp"
 #include "report-bug-dialog.hpp"
 #include "scene-combo-box.hpp"
+#include "settings-ui-parts.hpp"
+#include "stream-delay-controller.hpp"
 #include "ui-tasks.hpp"
 #include "update-checker.hpp"
 
@@ -62,35 +64,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 namespace trigglow {
 
 namespace {
+using namespace dockparts;
+
 constexpr const char *kComponent = "settings-ui";
 
-// Icon sizes (logical px), from the proposal's component spec.
-constexpr int kStatusIconSize = 18;
-constexpr int kAccountIconSize = 16;
-constexpr int kInlineIconSize = 14;
 // The lock inside a locked field, where its arrows were.
 constexpr int kFieldLockSize = 12;
-constexpr int kButtonIconSize = 15;
-// Icon box of a button: the glyph plus its gap to the text.
-constexpr int kButtonIconGap = 7;
-const QSize kButtonIconBox(kButtonIconSize + kButtonIconGap, kButtonIconSize);
-const QSize kLinkIconBox(kInlineIconSize + 5, kInlineIconSize);
-
-// Str() (i18n.hpp) returns const char*/UTF-8 -- every user-facing string in
-// this file goes through this tiny wrapper instead of a bare
-// QString::fromUtf8(Str(...)) at each call site.
-QString T(const char *key)
-{
-	return QString::fromUtf8(Str(key));
-}
-
-QLabel *MakeIconLabel(QWidget *parent, int size)
-{
-	auto *label = new QLabel(parent);
-	label->setFixedSize(size, size);
-	label->setAlignment(Qt::AlignCenter);
-	return label;
-}
 
 // The seconds viewers really get: the effective delay (whole seconds, the same
 // for audio and video) once the controller knows it, never above the
@@ -156,9 +135,12 @@ private:
 	QPixmap pixmap_;
 };
 
-TrigglowDelayDock::TrigglowDelayDock(BufferModeController &bufferController, AuthManager &authManager, QWidget *parent)
+TrigglowDelayDock::TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
+				     DelayRouter &router, AuthManager &authManager, QWidget *parent)
 	: QWidget(parent),
 	  bufferController_(bufferController),
+	  streamController_(streamController),
+	  router_(router),
 	  authManager_(authManager),
 	  updateTasks_(uitasks::Registry())
 {
@@ -169,8 +151,8 @@ TrigglowDelayDock::TrigglowDelayDock(BufferModeController &bufferController, Aut
 	bufferController_.SetSceneListRefreshCallback([this] { RefreshAvailableScenes(); });
 	bufferController_.SetThemeChangedCallback([this] { ApplyTheme(); });
 	authManager_.SetStatusChangedCallback([this] { RefreshAccountUi(); });
-	// Styles everything, then cascades into RefreshAccountUi() ->
-	// RefreshFromStatus(), so this alone initializes the whole dock's state.
+	// Styles everything, then cascades into RefreshAccountUi() -> Refresh(),
+	// so this alone initializes the whole dock's state.
 	ApplyTheme(/*force=*/true);
 }
 
@@ -192,6 +174,83 @@ QLocale TrigglowDelayDock::UiLocale() const
 	const char *locale = obs_get_locale();
 	return locale && *locale ? QLocale(QString::fromUtf8(locale).replace(QLatin1Char('-'), QLatin1Char('_')))
 				 : QLocale();
+}
+
+QLabel *TrigglowDelayDock::MakeEyebrow(const QString &text, QWidget *buddy, QWidget *parent)
+{
+	// Field labels ("LIVE SCENE") sit ABOVE their control, in mono uppercase,
+	// and are tied to it with setBuddy() for screen readers.
+	auto *label = new QLabel(text, parent ? parent : this);
+	SetRole(label, "eyebrow", ui::FontRole::Eyebrow);
+	if (buddy)
+		label->setBuddy(buddy);
+	return label;
+}
+
+void TrigglowDelayDock::AddFieldLock(QWidget *field)
+{
+	// A lock where a locked field's arrows were (ui-theme.cpp hides them while
+	// the field is disabled), so the field itself says it can't change now;
+	// shown by RefreshSceneFields() while the delay runs. Its own layout on the
+	// field only places the lock: the field's value and popup are untouched.
+	auto *layout = new QHBoxLayout(field);
+	layout->setSizeConstraint(QLayout::SetNoConstraint);
+	layout->setContentsMargins(0, 0, 9, 0);
+	layout->setSpacing(0);
+	layout->addStretch(1);
+	auto *lock = new FieldIcon(field);
+	lock->setFixedSize(kFieldLockSize, kFieldLockSize);
+	lock->setVisible(false);
+	layout->addWidget(lock, 0, Qt::AlignVCenter);
+	fieldLocks_.emplace_back(field, lock);
+}
+
+QWidget *TrigglowDelayDock::MakeNoteRow(QWidget *parent, QLabel *&icon, const QString &text)
+{
+	// An inline icon and a wrapping hint: the lock and info lines.
+	auto *row = new QWidget(parent);
+	auto *layout = new QHBoxLayout(row);
+	layout->setContentsMargins(0, 2, 0, 0);
+	layout->setSpacing(6);
+	icon = MakeIconLabel(row, kInlineIconSize);
+	auto *label = new QLabel(text, row);
+	label->setWordWrap(true);
+	SetRole(label, "hint", ui::FontRole::Hint);
+	layout->addWidget(icon, 0, Qt::AlignTop);
+	layout->addWidget(label, 1);
+	row->setVisible(false);
+	return row;
+}
+
+QWidget *TrigglowDelayDock::MakeCheckRow(QWidget *parent, QCheckBox *&check, QLabel *&text, const QString &label)
+{
+	// The check box's text as a word-wrapping label (a QCheckBox can't wrap,
+	// which pushed narrow docks wider than their window). Clicking it toggles
+	// (eventFilter()).
+	auto *row = new QWidget(parent);
+	auto *layout = new QHBoxLayout(row);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(8);
+	check = new QCheckBox(row);
+	check->setFocusPolicy(Qt::TabFocus);
+	check->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+	check->setAccessibleName(label);
+	text = new QLabel(label, row);
+	text->setObjectName(QStringLiteral("tgCheckText")); // Dims while the box is locked (ExtraStyleSheet()).
+	text->setWordWrap(true);
+	text->setBuddy(check);
+	text->setCursor(Qt::PointingHandCursor);
+	text->installEventFilter(this);
+	layout->addWidget(check, 0, Qt::AlignTop);
+	layout->addWidget(text, 1);
+	return row;
+}
+
+void TrigglowDelayDock::GuardWheel(QWidget *field)
+{
+	// See eventFilter(): the wheel over a field without focus scrolls the dock.
+	field->setFocusPolicy(Qt::StrongFocus);
+	field->installEventFilter(this);
 }
 
 void TrigglowDelayDock::BuildUi()
@@ -219,33 +278,6 @@ void TrigglowDelayDock::BuildUi()
 	auto *root = new QVBoxLayout(content);
 	root->setContentsMargins(12, 12, 12, 12);
 	root->setSpacing(10);
-
-	// Field labels ("ESCENA EN DIRECTO") sit ABOVE their control, in mono
-	// uppercase, and are tied to it with setBuddy() for screen readers.
-	auto makeEyebrow = [this](const QString &text, QWidget *buddy) {
-		auto *label = new QLabel(text, this);
-		SetRole(label, "eyebrow", ui::FontRole::Eyebrow);
-		if (buddy)
-			label->setBuddy(buddy);
-		return label;
-	};
-
-	// A lock where a locked field's arrows were (ui-theme.cpp hides them while
-	// the field is disabled), so the field itself says it can't change now;
-	// shown by RefreshFromStatus() while the delay runs. Its own layout on the
-	// field only places the lock: the field's value and popup are untouched.
-	auto addFieldLock = [this](QWidget *field) {
-		auto *layout = new QHBoxLayout(field);
-		layout->setSizeConstraint(QLayout::SetNoConstraint);
-		layout->setContentsMargins(0, 0, 9, 0);
-		layout->setSpacing(0);
-		layout->addStretch(1);
-		auto *lock = new FieldIcon(field);
-		lock->setFixedSize(kFieldLockSize, kFieldLockSize);
-		lock->setVisible(false);
-		layout->addWidget(lock, 0, Qt::AlignVCenter);
-		fieldLocks_.emplace_back(field, lock);
-	};
 
 	// --- Update notice: hidden until/unless CheckForUpdateAsync() (fired
 	// from the constructor) actually finds a newer published release. Above
@@ -284,8 +316,10 @@ void TrigglowDelayDock::BuildUi()
 			QDesktopServices::openUrl(QUrl(updateReleaseUrl_));
 	});
 
-	// --- Status card: rule, eyebrow + chip, icon + headline, detail and the
-	// fill progress. Always the first thing the user sees. ---
+	// --- Status card: rule, eyebrow + chip, icon + headline, detail, then
+	// what only one mode has (the fill progress and the degradation notice
+	// for all of OBS; where it sends, stats and notes for only the stream).
+	// Always the first thing the user sees. ---
 	statusCard_ = new QFrame(this);
 	statusCard_->setProperty("tgCard", QStringLiteral("true"));
 	statusCard_->setFocusPolicy(Qt::NoFocus);
@@ -303,7 +337,7 @@ void TrigglowDelayDock::BuildUi()
 		body->setSpacing(4);
 		auto *eyebrowRow = new QHBoxLayout();
 		eyebrowRow->setSpacing(6);
-		eyebrowRow->addWidget(makeEyebrow(T("Dock.Status.Eyebrow"), nullptr));
+		eyebrowRow->addWidget(MakeEyebrow(T("Dock.Status.Eyebrow"), nullptr, statusCard_));
 		eyebrowRow->addStretch(1);
 		statusChip_ = new QLabel(statusCard_);
 		SetRole(statusChip_, "chip", ui::FontRole::Chip);
@@ -347,6 +381,8 @@ void TrigglowDelayDock::BuildUi()
 		fillRow_->setVisible(false);
 		body->addWidget(fillRow_);
 
+		BuildStreamStatusRows(body);
+
 		// Degradation notice (RefreshPipelineHealth): below everything the
 		// state says, after a hairline, so the headline and the seconds chip
 		// stay what the card is about -- the delay itself is intact. Amber
@@ -355,10 +391,7 @@ void TrigglowDelayDock::BuildUi()
 		auto *healthLayout = new QVBoxLayout(healthNotice_);
 		healthLayout->setContentsMargins(0, 8, 0, 0);
 		healthLayout->setSpacing(4);
-		auto *healthDivider = new QFrame(healthNotice_);
-		healthDivider->setProperty("tgDivider", QStringLiteral("true"));
-		healthDivider->setFixedHeight(1);
-		healthLayout->addWidget(healthDivider);
+		healthLayout->addWidget(MakeDivider(healthNotice_));
 		healthLayout->addSpacing(4);
 		auto *healthTitleRow = new QHBoxLayout();
 		healthTitleRow->setSpacing(6);
@@ -385,10 +418,10 @@ void TrigglowDelayDock::BuildUi()
 	}
 	root->addWidget(statusCard_);
 
-	// --- Free-account row -- see RefreshAccountUi(). Its own card, placed
-	// above the scene pickers, not below the buttons, so it's the first
-	// thing a logged-out user notices, before they've configured anything
-	// and hit an Error state at Enable() time. ---
+	// --- Free-account row -- see RefreshAccountUi(). Its own card, right
+	// under the status, so it's the first thing a logged-out user notices,
+	// before they've configured anything and hit an Error state at Enable()
+	// time. One for both modes. ---
 	auto *accountCard = new QFrame(this);
 	accountCard->setProperty("tgCard", QStringLiteral("true"));
 	{
@@ -435,262 +468,41 @@ void TrigglowDelayDock::BuildUi()
 	}
 	root->addWidget(accountCard);
 
-	// --- Configuration card: every control the user tweaks before pressing
-	// Enable, grouped together instead of scattered as separate rows. ---
-	auto *configCard = new QFrame(this);
-	configCard->setProperty("tgCard", QStringLiteral("true"));
-	auto *configLayout = new QVBoxLayout(configCard);
-	configLayout->setContentsMargins(12, 12, 12, 12);
-	configLayout->setSpacing(5);
-
-	liveSceneCombo_ = new SceneComboBox(this);
-	liveSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	liveSceneCombo_->setMinimumContentsLength(8);
-	liveSceneCombo_->setToolTip(T("Dock.Scene.Live.Tooltip"));
-	liveSceneCombo_->setAccessibleName(T("Dock.Scene.Live"));
-	// Nothing preselected until the user picks a scene (index -1 shows this),
-	// so choosing the first one is a real selection, and the field never
-	// shows a scene while the requirement list says none is chosen.
-	liveSceneCombo_->setPlaceholderText(T("Dock.Scene.Live.Placeholder"));
-	liveSceneCombo_->SetRefreshCallback(
-		[this] { RefreshSceneCombo(liveSceneCombo_, bufferController_.GetStatus().liveSceneName, false); });
-	{
-		// "LIVE SCENE *": the asterisk (accent) marks it required, like the
-		// web's support form.
-		auto *row = new QHBoxLayout();
-		row->setSpacing(3);
-		row->addWidget(makeEyebrow(T("Dock.Scene.Live"), liveSceneCombo_));
-		auto *required = new QLabel(QStringLiteral("*"), this);
-		SetRole(required, "eyebrow", ui::FontRole::Eyebrow);
-		required->setProperty("tgTone", QStringLiteral("accent"));
-		required->setToolTip(T("Dock.Required"));
-		required->setAccessibleName(T("Dock.Required"));
-		row->addWidget(required);
-		row->addStretch(1);
-		configLayout->addLayout(row);
-	}
-	configLayout->addWidget(liveSceneCombo_);
-	addFieldLock(liveSceneCombo_);
-	RefreshSceneCombo(liveSceneCombo_, bufferController_.GetStatus().liveSceneName, false);
-
-	configLayout->addSpacing(7);
-	loadingSceneCombo_ = new SceneComboBox(this);
-	loadingSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	loadingSceneCombo_->setMinimumContentsLength(8);
-	loadingSceneCombo_->setToolTip(T("Dock.Scene.Loading.Tooltip"));
-	loadingSceneCombo_->setAccessibleName(T("Dock.Scene.Loading"));
-	loadingSceneCombo_->SetRefreshCallback([this] {
-		RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
-	});
-	{
-		// "LOADING SCENE   Optional": the marker in the hint style, not a
-		// second mono uppercase eyebrow, so the two never read as one label
-		// when a narrow dock (240 px) leaves no room between them.
-		auto *row = new QHBoxLayout();
-		row->setSpacing(8);
-		row->addWidget(makeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_), 0, Qt::AlignBottom);
-		row->addStretch(1);
-		auto *optional = new QLabel(T("Dock.Optional"), this);
-		SetRole(optional, "hint", ui::FontRole::Hint);
-		row->addWidget(optional, 0, Qt::AlignBottom);
-		configLayout->addLayout(row);
-	}
-	configLayout->addWidget(loadingSceneCombo_);
-	addFieldLock(loadingSceneCombo_);
-	RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
-
-	// Delay + quality side by side -- two related, similarly-sized controls;
-	// no reason to spend a full row each in a narrow dock.
-	configLayout->addSpacing(7);
-	auto *tuningRow = new QBoxLayout(QBoxLayout::LeftToRight);
-	tuningRow_ = tuningRow;
-	tuningRow->setSpacing(10);
-
-	auto *delayColumn = new QVBoxLayout();
-	delayColumn->setSpacing(5);
-	secondsSpin_ = new QSpinBox(this);
-	// v1.0.0: up to 600 s, and editable while the delay runs (it changes
-	// live). Typed values apply on Enter or when the field loses focus, not on
-	// every digit: "300" must not pass through 3 and 30 on a live stream.
-	secondsSpin_->setRange(static_cast<int>(BufferModeController::kMinDelaySeconds),
-			       static_cast<int>(BufferModeController::kMaxDelaySeconds));
-	secondsSpin_->setKeyboardTracking(false);
-	secondsSpin_->setSuffix(T("Dock.Delay.Suffix"));
-	secondsSpin_->setValue(static_cast<int>(bufferController_.GetStatus().delaySeconds));
-	secondsSpin_->setToolTip(T("Dock.Delay.Tooltip"));
-	secondsSpin_->setAccessibleName(T("Dock.Delay.Label"));
-	delayColumn->addWidget(makeEyebrow(T("Dock.Delay.Label"), secondsSpin_));
-	delayColumn->addWidget(secondsSpin_);
-	tuningRow->addLayout(delayColumn, /*stretch=*/1);
-
-	auto *qualityColumn = new QVBoxLayout();
-	qualityColumn->setSpacing(5);
-	minResolutionCombo_ = new QComboBox(this);
-	minResolutionCombo_->addItem(QStringLiteral("480p"), 480);
-	minResolutionCombo_->addItem(QStringLiteral("720p"), 720);
-	minResolutionCombo_->addItem(QStringLiteral("1080p"), 1080);
-	// Floors above 1080p only matter with an OBS output that big: the buffer
-	// never exceeds the output (bufferfit::Compute()), so with a 1080p output
-	// they buffer at 1080p, like the 1080p entry.
-	minResolutionCombo_->addItem(T("Dock.Quality.Option1440"), 1440);
-	minResolutionCombo_->addItem(T("Dock.Quality.Option2160"), 2160);
-	minResolutionCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	minResolutionCombo_->setMinimumContentsLength(10);
-	minResolutionCombo_->setToolTip(T("Dock.Quality.Tooltip"));
-	minResolutionCombo_->setAccessibleName(T("Dock.Quality.Label"));
-	qualityColumn->addWidget(makeEyebrow(T("Dock.Quality.Label"), minResolutionCombo_));
-	qualityColumn->addWidget(minResolutionCombo_);
-	addFieldLock(minResolutionCombo_);
-	tuningRow->addLayout(qualityColumn, /*stretch=*/1);
-
-	configLayout->addLayout(tuningRow);
-
-	// While the delay runs (Filling, Active) the scenes and the quality are
-	// locked: changing them would restart the buffer under a live stream. The
-	// seconds aren't (v1.0.0: the delay changes in place). This line says so,
-	// visibly, not only in a tooltip (RefreshFromStatus).
-	delayLockedRow_ = new QWidget(configCard);
-	{
-		auto *lockedLayout = new QHBoxLayout(delayLockedRow_);
-		lockedLayout->setContentsMargins(0, 2, 0, 0);
-		lockedLayout->setSpacing(6);
-		delayLockedIcon_ = MakeIconLabel(delayLockedRow_, kInlineIconSize);
-		auto *lockedText = new QLabel(T("Dock.Delay.Locked"), delayLockedRow_);
-		lockedText->setWordWrap(true);
-		SetRole(lockedText, "hint", ui::FontRole::Hint);
-		lockedLayout->addWidget(delayLockedIcon_, 0, Qt::AlignTop);
-		lockedLayout->addWidget(lockedText, 1);
-	}
-	delayLockedRow_->setVisible(false);
-	configLayout->addWidget(delayLockedRow_);
-
-	// v1.0.0: scene mode delays the live scene only. Switching Program to
-	// another scene while the delay runs would show that scene live, so the
-	// dock says what to do instead, while it runs (RefreshFromStatus).
-	sceneSwitchRow_ = new QWidget(configCard);
-	{
-		auto *switchLayout = new QHBoxLayout(sceneSwitchRow_);
-		switchLayout->setContentsMargins(0, 2, 0, 0);
-		switchLayout->setSpacing(6);
-		sceneSwitchIcon_ = MakeIconLabel(sceneSwitchRow_, kInlineIconSize);
-		auto *switchText = new QLabel(T("Dock.SceneSwitch.Note"), sceneSwitchRow_);
-		switchText->setWordWrap(true);
-		SetRole(switchText, "hint", ui::FontRole::Hint);
-		switchLayout->addWidget(sceneSwitchIcon_, 0, Qt::AlignTop);
-		switchLayout->addWidget(switchText, 1);
-	}
-	sceneSwitchRow_->setVisible(false);
-	configLayout->addWidget(sceneSwitchRow_);
-
-	// The RAM estimate, live-updated by RefreshFitEstimate() whenever
-	// secondsSpin_/minResolutionCombo_ change -- see that method and
-	// BufferModeController::EstimateBufferFit's comment. Hidden while the
-	// degradation notice shows (RefreshPipelineHealth()), which then says
-	// what the buffer really holds.
-	configLayout->addSpacing(4);
-	fitRow_ = new QWidget(configCard);
-	{
-		auto *fitLayout = new QHBoxLayout(fitRow_);
-		fitLayout->setContentsMargins(0, 0, 0, 0);
-		fitLayout->setSpacing(6);
-		fitIcon_ = MakeIconLabel(fitRow_, kInlineIconSize);
-		fitLabel_ = new QLabel(fitRow_);
-		fitLabel_->setWordWrap(true);
-		SetRole(fitLabel_, "hint", ui::FontRole::Hint);
-		fitLayout->addWidget(fitIcon_, 0, Qt::AlignTop);
-		fitLayout->addWidget(fitLabel_, 1);
-	}
-	configLayout->addWidget(fitRow_);
-
-	// Informational only, computed once from real hardware where possible
-	// (VideoDelayFilter::GetBufferBudgetBytes, see src/hardware-info.hpp) --
-	// "aconsejar segun el hardware, pero a su eleccion": never restricts
-	// delaySeconds/minResolutionHeight above, just shows the user what their
-	// choices are actually working with.
-	{
-		const uint64_t budgetMb = bufferController_.GetBufferBudgetBytes() / (1024 * 1024);
-		auto *budgetRow = new QHBoxLayout();
-		budgetRow->setSpacing(8);
-		auto *budgetKey = new QLabel(T("Dock.Budget.Label"), this);
-		budgetKey->setWordWrap(true);
-		SetRole(budgetKey, "hint", ui::FontRole::Hint);
-		budgetValue_ = new QLabel(
-			T("Dock.Budget.Value").arg(UiLocale().toString(static_cast<qulonglong>(budgetMb))), this);
-		SetRole(budgetValue_, "data", ui::FontRole::Data);
-		budgetValue_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-		budgetKey->setBuddy(budgetValue_);
-		budgetRow->addWidget(budgetKey, 1);
-		budgetRow->addWidget(budgetValue_, 0);
-		configLayout->addLayout(budgetRow);
-	}
-
-	configLayout->addSpacing(6);
-	auto *divider = new QFrame(this);
-	divider->setProperty("tgDivider", QStringLiteral("true"));
-	divider->setFixedHeight(1);
-	configLayout->addWidget(divider);
-	configLayout->addSpacing(6);
-
-	overlayCheck_ = new QCheckBox(this);
-	overlayCheck_->setToolTip(T("Dock.Overlay.Tooltip"));
-	overlayCheck_->setAccessibleName(T("Dock.Overlay.Label"));
-	overlayCheck_->setAccessibleDescription(T("Dock.Overlay.Tooltip"));
-	overlayCheck_->setFocusPolicy(Qt::TabFocus);
-	overlayCheck_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-	overlayCheck_->setChecked(bufferController_.GetStatus().showOverlay);
-	overlayText_ = new QLabel(T("Dock.Overlay.Label"), this);
-	overlayText_->setWordWrap(true);
-	overlayText_->setToolTip(T("Dock.Overlay.Tooltip"));
-	overlayText_->setBuddy(overlayCheck_);
-	overlayText_->setCursor(Qt::PointingHandCursor);
-	overlayText_->installEventFilter(this);
-	{
-		auto *overlayRow = new QHBoxLayout();
-		overlayRow->setSpacing(8);
-		overlayRow->addWidget(overlayCheck_, 0, Qt::AlignTop);
-		overlayRow->addWidget(overlayText_, 1);
-		configLayout->addLayout(overlayRow);
-	}
-
-	overlayCornerCombo_ = new QComboBox(this);
-	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopLeft"), 0);
-	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopRight"), 1);
-	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.BottomLeft"), 2);
-	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.BottomRight"), 3);
-	overlayCornerCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	overlayCornerCombo_->setMinimumContentsLength(8);
-	overlayCornerCombo_->setToolTip(T("Dock.Overlay.Corner.Tooltip"));
-	overlayCornerCombo_->setAccessibleName(T("Dock.Overlay.Position"));
-	{
-		int idx = overlayCornerCombo_->findData(static_cast<int>(bufferController_.GetStatus().overlayCorner));
-		overlayCornerCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
-	}
-	overlayCornerCombo_->setEnabled(overlayCheck_->isChecked());
-	configLayout->addSpacing(5);
-	configLayout->addWidget(makeEyebrow(T("Dock.Overlay.Position"), overlayCornerCombo_));
-	configLayout->addWidget(overlayCornerCombo_);
-
-	root->addWidget(configCard);
-
-	// --- Primary action, full width: Enable (brand gradient) while
-	// inactive, Disable (tinted danger) from the moment it starts filling
-	// until it is switched off again. ---
+	// --- The one primary action, full width: "Turn delay on" (brand
+	// gradient) while off, "Turn delay off" (tinted danger) from the moment
+	// it starts until it is switched off again. Through the router, like the
+	// hotkeys: the selected mode only. ---
 	auto *buttonRow = new QBoxLayout(QBoxLayout::LeftToRight);
 	buttonRow_ = buttonRow;
 	buttonRow->setSpacing(10);
 	enableButton_ = new QPushButton(T("Dock.Enable"), this);
 	enableButton_->setProperty("tgVariant", QStringLiteral("primary"));
-	enableButton_->setFocusPolicy(Qt::TabFocus);
-	enableButton_->setIconSize(kButtonIconBox);
-	SetRole(enableButton_, "button", ui::FontRole::Button);
 	disableButton_ = new QPushButton(T("Dock.Disable"), this);
 	disableButton_->setProperty("tgVariant", QStringLiteral("danger"));
-	disableButton_->setFocusPolicy(Qt::TabFocus);
-	disableButton_->setIconSize(kButtonIconBox);
-	SetRole(disableButton_, "button", ui::FontRole::Button);
+	// Only the stream, while it runs: Dump (what viewers haven't seen yet is
+	// never sent) and, after OBS stopped, Stop sending now.
+	dumpButton_ = new QPushButton(T("Stream.DumpShort"), this);
+	dumpButton_->setToolTip(T("Stream.DumpHelp"));
+	dumpButton_->setAccessibleName(T("Stream.Dump"));
+	dumpButton_->setAccessibleDescription(T("Stream.DumpHelp"));
+	cutButton_ = new QPushButton(T("Stream.Cut"), this);
+	cutButton_->setToolTip(T("Stream.CutHelp"));
+	cutButton_->setAccessibleDescription(T("Stream.CutHelp"));
+	for (QPushButton *button : {dumpButton_, cutButton_}) {
+		button->setProperty("tgVariant", QStringLiteral("secondary"));
+		button->setProperty("tgSize", QStringLiteral("large"));
+		button->setVisible(false);
+	}
+	for (QPushButton *button : {enableButton_, disableButton_, dumpButton_, cutButton_}) {
+		button->setFocusPolicy(Qt::TabFocus);
+		button->setIconSize(kButtonIconBox);
+		SetRole(button, "button", ui::FontRole::Button);
+	}
 	buttonRow->addWidget(enableButton_);
 	buttonRow->addWidget(disableButton_);
 	root->addLayout(buttonRow);
+	root->addWidget(dumpButton_);
+	root->addWidget(cutButton_);
 
 	// --- Requirements: only while Enable is disabled, so it never looks
 	// clickable-but-broken without saying why. ---
@@ -720,13 +532,36 @@ void TrigglowDelayDock::BuildUi()
 	SetRole(hintLabel_, "hint", ui::FontRole::Hint);
 	root->addWidget(hintLabel_);
 
+	root->addWidget(BuildDelayCard());
+	scenesCard_ = BuildScenesCard();
+	root->addWidget(scenesCard_);
+	warningsCard_ = BuildWarningsCard();
+	root->addWidget(warningsCard_);
+
+	// --- Everything else, folded: one card, a section each. Delay by scene
+	// only shows with "only the stream". ---
+	auto *moreCard = new QFrame(this);
+	moreCard->setProperty("tgCard", QStringLiteral("true"));
+	{
+		auto *layout = new QVBoxLayout(moreCard);
+		layout->setContentsMargins(6, 6, 6, 6);
+		layout->setSpacing(0);
+		rulesSection_ = AddSection(layout, T("Stream.Rules"), false);
+		BuildRules(qobject_cast<QVBoxLayout *>(rulesSection_->body->layout()));
+		rulesDivider_ = MakeDivider(moreCard);
+		layout->addWidget(rulesDivider_);
+		Section *presets = AddSection(layout, T("Dock.Section.Presets"), false);
+		BuildPresets(qobject_cast<QVBoxLayout *>(presets->body->layout()));
+		layout->addWidget(MakeDivider(moreCard));
+		optionsSection_ = AddSection(layout, T("Dock.Section.Options"), false);
+		BuildOptions(qobject_cast<QVBoxLayout *>(optionsSection_->body->layout()));
+	}
+	root->addWidget(moreCard);
+
 	// --- Footer: version on the left, "Report a problem" on the
 	// right. The report link stays enabled in every state -- a user hitting
 	// lag or a stuck buffer needs it exactly when things are going wrong. ---
-	auto *footerDivider = new QFrame(this);
-	footerDivider->setProperty("tgDivider", QStringLiteral("true"));
-	footerDivider->setFixedHeight(1);
-	root->addWidget(footerDivider);
+	root->addWidget(MakeDivider(this));
 	{
 		// Version | link; the link moves under it in narrow docks.
 		auto *footer = new QBoxLayout(QBoxLayout::LeftToRight);
@@ -753,49 +588,25 @@ void TrigglowDelayDock::BuildUi()
 
 	root->addStretch(1);
 
-	// Wheel guard on every value control (see eventFilter()).
-	for (QWidget *control : std::initializer_list<QWidget *>{liveSceneCombo_, loadingSceneCombo_, secondsSpin_,
-								 minResolutionCombo_, overlayCornerCombo_}) {
-		control->setFocusPolicy(Qt::StrongFocus);
-		control->installEventFilter(this);
-	}
-
-	connect(liveSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-		bufferController_.SetLiveScene(index < 0 ? std::string{}
-							 : liveSceneCombo_->currentText().toStdString());
-		RefreshFitEstimate(); // Different scene = different resolution/fps to estimate against.
-	});
-	connect(loadingSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-		bufferController_.SetLoadingScene(index <= 0 ? std::string{}
-							     : loadingSceneCombo_->currentText().toStdString());
-	});
-	connect(secondsSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-		bufferController_.SetDelaySeconds(static_cast<uint32_t>(value));
-		RefreshFitEstimate();
-	});
-	connect(minResolutionCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-		if (index < 0)
-			return;
-		bufferController_.SetMinResolutionHeight(
-			static_cast<uint32_t>(minResolutionCombo_->itemData(index).toInt()));
-		RefreshFitEstimate();
-	});
-	connect(overlayCheck_, &QCheckBox::toggled, this, [this](bool checked) {
-		overlayCornerCombo_->setEnabled(checked);
-		bufferController_.SetShowOverlay(checked);
-	});
-	connect(overlayCornerCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-		if (index >= 0)
-			bufferController_.SetOverlayCorner(
-				static_cast<uint32_t>(overlayCornerCombo_->itemData(index).toInt()));
-	});
 	connect(enableButton_, &QPushButton::clicked, this, [this] {
-		TRIGGLOW_LOG_INFO(kComponent, "Enable pressed in dock");
-		bufferController_.Enable();
+		TRIGGLOW_LOG_INFO(kComponent, "Turn delay on pressed in dock (%s)",
+				  StreamOnly() ? "only the stream" : "all of OBS");
+		router_.Enable();
+		Refresh();
 	});
 	connect(disableButton_, &QPushButton::clicked, this, [this] {
-		TRIGGLOW_LOG_INFO(kComponent, "Disable pressed in dock");
-		bufferController_.Disable();
+		TRIGGLOW_LOG_INFO(kComponent, "Turn delay off pressed in dock (%s)",
+				  StreamOnly() ? "only the stream" : "all of OBS");
+		router_.Disable();
+		Refresh();
+	});
+	connect(dumpButton_, &QPushButton::clicked, this, [this] {
+		router_.Dump();
+		Refresh();
+	});
+	connect(cutButton_, &QPushButton::clicked, this, [this] {
+		streamController_.CutDrain();
+		Refresh();
 	});
 	connect(accountButton_, &QPushButton::clicked, this, [this] {
 		if (authManager_.IsLoggedIn()) {
@@ -828,18 +639,518 @@ void TrigglowDelayDock::BuildUi()
 
 	fillTimer_ = new QTimer(this);
 	fillTimer_->setSingleShot(true);
-	connect(fillTimer_, &QTimer::timeout, this, [this] { bufferController_.OnFillTimerElapsed(); });
+	connect(fillTimer_, &QTimer::timeout, this, [this] {
+		if (!detached_)
+			bufferController_.OnFillTimerElapsed();
+	});
 
 	fillProgressTimer_ = new QTimer(this);
 	connect(fillProgressTimer_, &QTimer::timeout, this, [this] { UpdateFillProgress(); });
 
-	// Started and stopped by RefreshFromStatus() (Filling/Active only).
+	// Started and stopped by Refresh() (scene mode Filling/Active only).
 	healthTimer_ = new QTimer(this);
 	healthTimer_->setInterval(1000);
 	connect(healthTimer_, &QTimer::timeout, this, [this] {
+		if (detached_)
+			return;
 		bufferController_.Tick(); // v0.7.0: the storage codec's once-a-second duties.
 		RefreshPipelineHealth(bufferController_.GetStatus());
 	});
+}
+
+QFrame *TrigglowDelayDock::BuildDelayCard()
+{
+	// "DELAY": the selected mode's seconds (both change live, 1-600 s), 5 s
+	// steps, and the three presets as quick picks (seconds only; the hotkey
+	// presets also turn the delay on).
+	auto *card = new QFrame(this);
+	card->setProperty("tgCard", QStringLiteral("true"));
+	auto *layout = new QVBoxLayout(card);
+	layout->setContentsMargins(12, 12, 12, 12);
+	layout->setSpacing(6);
+
+	secondsSpin_ = new QSpinBox(card);
+	// Typed values apply on Enter or when the field loses focus, not on every
+	// digit: "300" must not pass through 3 and 30 on a live stream.
+	secondsSpin_->setRange(static_cast<int>(BufferModeController::kMinDelaySeconds),
+			       static_cast<int>(BufferModeController::kMaxDelaySeconds));
+	secondsSpin_->setKeyboardTracking(false);
+	secondsSpin_->setSuffix(T("Dock.Delay.Suffix"));
+	secondsSpin_->setAccessibleName(T("Dock.Delay.Label"));
+	GuardWheel(secondsSpin_);
+	layout->addWidget(MakeEyebrow(T("Dock.Delay.Label"), secondsSpin_, card));
+
+	auto *row = new QHBoxLayout();
+	row->setSpacing(6);
+	row->addWidget(secondsSpin_, 1);
+	auto makeStep = [this, card, row](const QString &text, const char *nameKey, int delta) {
+		auto *button = new QPushButton(text, card);
+		button->setProperty("tgVariant", QStringLiteral("step"));
+		button->setFocusPolicy(Qt::TabFocus);
+		button->setAccessibleName(T(nameKey));
+		button->setToolTip(T(nameKey));
+		SetRole(button, "step", ui::FontRole::Data);
+		row->addWidget(button);
+		connect(button, &QPushButton::clicked, this, [this, delta] {
+			router_.AdjustDelay(delta);
+			SettingsChanged();
+			Refresh();
+		});
+		return button;
+	};
+	lessButton_ = makeStep(QStringLiteral("-5"), "Dock.Delay.Less", -5);
+	moreButton_ = makeStep(QStringLiteral("+5"), "Dock.Delay.More", 5);
+	layout->addLayout(row);
+	connect(secondsSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+		if (refreshing_)
+			return;
+		router_.SetDelay(static_cast<uint32_t>(value));
+		SettingsChanged();
+		Refresh();
+	});
+
+	// "Presets" then the chips; the label goes above them in narrow docks.
+	chipRow_ = new QBoxLayout(QBoxLayout::LeftToRight);
+	chipRow_->setSpacing(6);
+	auto *chipsLabel = new QLabel(T("Dock.QuickPick"), card);
+	SetRole(chipsLabel, "hint", ui::FontRole::Hint);
+	chipRow_->addWidget(chipsLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+	auto *chips = new QHBoxLayout();
+	chips->setSpacing(6);
+	for (int i = 0; i < 3; ++i) {
+		auto *chip = new QPushButton(card);
+		chip->setProperty("tgVariant", QStringLiteral("chip"));
+		chip->setFocusPolicy(Qt::TabFocus);
+		chip->setToolTip(T("Dock.PresetHelp").arg(i + 1));
+		SetRole(chip, "chip", ui::FontRole::Chip);
+		chips->addWidget(chip);
+		presetChips_[i] = chip;
+		connect(chip, &QPushButton::clicked, this, [this, i] {
+			router_.SetDelay(streamController_.Preset(i));
+			SettingsChanged();
+			Refresh();
+		});
+	}
+	chips->addStretch(1);
+	chipRow_->addLayout(chips, 1);
+	layout->addLayout(chipRow_);
+	return card;
+}
+
+QFrame *TrigglowDelayDock::BuildScenesCard()
+{
+	// All of OBS only: which scene is delayed, and what shows while the delay
+	// builds up.
+	auto *card = new QFrame(this);
+	card->setProperty("tgCard", QStringLiteral("true"));
+	auto *layout = new QVBoxLayout(card);
+	layout->setContentsMargins(12, 12, 12, 12);
+	layout->setSpacing(5);
+
+	liveSceneCombo_ = new SceneComboBox(card);
+	liveSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	liveSceneCombo_->setMinimumContentsLength(8);
+	liveSceneCombo_->setToolTip(T("Dock.Scene.Live.Tooltip"));
+	liveSceneCombo_->setAccessibleName(T("Dock.Scene.Live"));
+	// Nothing preselected until the user picks a scene (index -1 shows this),
+	// so choosing the first one is a real selection, and the field never
+	// shows a scene while the requirement list says none is chosen.
+	liveSceneCombo_->setPlaceholderText(T("Dock.Scene.Live.Placeholder"));
+	liveSceneCombo_->SetRefreshCallback(
+		[this] { RefreshSceneCombo(liveSceneCombo_, bufferController_.GetStatus().liveSceneName, false); });
+	{
+		// "LIVE SCENE *": the asterisk (accent) marks it required, like the
+		// web's support form.
+		auto *row = new QHBoxLayout();
+		row->setSpacing(3);
+		row->addWidget(MakeEyebrow(T("Dock.Scene.Live"), liveSceneCombo_, card));
+		auto *required = new QLabel(QStringLiteral("*"), card);
+		SetRole(required, "eyebrow", ui::FontRole::Eyebrow);
+		required->setProperty("tgTone", QStringLiteral("accent"));
+		required->setToolTip(T("Dock.Required"));
+		required->setAccessibleName(T("Dock.Required"));
+		row->addWidget(required);
+		row->addStretch(1);
+		layout->addLayout(row);
+	}
+	layout->addWidget(liveSceneCombo_);
+	AddFieldLock(liveSceneCombo_);
+	RefreshSceneCombo(liveSceneCombo_, bufferController_.GetStatus().liveSceneName, false);
+
+	layout->addSpacing(7);
+	loadingSceneCombo_ = new SceneComboBox(card);
+	loadingSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	loadingSceneCombo_->setMinimumContentsLength(8);
+	loadingSceneCombo_->setToolTip(T("Dock.Scene.Loading.Tooltip"));
+	loadingSceneCombo_->setAccessibleName(T("Dock.Scene.Loading"));
+	loadingSceneCombo_->SetRefreshCallback([this] {
+		RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
+	});
+	{
+		// "LOADING SCENE   Optional": the marker in the hint style, not a
+		// second mono uppercase eyebrow, so the two never read as one label
+		// when a narrow dock (240 px) leaves no room between them.
+		auto *row = new QHBoxLayout();
+		row->setSpacing(8);
+		row->addWidget(MakeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_, card), 0, Qt::AlignBottom);
+		row->addStretch(1);
+		auto *optional = new QLabel(T("Dock.Optional"), card);
+		SetRole(optional, "hint", ui::FontRole::Hint);
+		row->addWidget(optional, 0, Qt::AlignBottom);
+		layout->addLayout(row);
+	}
+	layout->addWidget(loadingSceneCombo_);
+	AddFieldLock(loadingSceneCombo_);
+	RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
+
+	// While the delay runs (Filling, Active) the scenes and the quality are
+	// locked: changing them would restart the buffer under a live stream. The
+	// seconds aren't (v1.0.0: the delay changes in place). This line says so,
+	// visibly, not only in a tooltip (RefreshSceneFields).
+	layout->addSpacing(2);
+	delayLockedRow_ = MakeNoteRow(card, delayLockedIcon_, T("Dock.Delay.Locked"));
+	layout->addWidget(delayLockedRow_);
+	// v1.0.0: all of OBS delays the live scene only. Switching Program to
+	// another scene while the delay runs would show that scene live, so the
+	// dock says what to do instead, while it runs.
+	sceneSwitchRow_ = MakeNoteRow(card, sceneSwitchIcon_, T("Dock.SceneSwitch.Note"));
+	layout->addWidget(sceneSwitchRow_);
+
+	for (QWidget *control : std::initializer_list<QWidget *>{liveSceneCombo_, loadingSceneCombo_})
+		GuardWheel(control);
+	connect(liveSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+		bufferController_.SetLiveScene(index < 0 ? std::string{}
+							 : liveSceneCombo_->currentText().toStdString());
+		RefreshFitEstimate(); // Different scene = different resolution/fps to estimate against.
+	});
+	connect(loadingSceneCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+		bufferController_.SetLoadingScene(index <= 0 ? std::string{}
+							     : loadingSceneCombo_->currentText().toStdString());
+	});
+	return card;
+}
+
+TrigglowDelayDock::Section *TrigglowDelayDock::AddSection(QVBoxLayout *parent, const QString &title, bool open)
+{
+	auto owned = std::make_unique<Section>();
+	Section *section = owned.get();
+	sections_.push_back(std::move(owned));
+
+	section->box = new QWidget(parent->parentWidget());
+	auto *boxLayout = new QVBoxLayout(section->box);
+	boxLayout->setContentsMargins(0, 0, 0, 0);
+	boxLayout->setSpacing(0);
+	auto *headerRow = new QHBoxLayout();
+	headerRow->setContentsMargins(0, 0, 4, 0);
+	headerRow->setSpacing(6);
+	section->header = new QPushButton(title, section->box);
+	section->header->setProperty("tgVariant", QStringLiteral("section"));
+	section->header->setCheckable(true);
+	section->header->setFocusPolicy(Qt::TabFocus);
+	section->header->setCursor(Qt::PointingHandCursor);
+	section->header->setIconSize(kSectionIconBox);
+	section->header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	SetRole(section->header, "section", ui::FontRole::Strong);
+	section->count = new QLabel(section->box);
+	SetRole(section->count, "tag", ui::FontRole::Chip);
+	section->count->setVisible(false);
+	headerRow->addWidget(section->header, 1);
+	headerRow->addWidget(section->count, 0, Qt::AlignVCenter);
+	boxLayout->addLayout(headerRow);
+
+	section->body = new QWidget(section->box);
+	auto *bodyLayout = new QVBoxLayout(section->body);
+	bodyLayout->setContentsMargins(8, 4, 8, 10);
+	bodyLayout->setSpacing(6);
+	boxLayout->addWidget(section->body);
+	parent->addWidget(section->box);
+
+	connect(section->header, &QPushButton::clicked, this,
+		[this, section] { SetSectionOpen(*section, !section->open); });
+	SetSectionOpen(*section, open);
+	return section;
+}
+
+void TrigglowDelayDock::SetSectionOpen(Section &section, bool open)
+{
+	section.open = open;
+	{
+		const QSignalBlocker block(section.header);
+		section.header->setChecked(open);
+	}
+	section.body->setVisible(open);
+	if (!themeApplied_)
+		return;
+	const QString tone = section.header->property("tgTone").toString();
+	SetButtonIcon(section.header, open ? ui::IconId::ChevronDown : ui::IconId::ChevronRight,
+		      ToneColor(tone.isEmpty() ? QStringLiteral("text") : tone));
+}
+
+void TrigglowDelayDock::BuildPresets(QVBoxLayout *body)
+{
+	// The three presets, for both modes: each has a hotkey (and a Stream Deck
+	// key) that sets its seconds and turns the delay on; the delay card's
+	// chips set the seconds only.
+	QWidget *host = body->parentWidget();
+	auto *help = new QLabel(T("Dock.Presets.Help"), host);
+	help->setWordWrap(true);
+	SetRole(help, "hint", ui::FontRole::Hint);
+	body->addWidget(help);
+
+	presetRow_ = new QBoxLayout(QBoxLayout::LeftToRight);
+	presetRow_->setSpacing(8);
+	for (int i = 0; i < 3; ++i) {
+		auto *column = new QVBoxLayout();
+		column->setSpacing(5);
+		auto *spin = new QSpinBox(host);
+		spin->setRange(1, static_cast<int>(BufferModeController::kMaxDelaySeconds));
+		spin->setSuffix(T("Dock.Delay.Suffix"));
+		spin->setKeyboardTracking(false);
+		spin->setValue(static_cast<int>(streamController_.Preset(i)));
+		spin->setToolTip(T("Dock.PresetHelp").arg(i + 1));
+		spin->setAccessibleName(T("Dock.Preset.Label").arg(i + 1));
+		GuardWheel(spin);
+		column->addWidget(MakeEyebrow(T("Dock.Preset.Label").arg(i + 1), spin, host));
+		column->addWidget(spin);
+		presetRow_->addLayout(column, 1);
+		presetSpins_[i] = spin;
+		connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this, i](int value) {
+			if (refreshing_)
+				return;
+			streamController_.SetPreset(i, static_cast<uint32_t>(value));
+			SettingsChanged();
+			Refresh();
+		});
+	}
+	body->addLayout(presetRow_);
+}
+
+void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
+{
+	QWidget *host = body->parentWidget();
+
+	// --- All of OBS: the minimum quality, the RAM estimate and the budget. ---
+	qualityBlock_ = new QWidget(host);
+	{
+		auto *layout = new QVBoxLayout(qualityBlock_);
+		layout->setContentsMargins(0, 0, 0, 0);
+		layout->setSpacing(5);
+		minResolutionCombo_ = new QComboBox(qualityBlock_);
+		minResolutionCombo_->addItem(QStringLiteral("480p"), 480);
+		minResolutionCombo_->addItem(QStringLiteral("720p"), 720);
+		minResolutionCombo_->addItem(QStringLiteral("1080p"), 1080);
+		// Floors above 1080p only matter with an OBS output that big: the
+		// buffer never exceeds the output (bufferfit::Compute()), so with a
+		// 1080p output they buffer at 1080p, like the 1080p entry.
+		minResolutionCombo_->addItem(T("Dock.Quality.Option1440"), 1440);
+		minResolutionCombo_->addItem(T("Dock.Quality.Option2160"), 2160);
+		minResolutionCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		minResolutionCombo_->setMinimumContentsLength(10);
+		minResolutionCombo_->setToolTip(T("Dock.Quality.Tooltip"));
+		minResolutionCombo_->setAccessibleName(T("Dock.Quality.Label"));
+		GuardWheel(minResolutionCombo_);
+		layout->addWidget(MakeEyebrow(T("Dock.Quality.Label"), minResolutionCombo_, qualityBlock_));
+		layout->addWidget(minResolutionCombo_);
+		AddFieldLock(minResolutionCombo_);
+
+		// The RAM estimate, live-updated by RefreshFitEstimate() whenever the
+		// seconds or the quality change -- see that method and
+		// BufferModeController::EstimateBufferFit's comment. Hidden while the
+		// degradation notice shows (RefreshPipelineHealth()), which then says
+		// what the buffer really holds.
+		layout->addSpacing(2);
+		fitRow_ = new QWidget(qualityBlock_);
+		auto *fitLayout = new QHBoxLayout(fitRow_);
+		fitLayout->setContentsMargins(0, 0, 0, 0);
+		fitLayout->setSpacing(6);
+		fitIcon_ = MakeIconLabel(fitRow_, kInlineIconSize);
+		fitLabel_ = new QLabel(fitRow_);
+		fitLabel_->setWordWrap(true);
+		SetRole(fitLabel_, "hint", ui::FontRole::Hint);
+		fitLayout->addWidget(fitIcon_, 0, Qt::AlignTop);
+		fitLayout->addWidget(fitLabel_, 1);
+		layout->addWidget(fitRow_);
+
+		// Informational only, computed once from real hardware where possible
+		// (VideoDelayFilter::GetBufferBudgetBytes, see src/hardware-info.hpp)
+		// -- "aconsejar segun el hardware, pero a su eleccion": never
+		// restricts the seconds or the quality, just shows what the choices
+		// are actually working with.
+		const uint64_t budgetMb = bufferController_.GetBufferBudgetBytes() / (1024 * 1024);
+		auto *budgetRow = new QHBoxLayout();
+		budgetRow->setSpacing(8);
+		auto *budgetKey = new QLabel(T("Dock.Budget.Label"), qualityBlock_);
+		budgetKey->setWordWrap(true);
+		SetRole(budgetKey, "hint", ui::FontRole::Hint);
+		budgetValue_ =
+			new QLabel(T("Dock.Budget.Value").arg(UiLocale().toString(static_cast<qulonglong>(budgetMb))),
+				   qualityBlock_);
+		SetRole(budgetValue_, "data", ui::FontRole::Data);
+		budgetValue_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		budgetKey->setBuddy(budgetValue_);
+		budgetRow->addWidget(budgetKey, 1);
+		budgetRow->addWidget(budgetValue_, 0);
+		layout->addLayout(budgetRow);
+	}
+	body->addWidget(qualityBlock_);
+	connect(minResolutionCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+		if (refreshing_ || index < 0)
+			return;
+		bufferController_.SetMinResolutionHeight(
+			static_cast<uint32_t>(minResolutionCombo_->itemData(index).toInt()));
+		RefreshFitEstimate();
+	});
+
+	// --- Only the stream: the delay buffer and sending the rest on stop. ---
+	bufferBlock_ = BuildBufferBlock(host);
+	body->addWidget(bufferBlock_);
+	drainRow_ = MakeCheckRow(host, drainCheck_, drainText_, T("Stream.Drain"));
+	body->addWidget(drainRow_);
+	connect(drainCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		streamController_.SetDrainOnStop(on);
+		SettingsChanged();
+	});
+
+	// --- The delay badge: one check box and one corner for both modes. ---
+	body->addSpacing(2);
+	body->addWidget(MakeDivider(host));
+	body->addSpacing(2);
+	body->addWidget(MakeCheckRow(host, overlayCheck_, overlayText_, T("Dock.Overlay.Label")));
+	overlayCornerCombo_ = new QComboBox(host);
+	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopLeft"), 0);
+	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.TopRight"), 1);
+	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.BottomLeft"), 2);
+	overlayCornerCombo_->addItem(T("Dock.Overlay.Corner.BottomRight"), 3);
+	overlayCornerCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	overlayCornerCombo_->setMinimumContentsLength(8);
+	overlayCornerCombo_->setToolTip(T("Dock.Overlay.Corner.Tooltip"));
+	overlayCornerCombo_->setAccessibleName(T("Dock.Overlay.Position"));
+	GuardWheel(overlayCornerCombo_);
+	body->addSpacing(2);
+	body->addWidget(MakeEyebrow(T("Dock.Overlay.Position"), overlayCornerCombo_, host));
+	body->addWidget(overlayCornerCombo_);
+	connect(overlayCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+		if (refreshing_)
+			return;
+		bufferController_.SetShowOverlay(checked);
+		streamController_.SetShowOverlay(checked);
+		SettingsChanged();
+		Refresh();
+	});
+	connect(overlayCornerCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+		if (refreshing_ || index < 0)
+			return;
+		const auto corner = static_cast<uint32_t>(overlayCornerCombo_->itemData(index).toInt());
+		bufferController_.SetOverlayCorner(corner);
+		streamController_.SetOverlayCorner(corner);
+		SettingsChanged();
+	});
+
+	// --- Advanced: what the delay applies to. Off (the default): all of OBS.
+	// Locked while a delay runs, like the scene pickers. ---
+	body->addSpacing(2);
+	body->addWidget(MakeDivider(host));
+	body->addSpacing(2);
+	body->addWidget(MakeEyebrow(T("Dock.Advanced"), nullptr, host));
+	body->addWidget(MakeCheckRow(host, applyCheck_, applyText_, T("Dock.ApplyTo.Stream")));
+	applyCheck_->setToolTip(T("Dock.ApplyTo.Tooltip"));
+	applyText_->setToolTip(T("Dock.ApplyTo.Tooltip"));
+	applyCheck_->setAccessibleDescription(T("Dock.ApplyTo.Tooltip"));
+	applyHint_ = new QLabel(host);
+	applyHint_->setWordWrap(true);
+	applyHint_->setToolTip(T("Dock.ApplyTo.Tooltip"));
+	applyHint_->setContentsMargins(24, 0, 0, 0); // Under the label, past the box.
+	SetRole(applyHint_, "hint", ui::FontRole::Hint);
+	body->addWidget(applyHint_);
+	applyLockRow_ = MakeNoteRow(host, applyLockIcon_, T("Dock.ApplyTo.Locked"));
+	applyLockRow_->setContentsMargins(24, 0, 0, 0);
+	body->addWidget(applyLockRow_);
+	connect(applyCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		SetApplyToStream(on);
+	});
+}
+
+void TrigglowDelayDock::SettingsChanged()
+{
+	if (onSettingsChanged_)
+		onSettingsChanged_();
+}
+
+bool TrigglowDelayDock::StreamOnly() const
+{
+	return streamController_.HandlesControls();
+}
+
+void TrigglowDelayDock::SetApplyToStream(bool streamOnly)
+{
+	// One delay value on screen: the new mode starts from the seconds shown.
+	const uint32_t seconds = StreamOnly() ? streamController_.DelaySeconds()
+					      : bufferController_.GetStatus().delaySeconds;
+	streamController_.SetApplyTo(streamOnly ? ApplyTo::Stream : ApplyTo::All);
+	router_.SetDelay(seconds);
+	SettingsChanged();
+	Refresh();
+}
+
+void TrigglowDelayDock::OnStreamStatusChanged()
+{
+	if (detached_)
+		return;
+	// Stream mode ticks once a second: the whole dock while it's selected
+	// (stats, where it sends), only the advanced check box's lock otherwise.
+	if (StreamOnly())
+		Refresh();
+	else if (themeApplied_)
+		RefreshApplyTo(bufferController_.GetStatus(), streamController_.GetStatus());
+}
+
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen)
+{
+	auto *scroll = findChild<QScrollArea *>(QStringLiteral("tgDockScroll"));
+	QWidget *content = scroll ? scroll->widget() : nullptr;
+	if (!content || !content->layout())
+		return {};
+	for (const std::unique_ptr<Section> &section : sections_) {
+		if (section.get() != warningsSection_)
+			SetSectionOpen(*section, sectionsOpen);
+	}
+	Refresh();
+	ApplyNarrowLayout(width);
+	// While resizable, the scroll area snaps the content back to its viewport.
+	scroll->setWidgetResizable(false);
+	content->ensurePolished();
+	content->resize(width, 100);
+	content->layout()->activate();
+	QLayout *layout = content->layout();
+	const int height = layout->hasHeightForWidth() ? layout->heightForWidth(width) : layout->sizeHint().height();
+	content->resize(width, height);
+	layout->activate();
+	QImage image(content->size(), QImage::Format_ARGB32_Premultiplied);
+	image.fill(QApplication::palette().color(QPalette::Window));
+	{
+		QPainter painter(&image);
+		content->render(&painter, QPoint(), QRegion(), QWidget::DrawChildren);
+	}
+	// Back to the dock's own size.
+	ApplyNarrowLayout(this->width());
+	scroll->setWidgetResizable(true);
+	return image;
+}
+#endif
+
+void TrigglowDelayDock::Detach()
+{
+	detached_ = true;
+	for (QTimer *timer : {fillTimer_, fillProgressTimer_, healthTimer_}) {
+		if (timer)
+			timer->stop();
+	}
+	setEnabled(false);
 }
 
 void TrigglowDelayDock::ApplyTheme(bool force)
@@ -854,7 +1165,10 @@ void TrigglowDelayDock::ApplyTheme(bool force)
 	if (force || !themeApplied_ || theme.styleSheet != theme_.styleSheet) {
 		theme_ = std::move(theme);
 		themeApplied_ = true;
-		setStyleSheet(theme_.styleSheet);
+		setStyleSheet(theme_.styleSheet + QLatin1Char('\n') + ExtraStyleSheet());
+		fontRoles_.erase(std::remove_if(fontRoles_.begin(), fontRoles_.end(),
+						[](const auto &entry) { return entry.first.isNull(); }),
+				 fontRoles_.end());
 		for (auto &[widget, role] : fontRoles_) {
 			if (widget)
 				ui::ApplyFont(widget, role, theme_.basePt);
@@ -900,12 +1214,23 @@ void TrigglowDelayDock::changeEvent(QEvent *event)
 
 bool TrigglowDelayDock::eventFilter(QObject *watched, QEvent *event)
 {
-	if (watched == overlayText_ && event->type() == QEvent::MouseButtonRelease) {
-		auto *mouse = static_cast<QMouseEvent *>(event);
-		if (mouse->button() == Qt::LeftButton && overlayCheck_->isEnabled() &&
-		    overlayText_->rect().contains(mouse->position().toPoint()))
-			overlayCheck_->click();
-		return false;
+	if (event->type() == QEvent::MouseButtonRelease) {
+		// A check box's wrapping label toggles it, like the box's own text.
+		QCheckBox *check = nullptr;
+		if (watched == overlayText_)
+			check = overlayCheck_;
+		else if (watched == drainText_)
+			check = drainCheck_;
+		else if (watched == applyText_)
+			check = applyCheck_;
+		if (check) {
+			auto *label = static_cast<QLabel *>(watched);
+			auto *mouse = static_cast<QMouseEvent *>(event);
+			if (mouse->button() == Qt::LeftButton && check->isEnabled() &&
+			    label->rect().contains(mouse->position().toPoint()))
+				check->click();
+			return false;
+		}
 	}
 	if (event->type() == QEvent::Wheel) {
 		auto *widget = qobject_cast<QWidget *>(watched);
@@ -952,11 +1277,23 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(delayLockedIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(sceneSwitchIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(healthIcon_, ui::IconId::Sliders, QStringLiteral("warning"), kInlineIconSize);
+	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
+	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
 	for (const auto &[field, lock] : fieldLocks_)
 		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
 					       lock->devicePixelRatioF()));
 	SetButtonIcon(enableButton_, ui::IconId::Shield, ui::ToQColor(t.onGradient));
 	SetButtonIcon(disableButton_, ui::IconId::X, ui::ToQColor(t.dangerButtonText));
+	SetButtonIcon(dumpButton_, ui::IconId::Scissors, ui::ToQColor(t.text));
+	SetButtonIcon(cutButton_, ui::IconId::X, ui::ToQColor(t.text));
+	SetButtonIcon(addRule_, ui::IconId::Plus, ui::ToQColor(t.text));
+	for (const std::unique_ptr<Section> &section : sections_)
+		SetSectionOpen(*section, section->open);
+	for (const RuleRow &row : ruleRows_)
+		SetButtonIcon(row.remove, ui::IconId::Trash, ui::ToQColor(t.textMuted), Qt::AlignCenter);
+	for (auto &[icon, label] : warningRows_)
+		SetIcon(icon, ui::IconId::AlertTriangle, QStringLiteral("warning"), kInlineIconSize);
 	// Right to left: the icon follows the text, so the gap goes on its left.
 	SetButtonIcon(signInButton_, ui::IconId::ExternalLink, ui::ToQColor(t.onGradient), Qt::AlignRight);
 	SetButtonIcon(reportBugButton_, ui::IconId::Flag, ui::ToQColor(t.accentText));
@@ -967,6 +1304,13 @@ void TrigglowDelayDock::RefreshFitEstimate()
 	auto estimate =
 		bufferController_.EstimateBufferFit(static_cast<uint32_t>(secondsSpin_->value()),
 						    static_cast<uint32_t>(minResolutionCombo_->currentData().toInt()));
+
+	// Options is folded by default: it opens once when the estimate starts
+	// saying the seconds don't fit, so that warning is never hidden.
+	const bool warns = estimate.width > 0 && estimate.height > 0 && !estimate.fitsFullDuration;
+	if (warns && !fitWarned_ && optionsSection_ && !optionsSection_->open)
+		SetSectionOpen(*optionsSection_, true);
+	fitWarned_ = warns;
 
 	if (estimate.width == 0 || estimate.height == 0) {
 		// No live scene chosen yet, or it doesn't resolve -- nothing
@@ -1015,7 +1359,9 @@ void TrigglowDelayDock::RefreshFitEstimate()
 
 void TrigglowDelayDock::OnStatusChanged(const BufferModeStatus &status)
 {
-	RefreshFromStatus(status);
+	if (detached_)
+		return;
+	Refresh();
 
 	if (status.state != BufferModeState::Filling) {
 		DisarmFillTimer();
@@ -1032,7 +1378,86 @@ void TrigglowDelayDock::OnStatusChanged(const BufferModeStatus &status)
 	}
 }
 
-void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
+void TrigglowDelayDock::Refresh()
+{
+	if (detached_ || !themeApplied_)
+		return;
+	const BufferModeStatus scene = bufferController_.GetStatus();
+	const StreamDelayStatus stream = streamController_.GetStatus();
+	const bool streamOnly = StreamOnly();
+
+	refreshing_ = true;
+	ApplyModeVisibility(streamOnly);
+	if (streamOnly)
+		RefreshStreamStatus(stream);
+	else
+		RefreshSceneStatus(scene);
+	RefreshSceneFields(scene);
+	RefreshDelayCard(streamOnly ? stream.delaySeconds : scene.delaySeconds, streamOnly);
+	for (int i = 0; i < 3; ++i) {
+		const int preset = static_cast<int>(streamController_.Preset(i));
+		if (presetSpins_[i]->value() != preset)
+			presetSpins_[i]->setValue(preset);
+	}
+
+	// The badge: one control for both modes, showing the selected mode's
+	// values (the dock writes both, plugin-main.cpp aligns them at load).
+	const bool showOverlay = streamOnly ? stream.showOverlay : scene.showOverlay;
+	const uint32_t corner = streamOnly ? stream.overlayCorner : scene.overlayCorner;
+	overlayCheck_->setChecked(showOverlay);
+	const int cornerIndex = overlayCornerCombo_->findData(static_cast<int>(corner));
+	if (cornerIndex >= 0)
+		overlayCornerCombo_->setCurrentIndex(cornerIndex);
+	overlayCornerCombo_->setEnabled(showOverlay);
+	const QString overlayTip = T(streamOnly ? "Dock.Overlay.Tooltip.Stream" : "Dock.Overlay.Tooltip");
+	overlayCheck_->setToolTip(overlayTip);
+	overlayCheck_->setAccessibleDescription(overlayTip);
+	overlayText_->setToolTip(overlayTip);
+
+	if (streamOnly) {
+		drainCheck_->setChecked(stream.drainOnStop);
+		RefreshBuffer(stream);
+		RefreshDestination(stream);
+		RefreshWarnings(stream);
+	}
+	RefreshApplyTo(scene, stream);
+	refreshing_ = false;
+
+	// Scene mode's storage codec duties and degradation notice: polled only
+	// while there is a buffer to ask about (in either mode's view).
+	const bool sceneBusy = scene.state == BufferModeState::Filling || scene.state == BufferModeState::Active;
+	if (sceneBusy && !healthTimer_->isActive())
+		healthTimer_->start();
+	else if (!sceneBusy)
+		healthTimer_->stop();
+	RefreshPipelineHealth(scene); // Also sets the card's accessible name.
+	if (!streamOnly)
+		RefreshFitEstimate();
+}
+
+void TrigglowDelayDock::ApplyModeVisibility(bool streamOnly)
+{
+	// All of OBS: the scene pickers, the minimum quality and the RAM
+	// estimate. Only the stream: where it sends, Dump, the settings checks,
+	// Delay by scene, the delay buffer and sending the rest.
+	scenesCard_->setVisible(!streamOnly);
+	qualityBlock_->setVisible(!streamOnly);
+	bufferBlock_->setVisible(streamOnly);
+	drainRow_->setVisible(streamOnly);
+	rulesSection_->box->setVisible(streamOnly);
+	rulesDivider_->setVisible(streamOnly);
+	sendsRow_->setVisible(streamOnly);
+	if (!streamOnly) {
+		for (QWidget *widget : std::initializer_list<QWidget *>{statsLabel_, ruleRow_, noticeRow_,
+									warningsCard_, dumpButton_, cutButton_})
+			widget->setVisible(false);
+	} else {
+		fillRow_->setVisible(false);
+		hintLabel_->setVisible(false);
+	}
+}
+
+void TrigglowDelayDock::RefreshSceneStatus(const BufferModeStatus &status)
 {
 	// Each state differs by rule, icon, headline color AND text -- never by
 	// color alone.
@@ -1051,13 +1476,16 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 				   : T("Dock.Status.Seconds").arg(applied);
 	ui::IconId icon = ui::IconId::Circle;
 	QString iconTone = QStringLiteral("muted");
+	QString stateName;
 	switch (status.state) {
 	case BufferModeState::Inactive:
+		stateName = QStringLiteral("scene.inactive");
 		headline = T("Dock.Status.Inactive");
 		if (detail.isEmpty())
 			detail = T("Dock.Status.Inactive.Detail");
 		break;
 	case BufferModeState::Filling:
+		stateName = QStringLiteral("scene.filling");
 		headline = T("Dock.Status.Filling");
 		rule = QStringLiteral("warning");
 		tone = QStringLiteral("warning");
@@ -1066,6 +1494,7 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 		iconTone = QStringLiteral("warning");
 		break;
 	case BufferModeState::Active:
+		stateName = QStringLiteral("scene.active");
 		headline = T("Dock.Status.Active");
 		detail = trimmed ? T("Dock.Status.Active.DetailTrimmed").arg(applied).arg(status.delaySeconds)
 				 : T("Dock.Status.Active.Detail").arg(applied);
@@ -1075,6 +1504,7 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 		iconTone = QStringLiteral("accent");
 		break;
 	case BufferModeState::Error:
+		stateName = QStringLiteral("scene.error");
 		headline = T("Dock.Status.Error");
 		rule = QStringLiteral("danger");
 		tone = QStringLiteral("danger");
@@ -1094,31 +1524,11 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 	detailLabel_->setText(detail);
 	detailLabel_->setVisible(!detail.isEmpty());
 	fillRow_->setVisible(status.state == BufferModeState::Filling);
+	statusAccessibleName_ = QStringLiteral("%1: %2. %3").arg(T("Dock.Status.Eyebrow"), headline, detail);
+	AnnounceStatus(stateName, status.state == BufferModeState::Error,
+		       QStringLiteral("%1. %2").arg(headline, detail));
 
 	const bool busy = status.state == BufferModeState::Filling || status.state == BufferModeState::Active;
-	// Degradation notice: polled only while there is a buffer to ask about.
-	if (busy && !healthTimer_->isActive())
-		healthTimer_->start();
-	else if (!busy)
-		healthTimer_->stop();
-	statusAccessibleName_ = QStringLiteral("%1: %2. %3").arg(T("Dock.Status.Eyebrow"), headline, detail);
-	RefreshPipelineHealth(status); // Also sets the card's accessible name.
-	AnnounceStatus(status.state, QStringLiteral("%1. %2").arg(headline, detail));
-
-	// Scenes, seconds and quality are locked while the delay runs (a disabled
-	// control is also out of the tab order): no arrows, the card's background
-	// and a lock inside each (ui-theme.cpp, tgLocked), and the line under the
-	// seconds says how to unlock them -- also what screen readers hear.
-	liveSceneCombo_->setEnabled(!busy);
-	loadingSceneCombo_->setEnabled(!busy);
-	minResolutionCombo_->setEnabled(!busy);
-	for (const auto &[field, lock] : fieldLocks_) {
-		ui::SetStyleProperty(field, "tgLocked", busy ? QStringLiteral("true") : QStringLiteral("false"));
-		lock->setVisible(busy);
-		field->setAccessibleDescription(busy ? T("Dock.Delay.Locked") : QString());
-	}
-	delayLockedRow_->setVisible(busy);
-	sceneSwitchRow_->setVisible(busy);
 	// Also requires a live scene chosen -- previously Enable was clickable
 	// with no scene selected, which just bounced back into an Error state
 	// ("Elige primero una escena en directo") instead of preventing the
@@ -1137,8 +1547,8 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 	const bool hasScene = liveIndex >= 0 || (!liveName.isEmpty() && liveSceneCombo_->count() == 0);
 	enableButton_->setEnabled(!busy && hasScene && loggedIn);
 	disableButton_->setEnabled(busy);
-	// One button at a time, full width: Enable while inactive, Disable
-	// from the moment it starts filling until it is switched off again.
+	// One button at a time, full width: on while off, off from the moment it
+	// starts filling until it is switched off again.
 	enableButton_->setVisible(!busy);
 	disableButton_->setVisible(busy);
 
@@ -1151,26 +1561,36 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 	};
 	requirement(reqAccountIcon_, reqAccountText_, loggedIn, "Dock.Requirement.Account");
 	requirement(reqSceneIcon_, reqSceneText_, hasScene, "Dock.Requirement.Scene");
+	reqSceneIcon_->setVisible(true);
+	reqSceneText_->setVisible(true);
 	hintLabel_->setVisible(!busy);
+}
 
-	const QSignalBlocker blockSeconds(secondsSpin_);
-	secondsSpin_->setValue(static_cast<int>(status.delaySeconds));
+void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
+{
+	// Scenes and quality are locked while the delay runs (a disabled control
+	// is also out of the tab order): no arrows, the card's background and a
+	// lock inside each (ui-theme.cpp, tgLocked), and the line under the
+	// pickers says how to unlock them -- also what screen readers hear.
+	const bool busy = status.state == BufferModeState::Filling || status.state == BufferModeState::Active;
+	liveSceneCombo_->setEnabled(!busy);
+	loadingSceneCombo_->setEnabled(!busy);
+	minResolutionCombo_->setEnabled(!busy);
+	for (const auto &[field, lock] : fieldLocks_) {
+		ui::SetStyleProperty(field, "tgLocked", busy ? QStringLiteral("true") : QStringLiteral("false"));
+		lock->setVisible(busy);
+		field->setAccessibleDescription(busy ? T("Dock.Delay.Locked") : QString());
+	}
+	delayLockedRow_->setVisible(busy);
+	sceneSwitchRow_->setVisible(busy);
 
 	const QSignalBlocker blockQuality(minResolutionCombo_);
-	int qualityIndex = minResolutionCombo_->findData(static_cast<int>(status.minResolutionHeight));
+	const int qualityIndex = minResolutionCombo_->findData(static_cast<int>(status.minResolutionHeight));
 	if (qualityIndex >= 0)
 		minResolutionCombo_->setCurrentIndex(qualityIndex);
 
-	const QSignalBlocker blockOverlay(overlayCheck_);
-	overlayCheck_->setChecked(status.showOverlay);
-	const QSignalBlocker blockCorner(overlayCornerCombo_);
-	{
-		int idx = overlayCornerCombo_->findData(static_cast<int>(status.overlayCorner));
-		if (idx >= 0)
-			overlayCornerCombo_->setCurrentIndex(idx);
-	}
-	overlayCornerCombo_->setEnabled(status.showOverlay);
-
+	const QString liveName = QString::fromStdString(status.liveSceneName);
+	const int liveIndex = liveName.isEmpty() ? -1 : liveSceneCombo_->findText(liveName);
 	const QSignalBlocker blockLive(liveSceneCombo_);
 	liveSceneCombo_->setCurrentIndex(liveIndex); // -1: the placeholder, no scene shown as chosen.
 	// Placeholder color (see the tgEmpty rule in ui-theme.cpp).
@@ -1178,20 +1598,52 @@ void TrigglowDelayDock::RefreshFromStatus(const BufferModeStatus &status)
 			     liveIndex < 0 ? QStringLiteral("true") : QStringLiteral("false"));
 
 	const QSignalBlocker blockLoading(loadingSceneCombo_);
-	int loadingIndex = status.loadingSceneName.empty()
-				   ? 0
-				   : loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
+	const int loadingIndex =
+		status.loadingSceneName.empty()
+			? 0
+			: loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
 	loadingSceneCombo_->setCurrentIndex(loadingIndex >= 0 ? loadingIndex : 0);
-
-	// The signal blockers above mean secondsSpin_/minResolutionCombo_/
-	// liveSceneCombo_ may have just changed to their real values without
-	// RefreshFitEstimate() having run for them yet -- refresh explicitly so
-	// the estimate is never stale.
-	if (fitLabel_)
-		RefreshFitEstimate();
 }
 
-void TrigglowDelayDock::AnnounceStatus(BufferModeState state, const QString &message)
+void TrigglowDelayDock::RefreshDelayCard(uint32_t delaySeconds, bool streamOnly)
+{
+	if (secondsSpin_->value() != static_cast<int>(delaySeconds))
+		secondsSpin_->setValue(static_cast<int>(delaySeconds));
+	const QString tip = streamOnly ? T("Dock.Delay.Tooltip.Stream").arg(BufferModeController::kMaxDelaySeconds)
+				       : T("Dock.Delay.Tooltip");
+	secondsSpin_->setToolTip(tip);
+	secondsSpin_->setAccessibleDescription(tip);
+	lessButton_->setEnabled(delaySeconds > BufferModeController::kMinDelaySeconds);
+	moreButton_->setEnabled(delaySeconds < BufferModeController::kMaxDelaySeconds);
+	for (int i = 0; i < 3; ++i) {
+		const uint32_t value = streamController_.Preset(i);
+		presetChips_[i]->setText(T("Dock.Status.Seconds").arg(value));
+		presetChips_[i]->setAccessibleName(T("Dock.Preset.Label").arg(i + 1) + QStringLiteral(": ") +
+						   T("Dock.Status.Seconds").arg(value));
+		ui::SetStyleProperty(presetChips_[i], "tgActive",
+				     value == delaySeconds ? QStringLiteral("true") : QStringLiteral("false"));
+	}
+}
+
+void TrigglowDelayDock::RefreshApplyTo(const BufferModeStatus &scene, const StreamDelayStatus &stream)
+{
+	// Never switched under a running delay: the other mode would start from
+	// nothing while this one stopped, and viewers would see a jump. Locked
+	// like the scene pickers, with the line saying how to unlock it.
+	const bool sceneBusy = scene.state == BufferModeState::Filling || scene.state == BufferModeState::Active;
+	const bool streamBusy = stream.delayOn || stream.state == StreamDelayState::Draining;
+	const bool locked = sceneBusy || streamBusy;
+	const bool wasRefreshing = refreshing_;
+	refreshing_ = true;
+	applyCheck_->setChecked(stream.available && stream.applyTo == ApplyTo::Stream);
+	refreshing_ = wasRefreshing;
+	applyCheck_->setEnabled(stream.available && !locked);
+	applyText_->setEnabled(stream.available && !locked);
+	applyLockRow_->setVisible(stream.available && locked);
+	applyHint_->setText(T(stream.available ? "Dock.ApplyTo.Hint" : "Dock.ApplyTo.Unavailable"));
+}
+
+void TrigglowDelayDock::AnnounceStatus(const QString &state, bool error, const QString &message)
 {
 	// Screen readers learn about the change without the user having to go
 	// looking for it, errors first. Only on real state changes, not every
@@ -1205,7 +1657,6 @@ void TrigglowDelayDock::AnnounceStatus(BufferModeState state, const QString &mes
 	announcedState_ = state;
 	if (first || !QAccessible::isActive())
 		return;
-	const bool error = state == BufferModeState::Error;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 	Announce(message, error);
 #else
@@ -1329,19 +1780,19 @@ void TrigglowDelayDock::resizeEvent(QResizeEvent *event)
 void TrigglowDelayDock::ApplyNarrowLayout(int width)
 {
 	// Side-by-side rows turn into stacked ones when there's not enough room
-	// for both columns: delay | quality and the buttons below 250 px, the
-	// footer and the account row's inline button (under its text, next to
-	// the icon) below 300 px.
-	constexpr int kTinyWidth = 250;
-	constexpr int kNarrowWidth = 300;
+	// for both columns: the buttons below 250 px; the footer, the account
+	// row's inline button (under its text, next to the icon), the presets
+	// and the quick-pick label below 300 px.
 	const bool tiny = width < kTinyWidth;
 	const bool narrow = width < kNarrowWidth;
 	const auto stacked = QBoxLayout::TopToBottom;
 	const auto sideBySide = QBoxLayout::LeftToRight;
 	if (accountLayout_)
 		accountLayout_->setDirection(narrow ? stacked : sideBySide);
-	if (tuningRow_)
-		tuningRow_->setDirection(tiny ? stacked : sideBySide);
+	if (presetRow_)
+		presetRow_->setDirection(narrow ? stacked : sideBySide);
+	if (chipRow_)
+		chipRow_->setDirection(narrow ? stacked : sideBySide);
 	if (buttonRow_)
 		buttonRow_->setDirection(tiny ? stacked : sideBySide);
 	if (footerRow_)
@@ -1444,10 +1895,10 @@ void TrigglowDelayDock::RefreshAccountUi()
 		      ui::ToQColor(theme_.tokens.text));
 
 	// Re-derives the Enable button's visual enabled state too (real
-	// enforcement lives in BufferModeController::Enable() itself, see
+	// enforcement lives in each controller's Enable() itself, see
 	// SetAuthorizationCheck) -- single source of truth for that condition,
-	// see RefreshFromStatus()'s enableButton_ line.
-	RefreshFromStatus(bufferController_.GetStatus());
+	// see RefreshSceneStatus()'s and RefreshStreamStatus()'s enableButton_ lines.
+	Refresh();
 }
 
 void TrigglowDelayDock::ArmFillTimer(uint32_t milliseconds)
@@ -1520,9 +1971,9 @@ void TrigglowDelayDock::RefreshAvailableScenes()
 	// here won't have gone through the normal currentIndexChanged path --
 	// refresh explicitly: whether the saved scene is in the list decides the
 	// requirement list and the Enable button, and the estimate (refreshed at
-	// the end of RefreshFromStatus) mustn't keep saying "choose a scene" when
-	// one was actually restored.
-	RefreshFromStatus(bufferController_.GetStatus());
+	// the end of Refresh()) mustn't keep saying "choose a scene" when one was
+	// actually restored.
+	Refresh();
 }
 
 void TrigglowDelayDock::OnReportBugClicked()

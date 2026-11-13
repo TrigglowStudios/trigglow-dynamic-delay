@@ -3,7 +3,7 @@
 # Technical specification — Trigglow Dynamic Delay for OBS
 
 Status: **v1.0.0 — stable on Windows; macOS and Linux in alpha**
-Last updated: 2026-11-11 (v1.0.0: §1, §3.8, §8; stream mode has its own document,
+Last updated: 2026-11-12 (v1.0.0: §3.11, scene mode verified end to end; 2026-11-11: §1, §3.8, §8; stream mode has its own document,
 `docs/STREAM_MODE.md`. v0.7.0: §3.5, §4–§4.8, §8; v0.6.0: §3.1–§3.8, §4–§4.7, §8; rewritten from
 scratch on 2026-08-26 — see §0). A v0.5.1 hotfix was prepared but never published; everything in it
 shipped in v0.6.0, so this document dates those changes v0.6.0.
@@ -33,13 +33,13 @@ reconnection, no cut, at any point, for any reason. No external app, no web pane
 process: everything lives inside the OBS process.
 
 **Since v1.0.0 the plugin has two modes, and this document describes scene mode (buffer mode).**
-Stream mode (the default where it can run) delays the stream OBS has already encoded: it
-points OBS's RTMP output at a relay on `127.0.0.1` inside OBS and sends the packets to the
-platform(s) after the delay, with no decode or second encode, every scene delayed and the recording
-live. It is specified in `docs/STREAM_MODE.md`. Scene mode, below, stays for
-the streams stream mode can't relay (Enhanced Broadcasting, SRT, RIST, WHIP); it's "Scene mode
-(compatibility)" in the dock. Hotkeys and obs-websocket reach either mode through `DelayRouter`
-(§8).
+Scene mode, below, is the default: the dock's delay applies to all of OBS, the stream and the
+recording. Stream mode is the dock's advanced option "Apply the delay only to the stream (recording
+and preview stay live)": it delays the stream OBS has already encoded, pointing OBS's RTMP output at
+a relay on `127.0.0.1` inside OBS and sending the packets to the platform after the delay, with no
+decode or second encode, every scene delayed and the recording live. It is specified in
+`docs/STREAM_MODE.md` (with the one-panel dock and the `apply_to` setting). The dock's button,
+hotkeys and obs-websocket reach the selected mode only, through `DelayRouter` (§8).
 
 ## 2. Why reconnection was rejected
 
@@ -89,8 +89,8 @@ delays what OBS is *showing on Program*, using two OBS filters plus a small stat
 A `OBS_SOURCE_VIDEO`-only OBS filter, attached to a hidden **wrapper scene** that contains the user's
 chosen live scene. Every `video_render` call (as of v0.6.0):
 
-1. At most once per capture cell (a wall-clock interval of `1e9 × fps_den / fps_num` ns, two of
-   them on the half-rate degradation rung, §4.7), renders the live scene into one reusable RGBA
+1. Once per OBS frame (every other frame on the half-rate degradation rung, §4.7; v1.0.0: by
+   OBS's frame time, `obs_get_video_frame_time()`, not the wall clock, §3.11), renders the live scene into one reusable RGBA
    capture render target at the buffer's current size — its ortho projection still spans the
    scene's real size, so the GPU rasterizes the scene down to fit.
 2. Converts that RGBA frame to **I420** — Y, plus U and V at half width and height (box-averaged,
@@ -139,7 +139,9 @@ Video and audio use the same `delaySeconds`, so both land in sync; when the RAM 
 video ring, both use the same whole-second effective delay instead (§3.3). Since v1.0.0 each filter's
 ring is an `AudioDelayLine` (`src/audio-delay-line.*`, pure, tested): it keeps its history across a
 delay change, skipping forward when the delay is lowered and holding (silence) while a raise builds
-up, in step with the video (§3.3).
+up, in step with the video (§3.3). It stores that history in blocks of 16,384 frames per channel,
+allocated as samples are written and freed a few at a time, never the whole ring at once on the
+source's audio thread (§3.11).
 
 ### 3.3. `BufferModeController` — the state machine
 
@@ -425,8 +427,10 @@ slack (capture jitter must never leave the oldest slot younger than the delay) p
 at 60000/1001 needs 1815 slots rather than a truncated 59fps count. Since v0.7.0 the slack is at
 least one GOP (half a second) when the cycle may store an inter-frame codec, and the assumed
 compression ratio comes from the cycle's storage class: 5x for MJPEG, 12x once a hardware codec has
-worked in the session (§4.8). The capture cell is `1e9 × fps_den / fps_num` ns (16,683,333ns at
+worked in the session (§4.8). The frame interval is `1e9 × fps_den / fps_num` ns (16,683,333ns at
 59.94fps); before v0.6.0 it was `1e9 / 59` there, which missed almost one real frame per second.
+Since v1.0.0 the capture follows OBS's frame times instead of wall-clock cells of that interval
+(`bufferfit::CaptureDue()`, §3.11).
 
 The dock shows a live, non-blocking estimate of what a given (seconds, quality) combination will
 actually achieve — duration and buffer resolution, cap included — *before* the user presses Enable —
@@ -810,7 +814,8 @@ quality floor and then the duration. Two additions:
   (`bufferfit::Input::reservedBytesPerSecond`, `VideoBudgetBytes()`, never below a quarter of the
   budget), the dock's estimate included.
 - `AudioDelayLine` grows its ring when the delay needs more room (keeping the history) and gives the
-  room back once a lowered delay has settled, at least 10 s of samples past it.
+  room back once a lowered delay has settled, at least 10 s of samples past it. Both happen block by
+  block (§3.11).
 
 Measured in the portable OBS of §3.3 (Windows 11, 31 GB RAM so a 15.5 GB budget, AMD Radeon RX 7800
 XT, OBS 33.0.1, 1080p60 canvas and output, the live scene a looping 1080p60 clip of `testsrc2` with
@@ -836,6 +841,95 @@ hardware codec's D3D11 surfaces). The assumed ratios (5x MJPEG, 12x hardware) ke
 the safe side: these 300 s rings were 11.2 GB and 4.7 GB by the estimate, 1.4 GB and 0.8 GB for
 real. After Disable the process keeps 150-270 MB over the baseline (heap and driver memory the
 reaper's frees don't return at once); a second Enable reuses it.
+
+### 3.11. v1.0.0: scene mode verified end to end in OBS 33
+
+Scene mode (the delay on all of OBS: the stream and the recording) was run in a real OBS on
+2026-11-12, stream mode off, driven only over obs-websocket.
+
+**Rig.** The official OBS Studio 33.0.1 Windows zip, `--portable`, its own websocket port and
+password, the plugin in its own `plugins/` folder (built with `TRIGGLOW_TEST_SKIP_ACCOUNT_GATE`),
+Windows 11, AMD Radeon RX 7800 XT (storage codec `hevc_amf`), 31 GB RAM (15.9 GB budget). The live
+scene: a busy 1080p60 background (`testsrc2` with noise, 20 Mbps) with a clock clip on top, the
+16-bit Gray code of its own frame number in 16 bars, and a 1 kHz beep at every whole second of its
+time. A second scene; no loading scene chosen, so the default "Adding delay" video shows. OBS
+recorded (x264, mkv) and streamed (x264, 6 Mbps) to a local FFmpeg RTMP listener at the same time.
+Both files were decoded frame by frame: each frame's clock gives the age of what it shows, so the
+delay of every frame, repeated and skipped frames, black frames and frames of other scenes; each
+beep's onset against the frame on screen at that moment gives audio against video. "A/V" below is
+that offset. With the delay off it is OBS's own constant offset for the clip (between -48 and +25 ms
+depending on the run and the output), so a correct delay leaves it unchanged. Requests used: the
+vendor's `EnableDelay`, `DisableDelay`, `SetDelay`, `AdjustDelay` and `GetStatus`; OBS's
+`StartRecord`, `StartStream`, `GetCurrentProgramScene`, `GetSourceScreenshot`, `GetStats` and
+`TriggerHotkeyByName`.
+
+| Check | Measured (the recording and the stream agree to the frame unless said) | Result |
+|---|---|---|
+| Enable at 10 s | Program on the loading scene within the request (1 ms); the default video plays (half the frames change; it loops); 10.0 s (601 frames at 60 fps); then the delayed view at **10.000 s on every frame**, 0 repeated, 0 skipped, 0 black; A/V as with the delay off (-21.5 ms recording, -8.5 ms stream) | Pass |
+| Enable at 30 s | Loading scene 30.0 s (1,800 frames); **30.000 s** on all 908 frames, 0 repeated or skipped; A/V as with the delay off (-20.0 / -7.3 ms) | Pass |
+| Lower live, 30 to 10 s | One frame from 30.000 to 10.000 s (viewers skip forward); A/V unchanged | Pass |
+| Raise live by 3 s (10 to 13) | The picture holds 3.00 s (181 frames) with the sound silent as long; then **13.000 s** | Pass |
+| Raise live by 12 s (13 to 25) | The loading scene for 12.0 s (721 frames), then **25.000 s**; nothing refilled | Pass |
+| Long, 1080p60 | Enable at 120 s: 1920x1080 ring, **120.000 s**, OBS +723 MB (arena 400 MB, 55x). Raised live to 600 s: loading scene 480.0 s, then **600.000 s** on all 1,845 frames, OBS +1,962 MB (arena 1,424 MB, 54x). Not trimmed; the raise lowered the capture to 1552x872 (see below) | Pass |
+| Long, 1080p30 | Enable at 600 s: 1920x1080 ring, loading scene 600.0 s, then **600.000 s**, OBS +1,708 MB (arena 1,144 MB, 47x); not trimmed. Lowered live to 120 s: one frame, **120.000 s**, OBS +595 MB 22 s later | Pass |
+| Live 10, 310, 10 s (1080p30) | 310.000 s, then 10.000 s; A/V -20.4 ms in every part, before, during and after | Pass |
+| Disable | Program on the live scene within the request; one frame from the delayed picture to live (30.000 to 0.000 s, 25.000 to 0.000 s) | Pass |
+| Badge | Drawn over the delayed view while on, in the chosen corner, showing 30, 10, 13 (during the hold), 13 and 25 s as set | Pass |
+| Hotkeys | `enable`, `delay_up` (+5 s: loading 5.0 s, then 15.000 s), `delay_down` (10.000 s), `preset2` and `preset1` (15 and 5 s), `toggle` off and on, `preset3` (45 s: loading for the extra 40 s), `skip_live`, `disable`: each measured as above | Pass |
+| Audio filters after a restart | Filters saved at 60 s, saved delay 30 s (the owner's log reproduced: "60s" at load). Enable sets every filter of the live scene to 30 s before switching it on; audio measured at **30.000 s**, A/V unchanged | Pass |
+| Against v0.7.3 | The same Program sequence and Disable. v0.7.3's delayed view repeated and skipped frames (36 + 37 in 12 s; 107 + 104 in 8 s on its second Enable) and its A/V moved by one or two frames; this build: none | Pass |
+
+**Bugs found and fixed:**
+- **Judder.** The filter stamped its captures, and chose the frame to show, with the wall clock read
+  in `Render()`, which jitters by up to a frame against OBS's frame times: it showed a frame one too
+  early one time and one too late the next (167 repeated and 157 skipped frames in 15 s at 60 fps,
+  the A/V wobbling by a frame). It now uses OBS's frame time (`bufferfit::FrameClockNs()` and
+  `CaptureDue()`, unit-tested) and picks with half a frame of tolerance: OBS's integer frame interval
+  makes `delay` seconds of frames a few hundred ns short, so the picture ran one frame late
+  (10.017 s). v0.7.3 has the same code and the same judder.
+- **A freeze when the delay starts again.** The hardware storage codec's quick re-check (every
+  Enable after the first in a session, every rung change) handed over no decoder, so the decode
+  worker opened one at the first frame due: ~130 ms a frame, a 0.5 s hold then a skip, and the
+  degradation policy took it for load and lowered the buffer to 1592x896 for the cycle. The quick
+  check now warms a decoder too, and the start of playback gets the same grace as a live change.
+- **A black flash at Enable.** The default loading video opens when it's shown (3 to 14 black
+  frames). The default loading scene now has the video's first frame as a still under it
+  (`autonames::kDefaultLoadingStill`, `data/images/adding-delay-*.jpg`).
+- **Audio a tick late for good after long changes.** Turning on, raising or lowering minutes of
+  delay moved all of OBS's audio 21.3 ms (one 1,024-sample tick) later against the video until OBS
+  restarted, in steps (twice in an 11-minute run: +42.7 ms), with the delay off afterwards too. The
+  most likely cause, consistent with every run: `AudioDelayLine` sized its ring in one go on the
+  source's own audio thread (115 MB zero-filled per channel at 600 s, a raise copying the history, a
+  lowering freeing it), and a source that late makes OBS add a tick of audio buffering. The line now
+  keeps its history in blocks of 16,384 frames added as it's written, keeps a few spare and frees the
+  rest four per chunk (`audio_delay_line_tests`, "memory in blocks"). Since then: no step in a fresh
+  600 s Enable, a 10, 310, 10 s run or a 600 to 120 s lowering.
+- The audio filter took the time it was off between two cycles for a gap in its source and logged
+  it; a reset now starts the source's timeline over. Its line at load now says the value is the one
+  it last had.
+
+**The 60 s / 30 s in the owner's log** are harmless. Each audio filter saves with the scene
+collection the last delay it was given, and loads switched off. That collection has two scenes that
+were each the live scene at some point (both carry the video filter): the one used at 30 s left 30 s
+on its sources, the one used later at 60 s left 60 s on its own, the shared ones (CAM, Mic, Desktop,
+Game) included. Enable gives every filter of the live scene the current delay before switching it
+on, and a filter outside the live scene stays off.
+
+**Found, not changed:**
+- The first Enable in a scene collection creates the helper scenes, sources and filters: OBS lagged
+  3 to 12 frames then, and viewers see that moment as a short hitch `delay` seconds later. Once per
+  collection; v0.7.3 does the same.
+- The first delay of an OBS session sizes its ring for MJPEG's assumed 5x (the hardware codec isn't
+  proven yet, invariant I9). The dock's estimate is that same sizing, so it matches what happens, but
+  it is about ten times the real use: the live raise to 600 s at 1080p60 lowered the capture to
+  1552x872 to fit, while the ring took 1.4 GB of a 15.9 GB budget. Later cycles size for 12x.
+- After Disable OBS keeps 200 to 400 MB more than with the delay never on (heap and driver memory).
+- A source screenshot (`GetSourceScreenshot`) renders the scene outside OBS's frame and can show a
+  frame one or two frames off at that instant. The only other one-frame events were at live changes
+  (the frame before a lowering; in the stream, the first beep after a raise).
+
+**Not verified:** macOS and Linux; the NVIDIA and Intel storage codecs; 600 s at 1080p60 from a fresh
+Enable (the 600 s at 60 fps came from a live raise); Studio Mode; a real platform's ingest.
 
 ## 4. v0.3.0: real MJPEG compression of the RAM ring
 
@@ -1088,7 +1182,8 @@ How to read each field from the user's side: `docs/TROUBLESHOOTING.md`, "Reading
 
 ### 4.6. v0.6.0: codec worker threads, ring and arena
 
-Design invariants: the video delay is exact by wall clock, frames are picked by capture age, and
+Design invariants: the video delay is exact by OBS's frame clock (the wall clock until v1.0.0,
+§3.11), frames are picked by capture age, and
 video and audio share one whole-second delay (§3.3); "never cut": while `Active` the ring is only
 emptied by a real geometry change; everything `gs_*` stays on the graphics thread (workers never
 touch the GPU); and each `AVCodecContext` is used by one thread only, which also opens and closes it
@@ -1572,8 +1667,12 @@ stream-relay.*                → v1.0.0 the relay (FFmpeg avformat, Windows): R
                                 127.0.0.1, the sender to the streamer's service, back-off, drain
 packet-delay-core.*           → v1.0.0 PacketHistory / SinkScheduler: splices, timestamp rewrite,
                                 trimming, dump floor; pure
-stream-mode-panel.*           → v1.0.0 the dock's stream mode section
-delay-router.*                → v1.0.0 hotkeys and obs-websocket to stream mode or scene mode
+settings-ui-stream.cpp        → v1.0.0 the dock's parts for "only the stream"
+apply-to.*                    → v1.0.0 what the delay applies to (all of OBS / only the stream),
+                                the apply_to setting and its migration; pure
+delay-router.hpp              → v1.0.0 the dock's button, hotkeys and obs-websocket to the selected
+                                mode only; pure
+delay-targets.*               → v1.0.0 the two controllers as router targets
 websocket-vendor.*            → v1.0.0 obs-websocket vendor trigglow-dynamic-delay (docs/STREAM_DECK.md)
 core-host.* / core-main.cpp   → the core-only build (v0.7.2, TRIGGLOW_CORE_ONLY): scene mode driven
                                 through a private source's settings, for Trigglow Studio
@@ -1631,9 +1730,10 @@ update-checker.*              → latest GitHub release check; opens only this r
 background-tasks.* / cancel-token.* / ui-tasks.* → §3.8 -- cancellable background jobs, owners
                                 and the bounded shutdown on unload
 scene-combo-box.*             → dock combo box populated from obs_frontend_get_scene_names()
-settings-ui.*                 → the Qt dock (live/loading scene, seconds, quality, fit estimate,
-                                Enable/Disable, live fill countdown, locked fields, degradation
-                                notice)
+settings-ui.*                 → the Qt dock, one panel for both modes since v1.0.0 (status, the
+                                one button, delay, live/loading scene, quality, fit estimate, the
+                                advanced check box, live fill countdown, locked fields,
+                                degradation notice)
 ui-tokens.* / ui-theme.*      → colors derived from OBS's palette (WCAG AA), style sheet, bundled
                                 fonts and recolored SVG icons
 hotkeys.*                     → registration of the 10 native OBS hotkeys (v1.0.0: back to live,
@@ -1655,11 +1755,12 @@ tests/                        → unit suites, built only with -DTRIGGLOW_BUILD_
 
 Design principle: **each mode's controller is the only owner of its state** —
 `BufferModeController` for scene mode, `StreamDelayController` for stream mode. The dock and the
-hotkeys (and, since v1.0.0, obs-websocket) call the same public methods (`Enable()`, `Disable()`,
+hotkeys (and, since v1.0.0, obs-websocket) reach the same public methods (`Enable()`, `Disable()`,
 `Toggle()`...) — there is no separate code path for "button" vs. "hotkey", which halves the
-state-sync bug surface. `DelayRouter` only picks which controller a hotkey or obs-websocket command
-goes to (stream mode when `StreamDelayController::HandlesControls()`, scene mode otherwise); it keeps
-no state of its own.
+state-sync bug surface. `DelayRouter` only picks which controller the dock's button, a hotkey or an
+obs-websocket command goes to: the one the streamer selected in the dock (stream mode when
+`StreamDelayController::HandlesControls()`, scene mode otherwise), and only that one; it keeps no
+state of its own.
 
 ## 9. License and repository
 

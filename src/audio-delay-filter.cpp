@@ -81,8 +81,12 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	const uint32_t delaySeconds = configuredDelaySeconds_.load(std::memory_order_relaxed);
 
 	line_.Configure(channels, sampleRate);
-	if (resetRequested_.exchange(false, std::memory_order_acq_rel))
+	if (resetRequested_.exchange(false, std::memory_order_acq_rel)) {
 		line_.Reset();
+		// A new cycle: the source's timeline starts over too, so the time the
+		// filter was off (Disable to Enable) isn't taken for a gap.
+		haveExpectedTimestamp_ = false;
+	}
 	// Lowered: skips forward at once; raised: holds (silence) until the extra
 	// seconds have built up -- what the video does (AudioDelayLine).
 	line_.SetDelayFrames(static_cast<uint64_t>(delaySeconds) * sampleRate);
@@ -147,12 +151,23 @@ obs_audio_data *AudioDelayFilter::FilterAudio(obs_audio_data *audio)
 	return &output_;
 }
 
-void AudioDelayFilter::ApplyDelaySeconds(uint32_t seconds)
+void AudioDelayFilter::ApplyDelaySeconds(uint32_t seconds, bool fromCollection)
 {
 	if (seconds == configuredDelaySeconds_.load())
 		return;
 	configuredDelaySeconds_.store(seconds);
-	TRIGGLOW_LOG_INFO(kComponent, "delay set to %us on \"%s\"", seconds, obs_source_get_name(filterSource_));
+	// v1.0.0: the value a filter loads with is only the last one it was given
+	// (one live scene at 60 s, another later at 30 s leave both values in the
+	// collection), and the filter loads switched off: the dock gives every
+	// filter of the live scene its delay before switching them on.
+	if (fromCollection)
+		TRIGGLOW_LOG_INFO(kComponent,
+				  "\"%s\" loaded with the %us it last had (off; the dock sets the delay when it "
+				  "turns the delay on)",
+				  obs_source_get_name(filterSource_), seconds);
+	else
+		TRIGGLOW_LOG_INFO(kComponent, "delay set to %us on \"%s\"", seconds,
+				  obs_source_get_name(filterSource_));
 }
 
 void AudioDelayFilter::Update(obs_data_t *settings)
@@ -163,7 +178,7 @@ void AudioDelayFilter::Update(obs_data_t *settings)
 		std::lock_guard<std::mutex> lock(managedMutex_);
 		const auto seconds = static_cast<uint32_t>(obs_data_get_int(settings, kSettingDelaySeconds));
 		if (!managed_) {
-			ApplyDelaySeconds(seconds);
+			ApplyDelaySeconds(seconds, !created_);
 		} else if (seconds != configuredDelaySeconds_.load() && !warnedForeignSettings_) {
 			warnedForeignSettings_ = true;
 			TRIGGLOW_LOG_WARN(kComponent,
@@ -189,6 +204,7 @@ void *AudioDelayFilter::Create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *filter = new AudioDelayFilter(source);
 	filter->Update(settings);
+	filter->created_ = true;
 	if (proc_handler_t *procHandler = obs_source_get_proc_handler(source))
 		proc_handler_add(procHandler, "void set_managed_delay_seconds(in int seconds)",
 				 &AudioDelayFilter::SetManagedDelaySecondsProc, filter);
@@ -208,7 +224,7 @@ void AudioDelayFilter::SetManagedDelaySecondsProc(void *data, calldata_t *params
 	std::lock_guard<std::mutex> lock(filter->managedMutex_);
 	filter->managed_ = true;
 	filter->warnedForeignSettings_ = false; // One WARN per push of the dock's value, at most.
-	filter->ApplyDelaySeconds(seconds);
+	filter->ApplyDelaySeconds(seconds, false);
 	// The settings say the same (saved with the collection, compared with by
 	// Update()), under the mutex like VideoDelayFilter::SetManagedSetting().
 	if (obs_data_t *settings = obs_source_get_settings(filter->filterSource_)) {
