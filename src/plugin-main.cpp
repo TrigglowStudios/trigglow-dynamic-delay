@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -37,6 +38,7 @@ extern "C" {
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <plugin-support.h>
+#include <util/platform.h>
 }
 
 #ifdef TRIGGLOW_HAVE_FFMPEG
@@ -553,14 +555,152 @@ void AlignSharedSettings(trigglow::BufferModeController &scene, trigglow::Stream
 //   enable | disable            through the router, like a hotkey
 //   delay <seconds>             through the router
 //   stream start|stop           OBS's own Start/Stop Streaming
+//   canvas add <canvas> <scene> a second canvas (like Aitum Vertical's) with a
+//                               scene called <scene> holding a red color
+//                               source; its output's center pixel goes to
+//                               <folder>/canvas.log (ms r g b), ~20 a second
+//   canvas color red|blue|green that color source's color
+//   canvas remove               the canvas gone again
 // Screenshots of the dock at fixed widths without sending any input to any
 // window.
+struct TestCanvas {
+	obs_canvas_t *canvas = nullptr;
+	obs_scene_t *scene = nullptr;
+	obs_source_t *color = nullptr;
+	// A canvas only renders while something takes its video: this test
+	// output, like Aitum Vertical's stream or recording.
+	obs_output_t *probe = nullptr;
+	FILE *log = nullptr;
+	uint64_t lastNs = 0;
+};
+TestCanvas g_testCanvas;
+constexpr uint32_t kTestCanvasShotWidth = 64;
+constexpr uint32_t kTestCanvasShotHeight = 36;
+
+void TestCanvasFrame(void *param, struct video_data *frame)
+{
+	auto *tc = static_cast<TestCanvas *>(param);
+	const uint64_t now = os_gettime_ns();
+	if (!tc->log || now - tc->lastNs < 50000000ULL)
+		return;
+	tc->lastNs = now;
+	const uint8_t *px = frame->data[0] + static_cast<size_t>(frame->linesize[0]) * (kTestCanvasShotHeight / 2) +
+			    (kTestCanvasShotWidth / 2) * 4;
+	fprintf(tc->log, "%llu %d %d %d\n", static_cast<unsigned long long>(now / 1000000ULL), px[0], px[1], px[2]);
+	fflush(tc->log);
+}
+
+constexpr const char *kTestCanvasProbeId = "trigglow_test_canvas_probe";
+
+void RegisterTestCanvasProbe()
+{
+	obs_output_info info = {};
+	info.id = kTestCanvasProbeId;
+	info.flags = OBS_OUTPUT_VIDEO;
+	info.get_name = [](void *) -> const char * {
+		return "Trigglow test canvas probe";
+	};
+	info.create = [](obs_data_t *, obs_output_t *output) -> void * {
+		return output;
+	};
+	info.destroy = [](void *) {
+	};
+	info.start = [](void *data) -> bool {
+		auto *output = static_cast<obs_output_t *>(data);
+		video_scale_info conversion = {};
+		conversion.format = VIDEO_FORMAT_RGBA;
+		conversion.width = kTestCanvasShotWidth;
+		conversion.height = kTestCanvasShotHeight;
+		conversion.range = VIDEO_RANGE_FULL;
+		conversion.colorspace = VIDEO_CS_SRGB;
+		obs_output_set_video_conversion(output, &conversion);
+		return obs_output_begin_data_capture(output, 0);
+	};
+	info.stop = [](void *data, uint64_t) {
+		obs_output_end_data_capture(static_cast<obs_output_t *>(data));
+	};
+	info.raw_video = [](void *, struct video_data *frame) {
+		TestCanvasFrame(&g_testCanvas, frame);
+	};
+	obs_register_output(&info);
+}
+
+void SetTestCanvasColor(const QString &name)
+{
+	if (!g_testCanvas.color)
+		return;
+	// ABGR.
+	const long long color = name == QLatin1String("blue")    ? 0xFFFF0000LL
+				: name == QLatin1String("green") ? 0xFF00FF00LL
+								 : 0xFF0000FFLL;
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "color", color);
+	obs_source_update(g_testCanvas.color, settings);
+	obs_data_release(settings);
+}
+
+void RemoveTestCanvas()
+{
+	TestCanvas &tc = g_testCanvas;
+	if (!tc.canvas)
+		return;
+	if (tc.probe) {
+		obs_output_force_stop(tc.probe);
+		obs_output_release(tc.probe);
+	}
+	obs_canvas_set_channel(tc.canvas, 0, nullptr);
+	if (tc.color)
+		obs_source_release(tc.color);
+	if (tc.scene) {
+		obs_canvas_scene_remove(tc.scene);
+		obs_scene_release(tc.scene); // The reference obs_canvas_scene_create() gave.
+	}
+	obs_canvas_remove(tc.canvas);
+	obs_canvas_release(tc.canvas);
+	if (tc.log)
+		fclose(tc.log);
+	tc = TestCanvas{};
+}
+
+void AddTestCanvas(const QString &folder, const QString &canvasName, const QString &sceneName)
+{
+	RemoveTestCanvas();
+	TestCanvas &tc = g_testCanvas;
+	obs_video_info ovi = {};
+	obs_get_video_info(&ovi);
+	tc.canvas = obs_canvas_create(canvasName.toUtf8().constData(), &ovi, PROGRAM);
+	if (!tc.canvas) {
+		TRIGGLOW_LOG_WARN(kComponent, "test canvas: could not create it");
+		return;
+	}
+	tc.scene = obs_canvas_scene_create(tc.canvas, sceneName.toUtf8().constData());
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "width", ovi.base_width);
+	obs_data_set_int(settings, "height", ovi.base_height);
+	tc.color = obs_source_create("color_source_v3", "Trigglow test canvas color", settings, nullptr);
+	obs_data_release(settings);
+	SetTestCanvasColor(QStringLiteral("red"));
+	obs_scene_add(tc.scene, tc.color);
+	obs_canvas_set_channel(tc.canvas, 0, obs_scene_get_source(tc.scene));
+	tc.log = fopen((folder + QStringLiteral("/canvas.log")).toLocal8Bit().constData(), "w");
+	tc.probe = obs_output_create(kTestCanvasProbeId, "Trigglow test canvas probe", nullptr, nullptr);
+	bool connected = false;
+	if (tc.probe) {
+		obs_output_set_media(tc.probe, obs_canvas_get_video(tc.canvas), obs_get_audio());
+		connected = obs_output_start(tc.probe);
+	}
+	TRIGGLOW_LOG_INFO(kComponent, "test canvas \"%s\" with scene \"%s\" (video %s, output %s)",
+			  canvasName.toUtf8().constData(), sceneName.toUtf8().constData(),
+			  obs_canvas_has_video(tc.canvas) ? "yes" : "no", connected ? "connected" : "NOT connected");
+}
+
 void StartDockShots()
 {
 	const char *dir = std::getenv("TRIGGLOW_TEST_DOCK_SHOTS");
 	if (!dir || !*dir)
 		return;
 	TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: dock shots on request");
+	RegisterTestCanvasProbe();
 	const QString folder = QString::fromUtf8(dir);
 	g_state->shotTimer = std::make_unique<QTimer>();
 	QObject::connect(g_state->shotTimer.get(), &QTimer::timeout, [folder] {
@@ -603,6 +743,13 @@ void StartDockShots()
 					obs_frontend_streaming_start();
 				else
 					obs_frontend_streaming_stop();
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 4 && w[1] == QLatin1String("add")) {
+				AddTestCanvas(folder, w[2], w[3]);
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 3 && w[1] == QLatin1String("color")) {
+				SetTestCanvasColor(w[2]);
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 2 &&
+				   w[1] == QLatin1String("remove")) {
+				RemoveTestCanvas();
 			}
 		}
 	});
