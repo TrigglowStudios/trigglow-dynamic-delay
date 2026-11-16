@@ -20,7 +20,7 @@ sign-in are kept.
   obs-websocket and the Stream Deck drive the one you chose. If you tried a 1.0 test build with
   "Use stream mode" ticked, you start on all of OBS again. The Delay and Scenes cards fold too:
   folded, their header still shows the seconds and the first delayed scene. The version and
-  "Report a problem" sit at the bottom of the panel.
+  "Report a problem" stay pinned at the bottom of the panel, even when you scroll it.
 - **Several delayed scenes, one buffer.** In all of OBS, add up to 8 scenes under **Delayed
   scenes** (Add scene). With the delay on, switch between them from the dock's buttons, the new
   hotkeys "Delayed scene 1" to "8", or obs-websocket (`SetDelayedScene`): viewers
