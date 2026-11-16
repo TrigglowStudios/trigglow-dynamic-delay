@@ -20,8 +20,8 @@ inicio de sesión se mantienen.
   botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
   de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS. Las
   tarjetas Delay y Escenas también se pliegan: plegadas, su cabecera sigue mostrando los segundos y
-  la primera escena con delay. La versión y "Reportar un problema" quedan abajo del todo en el
-  panel.
+  la primera escena con delay. La versión y "Reportar un problema" quedan fijos abajo del panel, también al hacer
+  scroll.
 - **Varias escenas con delay, un solo búfer.** En todo OBS, añade hasta 8 escenas en **Escenas con
   delay** (Añadir escena). Con el delay activo, cambia entre ellas con los botones del dock, los
   atajos nuevos "Escena con delay 1" a "8", u obs-websocket (`SetDelayedScene`): tu

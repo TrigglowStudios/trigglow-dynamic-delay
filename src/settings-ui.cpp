@@ -274,7 +274,7 @@ void TrigglowDelayDock::BuildUi()
 	auto *content = new QWidget(scroll);
 	content->setObjectName(QStringLiteral("tgDockContent"));
 	scroll->setWidget(content);
-	outer->addWidget(scroll);
+	outer->addWidget(scroll, 1);
 
 	auto *root = new QVBoxLayout(content);
 	root->setContentsMargins(12, 12, 12, 12);
@@ -599,10 +599,17 @@ void TrigglowDelayDock::BuildUi()
 	root->addStretch(1);
 
 	// --- Footer: version on the left, "Report a problem" on the
-	// right. The report link stays enabled in every state -- a user hitting
-	// lag or a stuck buffer needs it exactly when things are going wrong. ---
-	root->addWidget(MakeDivider(this));
+	// right. It sits outside the scroll area, so it stays on the dock's bottom
+	// edge whatever the content's height. The report link stays enabled in
+	// every state -- a user hitting lag or a stuck buffer needs it exactly when
+	// things are going wrong. ---
 	{
+		auto *footerBar = new QWidget(this);
+		footerBar->setObjectName(QStringLiteral("tgDockFooter"));
+		auto *footerOuter = new QVBoxLayout(footerBar);
+		footerOuter->setContentsMargins(12, 0, 12, 12);
+		footerOuter->setSpacing(10);
+		footerOuter->addWidget(MakeDivider(footerBar));
 		// Version | link; the link moves under it in narrow docks.
 		auto *footer = new QBoxLayout(QBoxLayout::LeftToRight);
 		footerRow_ = footer;
@@ -623,7 +630,8 @@ void TrigglowDelayDock::BuildUi()
 		versionRow->addStretch(1);
 		footer->addLayout(versionRow, 1);
 		footer->addWidget(reportBugButton_, 0, Qt::AlignLeft | Qt::AlignVCenter);
-		root->addLayout(footer);
+		footerOuter->addLayout(footer);
+		outer->addWidget(footerBar);
 	}
 
 	connect(enableButton_, &QPushButton::clicked, this, [this] {
@@ -1403,11 +1411,24 @@ QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen, int minHei
 	const int height = std::max(fitted, minHeight);
 	content->resize(width, height);
 	layout->activate();
-	QImage image(content->size(), QImage::Format_ARGB32_Premultiplied);
+	// The footer is outside the scroll area in the dock: drawn under the
+	// content, at the dock's width, the way the dock shows it.
+	QWidget *footer = findChild<QWidget *>(QStringLiteral("tgDockFooter"));
+	int footerHeight = 0;
+	if (footer) {
+		footer->resize(width, 1);
+		footer->layout()->activate();
+		footerHeight = footer->sizeHint().height();
+		footer->resize(width, footerHeight);
+		footer->layout()->activate();
+	}
+	QImage image(QSize(width, content->height() + footerHeight), QImage::Format_ARGB32_Premultiplied);
 	image.fill(QApplication::palette().color(QPalette::Window));
 	{
 		QPainter painter(&image);
 		content->render(&painter, QPoint(), QRegion(), QWidget::DrawChildren);
+		if (footer)
+			footer->render(&painter, QPoint(0, content->height()), QRegion(), QWidget::DrawChildren);
 	}
 	// Back to the dock's own size.
 	ApplyNarrowLayout(this->width());
