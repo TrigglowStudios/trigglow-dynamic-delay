@@ -176,7 +176,7 @@ void SupportService::LoadPrefs()
 	if (!v || !v->IsObject())
 		return;
 	prefs_.noticeAccepted = static_cast<int>(v->GetNumber("trigiNoticeAccepted").value_or(0));
-	prefs_.includeDiagnostics = v->GetBool("includeDiagnostics").value_or(false);
+	prefs_.includeDiagnostics = v->GetBool("includeDiagnostics").value_or(true);
 }
 
 void SupportService::SavePrefs() const

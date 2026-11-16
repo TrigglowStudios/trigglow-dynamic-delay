@@ -554,7 +554,9 @@ recoge primero lo que vas a notar, después el detalle técnico y al final las l
   resuelve, **Crear ticket con esta conversación** se lo pasa al equipo con el contexto. La primera
   vez, un aviso breve explica qué es Trigi y qué pasa con tus datos, y siempre puedes escribir al
   equipo en su lugar. **El log de OBS nunca se envía a la IA.** Los datos técnicos de OBS son
-  opcionales y ves exactamente qué se envía antes de marcarlos.
+  opcionales y ves exactamente qué se envía antes de marcarlos. Los datos técnicos de OBS vienen
+  marcados por defecto (solo cifras y estados, nunca nombres de escenas o fuentes); desmárcalos para
+  no enviarlos.
 - **Inicio de sesión más seguro.** El dock muestra un código, y la página de trigglow.com debe
   mostrar el mismo antes de que confirmes; **No he sido yo** en la página cancela la solicitud. El
   plugin guarda su propio inicio de sesión, cifrado para tu usuario de Windows, y **Cerrar sesión**

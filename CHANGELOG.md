@@ -508,7 +508,8 @@ the technical detail, and the known limitations last.
   with this conversation** hands it to the team with the context. The first time, a short notice
   says what Trigi is and what happens with your data, and you can always write to the team instead.
   **Your OBS log is never sent to the AI.** The OBS technical data is optional and you see exactly
-  what is sent before you tick it.
+  what is sent before you tick it. The OBS technical data is ticked by default (figures and states only,
+  never scene or source names); untick it to leave it out.
 - **Safer sign-in.** The dock shows a code, and the trigglow.com page must show the same one before
   you confirm; **It wasn't me** on the page cancels the request. The plugin keeps its own sign-in,
   encrypted for your Windows user, and **Sign out** also disconnects it on trigglow.com. Your v0.5.x
