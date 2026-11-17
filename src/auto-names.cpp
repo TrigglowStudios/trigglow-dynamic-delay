@@ -76,6 +76,9 @@ std::vector<std::string> LookupNames(Kind kind)
 		names.emplace_back(kOverlayBadge);
 		Append(names, kLegacyOverlayBadges);
 		break;
+	case Kind::DelayedScenes:
+		names.emplace_back(kDelayedScenes); // New in v1.0.0: no earlier names.
+		break;
 	}
 	return names;
 }
@@ -133,6 +136,39 @@ bool IsOverlayName(std::string_view name)
 bool IsWrapperSceneName(std::string_view name)
 {
 	return name == kWrapperScene || Contains(kLegacyWrapperScenes, name);
+}
+
+bool IsDefaultLoadingSceneName(std::string_view name)
+{
+	return name == kDefaultLoadingScene;
+}
+
+bool IsDelayedScenesName(std::string_view name)
+{
+	return name == kDelayedScenes;
+}
+
+bool IsHelperSceneName(std::string_view name)
+{
+	return IsWrapperSceneName(name) || IsDelayedScenesName(name) || IsDefaultLoadingSceneName(name);
+}
+
+namespace {
+bool SpanishLocale(std::string_view locale)
+{
+	return locale.size() >= 2 && (locale[0] == 'e' || locale[0] == 'E') && (locale[1] == 's' || locale[1] == 'S') &&
+	       (locale.size() == 2 || locale[2] == '-' || locale[2] == '_');
+}
+} // namespace
+
+std::string DefaultLoadingVideoFile(std::string_view locale)
+{
+	return SpanishLocale(locale) ? "videos/adding-delay-es.mp4" : "videos/adding-delay-en.mp4";
+}
+
+std::string DefaultLoadingStillFile(std::string_view locale)
+{
+	return SpanishLocale(locale) ? "images/adding-delay-es.jpg" : "images/adding-delay-en.jpg";
 }
 
 RenamePlan PlanRename(bool legacyExists, bool currentNameTaken)

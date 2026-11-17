@@ -174,6 +174,43 @@ void TestWrapperSceneNames()
 	CHECK(!IsWrapperSceneName(""));
 }
 
+void TestDefaultLoadingScene()
+{
+	g_currentTest = "default loading scene";
+	// Kept out of the dock's scene pickers; not the wrapper scene.
+	CHECK(IsDefaultLoadingSceneName(kDefaultLoadingScene));
+	CHECK(!IsDefaultLoadingSceneName(kWrapperScene));
+	CHECK(!IsDefaultLoadingSceneName("Gameplay"));
+
+	// v1.0.0: the delayed scenes' holder, and every helper scene at once.
+	CHECK(IsDelayedScenesName(kDelayedScenes));
+	CHECK(!IsDelayedScenesName(kWrapperScene));
+	CHECK(!IsDelayedScenesName("Gameplay"));
+	CHECK(LookupNames(Kind::DelayedScenes) == std::vector<std::string>{kDelayedScenes});
+	CHECK(IsHelperSceneName(kWrapperScene));
+	CHECK(IsHelperSceneName("Trigglow Delay Buffer (no tocar)"));
+	CHECK(IsHelperSceneName(kDelayedScenes));
+	CHECK(IsHelperSceneName(kDefaultLoadingScene));
+	CHECK(!IsHelperSceneName("Gameplay"));
+	CHECK(!IsHelperSceneName(""));
+	CHECK(!IsDefaultLoadingSceneName("Trigglow Delay Loading (auto) 2"));
+	CHECK(!IsWrapperSceneName(kDefaultLoadingScene));
+	// Spanish for any "es" locale, English for everything else.
+	CHECK(DefaultLoadingVideoFile("es-ES") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("es-MX") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("es") == "videos/adding-delay-es.mp4");
+	CHECK(DefaultLoadingVideoFile("en-US") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("pt-BR") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("est") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("") == "videos/adding-delay-en.mp4");
+	// v1.0.0: the still under the video follows the same rule.
+	CHECK(DefaultLoadingStillFile("es-ES") == "images/adding-delay-es.jpg");
+	CHECK(DefaultLoadingStillFile("es") == "images/adding-delay-es.jpg");
+	CHECK(DefaultLoadingStillFile("en-US") == "images/adding-delay-en.jpg");
+	CHECK(DefaultLoadingStillFile("est") == "images/adding-delay-en.jpg");
+	CHECK(DefaultLoadingStillFile("") == "images/adding-delay-en.jpg");
+}
+
 void TestRenamePlan()
 {
 	g_currentTest = "rename plan";
@@ -194,6 +231,7 @@ int main()
 	TestMigratedName();
 	TestOverlayNames();
 	TestWrapperSceneNames();
+	TestDefaultLoadingScene();
 	TestRenamePlan();
 
 	std::printf("auto_names_tests: %d checks, %d failures\n", g_checks, g_failures);

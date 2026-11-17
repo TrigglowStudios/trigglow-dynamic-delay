@@ -79,15 +79,104 @@ std::vector<std::string> BufferModeController::ListAvailableScenes() const
 {
 	std::vector<std::string> names = bridge_.ListSceneNames();
 	names.erase(std::remove_if(names.begin(), names.end(),
-				   [](const std::string &name) { return autonames::IsWrapperSceneName(name); }),
+				   [](const std::string &name) { return autonames::IsHelperSceneName(name); }),
 		    names.end());
 	return names;
 }
 
+void BufferModeController::NormalizeLiveScenes(std::vector<std::string> sceneNames)
+{
+	std::vector<std::string> list;
+	for (std::string &name : sceneNames) {
+		if (list.size() >= kMaxDelayedScenes)
+			break;
+		if (name.empty() || autonames::IsHelperSceneName(name) ||
+		    std::find(list.begin(), list.end(), name) != list.end())
+			continue;
+		list.push_back(std::move(name));
+	}
+	status_.liveSceneNames = std::move(list);
+	status_.liveSceneName = status_.liveSceneNames.empty() ? std::string{} : status_.liveSceneNames.front();
+}
+
 void BufferModeController::SetLiveScene(std::string sceneName)
 {
-	status_.liveSceneName = std::move(sceneName);
+	if (status_.state == BufferModeState::Filling || status_.state == BufferModeState::Active)
+		return;
+	std::vector<std::string> list = status_.liveSceneNames;
+	if (list.empty())
+		list.push_back(std::move(sceneName));
+	else
+		list.front() = std::move(sceneName);
+	NormalizeLiveScenes(std::move(list));
 	NotifyStatusChanged();
+}
+
+void BufferModeController::SetLiveScenes(std::vector<std::string> sceneNames)
+{
+	if (status_.state == BufferModeState::Filling || status_.state == BufferModeState::Active)
+		return;
+	NormalizeLiveScenes(std::move(sceneNames));
+	NotifyStatusChanged();
+}
+
+bool BufferModeController::IsDelayedScene(const std::string &sceneName) const
+{
+	return !sceneName.empty() && std::find(status_.liveSceneNames.begin(), status_.liveSceneNames.end(),
+					       sceneName) != status_.liveSceneNames.end();
+}
+
+bool BufferModeController::SelectDelayedScene(const std::string &sceneName)
+{
+	if ((status_.state != BufferModeState::Filling && status_.state != BufferModeState::Active) ||
+	    !IsDelayedScene(sceneName))
+		return false;
+	if (sceneName == status_.selectedSceneName)
+		return true;
+	// The picture enters the buffer at the next frame; the audio gates flip
+	// now, so the sound switches when the picture comes out, one delay later.
+	if (!bridge_.SelectDelayedScene(sceneName)) {
+		TRIGGLOW_LOG_WARN(kComponent, "couldn't put \"%s\" in the delay (not in \"%s\")", sceneName.c_str(),
+				  host_.c_str());
+		return false;
+	}
+	bridge_.SetAudioDelayGates(host_, sceneName);
+	TRIGGLOW_LOG_INFO(kComponent, "delayed scene \"%s\" -> \"%s\": viewers see the switch in %us",
+			  status_.selectedSceneName.c_str(), sceneName.c_str(), AppliedDelaySeconds());
+	status_.selectedSceneName = sceneName;
+	NotifyStatusChanged();
+	return true;
+}
+
+bool BufferModeController::SelectDelayedSceneSlot(size_t slot)
+{
+	if (slot >= status_.liveSceneNames.size())
+		return false;
+	return SelectDelayedScene(status_.liveSceneNames[slot]);
+}
+
+void BufferModeController::OnProgramSceneChanged()
+{
+	if (stopping_ || (status_.state != BufferModeState::Filling && status_.state != BufferModeState::Active))
+		return;
+	const std::string program = bridge_.GetCurrentSceneName();
+	if (!IsDelayedScene(program))
+		return; // Ours (the wrapper, a loading scene), or a scene shown live on purpose.
+	if (!warnedListSwitch_) {
+		warnedListSwitch_ = true;
+		TRIGGLOW_LOG_WARN(
+			kComponent,
+			"\"%s\" was picked in OBS's scene list while the delay is on: OBS showed it live for its "
+			"transition before the delay took it back. Switch from the dock, the hotkeys or the Stream "
+			"Deck to avoid that",
+			program.c_str());
+	}
+	SelectDelayedScene(program);
+	const std::string back = status_.state == BufferModeState::Active ? std::string{} : LoadingSceneToShow();
+	if (back.empty())
+		bridge_.ShowBufferWrapperScene();
+	else
+		bridge_.SetCurrentSceneByName(back);
 }
 
 void BufferModeController::SetLoadingScene(std::string sceneName)
@@ -98,23 +187,81 @@ void BufferModeController::SetLoadingScene(std::string sceneName)
 
 void BufferModeController::SetDelaySeconds(uint32_t seconds)
 {
-	const uint32_t previousSeconds = status_.delaySeconds;
+	seconds = std::clamp(seconds, kMinDelaySeconds, kMaxDelaySeconds);
+	if (seconds == status_.delaySeconds)
+		return;
+	const uint32_t appliedBefore = AppliedDelaySeconds();
 	status_.delaySeconds = seconds;
-	if (status_.state == BufferModeState::Active) {
-		const bool refill = BufferRestartsWith(previousSeconds, status_.minResolutionHeight);
-		if (refill)
-			ShowLoadingSceneForRefill(); // Before the filter empties its ring.
-		bridge_.SetBufferFilterDelaySeconds(status_.liveSceneName, seconds);
-		// The filter computes its effective delay from the settings just
-		// pushed (its ring follows on the next Render()), so audio gets the
-		// new value right now. See SyncAudioDelayToVideoEffective's comment.
+	if (status_.state == BufferModeState::Active || status_.state == BufferModeState::Filling) {
+		// v1.0.0: in place, never a refill from empty. The filter applies the
+		// delay on the graphics thread as soon as it's asked what it gives
+		// (the sync below), so video, audio and the dock change together.
+		bridge_.SetBufferFilterDelaySeconds(host_, seconds);
 		SyncAudioDelayToVideoEffective();
-		if (refill)
-			EnterRefill("delay changed");
+		OnLiveDelayChanged(appliedBefore, AppliedDelaySeconds());
 		UpdateOverlay();
 	}
 	// After the sync: the dock shows the effective seconds it computed.
 	NotifyStatusChanged();
+}
+
+void BufferModeController::StartFillWindow(uint64_t windowMs)
+{
+	readyAtNs_ = SteadyNowNs() + windowMs * 1000000ULL;
+	status_.fillWindowMs = static_cast<uint32_t>(std::min<uint64_t>(windowMs, UINT32_MAX));
+	++status_.fillGeneration; // A new fill window: the dock starts its countdown.
+}
+
+void BufferModeController::OnLiveDelayChanged(uint32_t before, uint32_t after)
+{
+	if (after == before)
+		return;
+	if (status_.state == BufferModeState::Filling) {
+		// The delayed view is ready once its target reaches the frames already
+		// held: every second added waits one more, every second removed one less.
+		const uint64_t nowNs = SteadyNowNs();
+		const int64_t shiftNs = (static_cast<int64_t>(after) - static_cast<int64_t>(before)) * 1000000000LL;
+		const int64_t readyAt = static_cast<int64_t>(readyAtNs_) + shiftNs;
+		if (readyAt <= static_cast<int64_t>(nowNs)) {
+			TRIGGLOW_LOG_INFO(kComponent, "delay %us -> %us while filling: the buffer already holds it",
+					  before, after);
+			OnFillTimerElapsed();
+			return;
+		}
+		const auto remainingMs = static_cast<uint64_t>(readyAt - static_cast<int64_t>(nowNs)) / 1000000ULL;
+		StartFillWindow(remainingMs);
+		SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
+		TRIGGLOW_LOG_INFO(kComponent, "delay %us -> %us while filling: %llums left", before, after,
+				  static_cast<unsigned long long>(remainingMs));
+		return;
+	}
+	if (status_.state != BufferModeState::Active)
+		return;
+	if (after < before) {
+		TRIGGLOW_LOG_INFO(kComponent, "delay lowered live %us -> %us: viewers skip forward, nothing refills",
+				  before, after);
+		return;
+	}
+	const uint32_t extra = after - before;
+	if (extra <= kHoldRaiseMaxSeconds || LoadingSceneToShow().empty()) {
+		// The wrapper stays on Program, holding its last frame (and the audio
+		// silent) while the extra seconds build up. Without any loading scene
+		// that's also what a bigger raise does: never the undelayed scene.
+		TRIGGLOW_LOG_INFO(kComponent, "delay raised live %us -> %us: the picture holds for %us", before, after,
+				  extra);
+		return;
+	}
+	// More than a few seconds: the loading scene covers them, as at Enable,
+	// for the extra seconds only -- every frame already buffered stays.
+	ShowLoadingSceneForRefill();
+	StartFillWindow(static_cast<uint64_t>(extra) * 1000ULL);
+	SetState(BufferModeState::Filling, "Status.AddingDelay",
+		 FormatArgs(Str("Status.AddingDelay"), {std::to_string(extra), std::to_string(after)}));
+	UpdateOverlay();
+	TRIGGLOW_LOG_INFO(kComponent,
+			  "delay raised live %us -> %us: the loading scene shows for the %us that build up, then the "
+			  "delayed view again (nothing was emptied)",
+			  before, after, extra);
 }
 
 void BufferModeController::SetShowOverlay(bool show)
@@ -128,6 +275,11 @@ void BufferModeController::SetOverlayCorner(uint32_t corner)
 {
 	status_.overlayCorner = corner > 3 ? 0 : corner;
 	NotifyStatusChanged();
+	UpdateOverlay();
+}
+
+void BufferModeController::RefreshOverlay()
+{
 	UpdateOverlay();
 }
 
@@ -145,7 +297,7 @@ void BufferModeController::SetMinResolutionHeight(uint32_t heightPixels)
 		const bool refill = BufferRestartsWith(status_.delaySeconds, previousHeight);
 		if (refill)
 			ShowLoadingSceneForRefill(); // Before the filter empties its ring.
-		bridge_.SetBufferFilterMinResolutionHeight(status_.liveSceneName, heightPixels);
+		bridge_.SetBufferFilterMinResolutionHeight(host_, heightPixels);
 		// A quality-floor change can change the ring's RAM fit just as much
 		// as a delay change can -- re-check whether audio needs shortening
 		// to match. See SyncAudioDelayToVideoEffective's comment.
@@ -178,25 +330,38 @@ void BufferModeController::Enable()
 		return;
 	}
 
-	if (status_.liveSceneName.empty()) {
+	if (status_.liveSceneNames.empty()) {
 		SetState(BufferModeState::Error, "Status.ChooseLiveScene");
 		return;
 	}
 
-	if (!bridge_.EnsureBufferWrapperScene(status_.liveSceneName)) {
+	// v1.0.0: the delayed scenes go in their holder, the holder in the
+	// wrapper; the filter sits on the holder. The scene on Program now starts
+	// in the delay when it's one of them.
+	bridge_.RemoveStrayBufferFilters();
+	const std::string programNow = bridge_.GetCurrentSceneName();
+	const std::string selected = IsDelayedScene(programNow) ? programNow : status_.liveSceneNames.front();
+	if (!bridge_.EnsureDelayedScenes(status_.liveSceneNames, selected) ||
+	    !bridge_.EnsureBufferWrapperScene(host_)) {
 		SetState(BufferModeState::Error, "Status.WrapperSceneFailed");
 		return;
 	}
-	bridge_.SetBufferFilterDelaySeconds(status_.liveSceneName, status_.delaySeconds);
-	bridge_.SetBufferFilterMinResolutionHeight(status_.liveSceneName, status_.minResolutionHeight);
+	// OBS has one audio mix for every canvas, so the audio filters below delay
+	// the sound of other canvases too (Aitum Vertical...): their scenes named
+	// like a delayed scene get a mirror of the video filter, tuned and
+	// switched by the same calls below. Before them, so each one reaches the
+	// mirrors.
+	bridge_.AttachMirrorFilters(status_.liveSceneNames);
+	bridge_.SetBufferFilterDelaySeconds(host_, status_.delaySeconds);
+	bridge_.SetBufferFilterMinResolutionHeight(host_, status_.minResolutionHeight);
 	// Every cycle, so the plugin settings file always wins over whatever the
 	// filter saved with the scene collection.
-	bridge_.SetBufferFilterOutputCap(status_.liveSceneName, bufferOutputCap_);
-	bridge_.SetBufferFilterCodecWorkers(status_.liveSceneName, codecWorkers_);
-	bridge_.SetBufferFilterCodec(status_.liveSceneName, bufferCodecAuto_);
+	bridge_.SetBufferFilterOutputCap(host_, bufferOutputCap_);
+	bridge_.SetBufferFilterCodecWorkers(host_, codecWorkers_);
+	bridge_.SetBufferFilterCodec(host_, bufferCodecAuto_);
 	// v0.7.0: the ring class is fixed here for the whole cycle (I9).
 	cycleRingClass_ = NextCycleRingClass();
-	bridge_.SetBufferFilterStorageClass(status_.liveSceneName, cycleRingClass_);
+	bridge_.SetBufferFilterStorageClass(host_, cycleRingClass_);
 
 	// Audio: unlike the video filter, these attach to individual leaf audio
 	// sources inside the live scene (Mic, Desktop, etc.), not the scene
@@ -205,13 +370,18 @@ void BufferModeController::Enable()
 	// leaf source's own audio pipeline runs continuously regardless of
 	// Program visibility, unlike video rendering. Not treated as fatal if
 	// the live scene simply has no audio sources.
-	bridge_.EnsureAudioDelayFilters(status_.liveSceneName);
+	bridge_.EnsureAudioDelayFilters(host_);
+	// The sources of the scene in the delay are heard, the others' go in silent.
+	bridge_.SetAudioDelayGates(host_, selected);
+	status_.selectedSceneName = selected;
+	warnedListSwitch_ = false;
+
 	// The video filter reports the delay its ring will have for the settings
 	// just pushed (Render() hasn't sized it yet), so audio starts out with
 	// the shortened delay when RAM shortens it. See
 	// SyncAudioDelayToVideoEffective's comment.
 	SyncAudioDelayToVideoEffective();
-	bridge_.SetAudioDelayFiltersEnabled(status_.liveSceneName, true);
+	bridge_.SetAudioDelayFiltersEnabled(host_, true);
 
 	// v0.7.0 storage codec: OBS's encoders as they are now and the ceiling
 	// they put on the buffer, BEFORE the filter is switched on -- its first
@@ -234,23 +404,24 @@ void BufferModeController::Enable()
 	// ObsFrontendBridge::AcquireLiveSceneRendering's comment for the full
 	// story (found live, 2026-08-24: the delay collapsed to ~0 within a
 	// second of switching to the delayed view).
-	bridge_.SetBufferFilterEnabled(status_.liveSceneName, true);
-	liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(status_.liveSceneName);
+	bridge_.SetBufferFilterEnabled(host_, true);
+	liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(host_);
 
 	sceneBeforeEnable_ = bridge_.GetCurrentSceneName();
-	if (!status_.loadingSceneName.empty())
-		bridge_.SetCurrentSceneByName(status_.loadingSceneName);
+	const std::string loadingScene = LoadingSceneToShow();
+	if (!loadingScene.empty())
+		bridge_.SetCurrentSceneByName(loadingScene);
 
-	++status_.fillGeneration; // A new fill window: the dock starts its countdown.
+	StartFillWindow(static_cast<uint64_t>(AppliedDelaySeconds()) * 1000ULL);
 	SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
-	TRIGGLOW_LOG_INFO(
-		kComponent,
-		"enabled: live=\"%s\" loading=\"%s\" delay=%us output_cap=%s codec_workers=%s buffer_codec=%s%s "
-		"storage_class=%s",
-		status_.liveSceneName.c_str(), status_.loadingSceneName.c_str(), status_.delaySeconds,
-		bufferOutputCap_ ? "on" : "off", codecWorkers_ ? "on" : "off", bufferCodecAuto_ ? "auto" : "mjpeg",
-		bufferCodecAuto_ && !codecWorkers_ ? " (ignored: codec_workers=false keeps MJPEG)" : "",
-		bufferfit::RingClassName(cycleRingClass_));
+	TRIGGLOW_LOG_INFO(kComponent,
+			  "enabled: delayed scenes=%zu, in the delay=\"%s\" loading=\"%s\" delay=%us output_cap=%s "
+			  "codec_workers=%s buffer_codec=%s%s storage_class=%s",
+			  status_.liveSceneNames.size(), selected.c_str(), status_.loadingSceneName.c_str(),
+			  status_.delaySeconds, bufferOutputCap_ ? "on" : "off", codecWorkers_ ? "on" : "off",
+			  bufferCodecAuto_ ? "auto" : "mjpeg",
+			  bufferCodecAuto_ && !codecWorkers_ ? " (ignored: codec_workers=false keeps MJPEG)" : "",
+			  bufferfit::RingClassName(cycleRingClass_));
 
 	// New cycle: warn again about any encoder above the buffer, starting with
 	// the outputs already running right now.
@@ -308,7 +479,7 @@ void BufferModeController::PushEncoderCeiling(const std::vector<ActiveVideoEncod
 				  base.height);
 	else
 		TRIGGLOW_LOG_INFO(kComponent, "no encoder ceiling: %s", encodercheck::CeilingWhyText(ceiling.why));
-	bridge_.SetBufferFilterEncoderCeiling(status_.liveSceneName, width, height);
+	bridge_.SetBufferFilterEncoderCeiling(host_, width, height);
 }
 
 bufferfit::RingClass BufferModeController::NextCycleRingClass() const
@@ -340,7 +511,7 @@ void BufferModeController::PushObsEncoders(const std::vector<ActiveVideoEncoder>
 		if (set.count < VideoDelayFilter::ObsEncoderSet::kMax)
 			set.families[set.count++] = storage::FamilyFromObsEncoderId(encoder.encoderId);
 	}
-	bridge_.SetBufferFilterObsEncoders(status_.liveSceneName, set);
+	bridge_.SetBufferFilterObsEncoders(host_, set);
 }
 
 void BufferModeController::YieldForOutputStart()
@@ -358,7 +529,7 @@ void BufferModeController::YieldForOutputStart()
 	}
 	// OBS's NVENC encoders running, the one starting and the buffer's.
 	const bool wait = obsNvenc + 2 >= 4;
-	bridge_.YieldBufferHwEncoder(status_.liveSceneName, wait);
+	bridge_.YieldBufferHwEncoder(host_, wait);
 	yieldPending_ = true;
 	yieldSinceNs_ = SteadyNowNs();
 	outputStartedNs_ = 0;
@@ -379,13 +550,13 @@ void BufferModeController::Tick()
 	bridge_.WatchOutputStops();
 	const uint64_t skipped = bridge_.TakeMixSkippedFrames();
 	if (skipped > 0)
-		bridge_.ReportBufferEncoderLag(status_.liveSceneName, skipped);
+		bridge_.ReportBufferEncoderLag(host_, skipped);
 	const uint64_t nowNs = SteadyNowNs();
 	if (yieldPending_ && ((outputStartedNs_ != 0 && nowNs >= outputStartedNs_ + kResumeAfterStartNs) ||
 			      nowNs >= yieldSinceNs_ + kResumeAtMostNs)) {
 		yieldPending_ = false;
 		RefreshObsEncoders(true); // The sessions are recounted before the next setup.
-		bridge_.ResumeBufferHwEncoder(status_.liveSceneName);
+		bridge_.ResumeBufferHwEncoder(host_);
 	}
 }
 
@@ -398,7 +569,7 @@ void BufferModeController::OnFillTimerElapsed()
 	// nesting the live scene now naturally keeps it rendering once it's on
 	// Program, so the manual keep-alive from Enable() can be released.
 	if (liveSceneRenderingHeld_) {
-		bridge_.ReleaseLiveSceneRendering(status_.liveSceneName);
+		bridge_.ReleaseLiveSceneRendering(host_);
 		liveSceneRenderingHeld_ = false;
 	}
 	bridge_.ShowBufferWrapperScene();
@@ -418,25 +589,33 @@ bool BufferModeController::BufferRestartsWith(uint32_t previousDelaySeconds, uin
 {
 	// The filter keeps its ring only if bufferfit sizes it exactly the same
 	// (the same Compute() it runs, through EstimateBufferFit()).
-	const auto before = bridge_.EstimateBufferFit(status_.liveSceneName, previousDelaySeconds,
+	const auto before = bridge_.EstimateBufferFit(status_.liveSceneNames, previousDelaySeconds,
 						      previousMinResolutionHeight, bufferOutputCap_, cycleRingClass_);
-	const auto after = bridge_.EstimateBufferFit(status_.liveSceneName, status_.delaySeconds,
+	const auto after = bridge_.EstimateBufferFit(status_.liveSceneNames, status_.delaySeconds,
 						     status_.minResolutionHeight, bufferOutputCap_, cycleRingClass_);
 	return before.width != after.width || before.height != after.height ||
 	       before.actualSeconds != after.actualSeconds || before.effectiveSeconds != after.effectiveSeconds;
 }
 
+std::string BufferModeController::LoadingSceneToShow() const
+{
+	// The user's loading scene, or else the Trigglow "adding delay" video.
+	return status_.loadingSceneName.empty() ? bridge_.EnsureDefaultLoadingScene() : status_.loadingSceneName;
+}
+
 void BufferModeController::ShowLoadingSceneForRefill()
 {
-	// No loading scene: Program stays on the wrapper scene, blank until the
-	// ring refills -- never the undelayed live scene.
-	if (status_.loadingSceneName.empty())
+	// No loading scene at all (not even the default one): Program stays on the
+	// wrapper scene, blank until the ring refills -- never the undelayed live
+	// scene.
+	const std::string loadingScene = LoadingSceneToShow();
+	if (loadingScene.empty())
 		return;
 	// Keep the live scene rendering once Program leaves the wrapper, or the
 	// new ring never fills (see Enable()).
 	if (!liveSceneRenderingHeld_)
-		liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(status_.liveSceneName);
-	bridge_.SetCurrentSceneByName(status_.loadingSceneName);
+		liveSceneRenderingHeld_ = bridge_.AcquireLiveSceneRendering(host_);
+	bridge_.SetCurrentSceneByName(loadingScene);
 }
 
 void BufferModeController::EnterRefill(const char *reason)
@@ -445,12 +624,12 @@ void BufferModeController::EnterRefill(const char *reason)
 	// A new fill window, so the dock re-arms its fill timer (it only does when
 	// fillGeneration changes): OnFillTimerElapsed() switches back to the
 	// wrapper scene once the new ring is full.
-	++status_.fillGeneration;
+	StartFillWindow(static_cast<uint64_t>(AppliedDelaySeconds()) * 1000ULL);
 	SetState(BufferModeState::Filling, FillingMessageKey(), FillingMessage());
 	TRIGGLOW_LOG_WARN(kComponent, "%s: the video buffer restarted empty -- %s for the next %us while it refills",
 			  reason,
 			  wasFilling                         ? "the fill window starts over"
-			  : status_.loadingSceneName.empty() ? "no loading scene set, the delayed view stays blank"
+			  : status_.loadingSceneName.empty() ? "back to the default loading video"
 							     : "back to the loading scene",
 			  AppliedDelaySeconds());
 }
@@ -498,26 +677,37 @@ void BufferModeController::Disable()
 void BufferModeController::StopDelay(const char *messageKey, bool restoreProgram)
 {
 	bool wasActive = status_.state != BufferModeState::Inactive;
+	const bool wasShowingDelay = status_.state == BufferModeState::Active;
+	stopping_ = true;
 
 	// Covers Disable() interrupting mid-Filling, before OnFillTimerElapsed()
 	// had a chance to release it.
 	if (liveSceneRenderingHeld_) {
-		bridge_.ReleaseLiveSceneRendering(status_.liveSceneName);
+		bridge_.ReleaseLiveSceneRendering(host_);
 		liveSceneRenderingHeld_ = false;
 	}
 
 	bridge_.SetDelayOverlay(false, 0);
 	status_.effectiveDelaySeconds = 0;
+	status_.fillWindowMs = 0;
+	readyAtNs_ = 0;
 	yieldPending_ = false;
-	bridge_.SetBufferFilterEnabled(status_.liveSceneName, false);
-	bridge_.SetAudioDelayFiltersEnabled(status_.liveSceneName, false);
+	bridge_.SetBufferFilterEnabled(host_, false);
+	bridge_.SetAudioDelayGates(host_, {}); // Back open, as a filter loads.
+	bridge_.SetAudioDelayFiltersEnabled(host_, false);
 	if (restoreProgram) {
-		if (!sceneBeforeEnable_.empty())
+		// v1.0.0: from the delayed view, the scene viewers were seeing, live
+		// now; mid-fill, the scene shown before Enable.
+		if (wasShowingDelay && !status_.selectedSceneName.empty())
+			bridge_.SetCurrentSceneByName(status_.selectedSceneName);
+		else if (!sceneBeforeEnable_.empty())
 			bridge_.SetCurrentSceneByName(sceneBeforeEnable_);
 		else if (!status_.liveSceneName.empty())
 			bridge_.SetCurrentSceneByName(status_.liveSceneName);
 	}
 	sceneBeforeEnable_.clear();
+	status_.selectedSceneName.clear();
+	stopping_ = false;
 
 	SetState(BufferModeState::Inactive, messageKey);
 	if (wasActive)
@@ -555,9 +745,9 @@ void BufferModeController::LoadSettings(uint32_t delaySeconds, uint32_t minResol
 	bufferOutputCap_ = bufferOutputCap;
 	codecWorkers_ = codecWorkers;
 	bufferCodecAuto_ = bufferCodecAuto;
-	status_.delaySeconds = delaySeconds;
+	status_.delaySeconds = std::clamp(delaySeconds, kMinDelaySeconds, kMaxDelaySeconds);
 	status_.minResolutionHeight = minResolutionHeight;
-	status_.liveSceneName = std::move(liveSceneName);
+	NormalizeLiveScenes({std::move(liveSceneName)});
 	status_.loadingSceneName = std::move(loadingSceneName);
 	status_.showOverlay = showOverlay;
 	status_.overlayCorner = overlayCorner > 3 ? 0 : overlayCorner;
@@ -571,7 +761,7 @@ BufferModeController::SettingsSnapshot BufferModeController::SaveSettings() cons
 {
 	return {status_.delaySeconds, status_.minResolutionHeight, status_.liveSceneName, status_.loadingSceneName,
 		status_.showOverlay,  status_.overlayCorner,       bufferOutputCap_,      codecWorkers_,
-		bufferCodecAuto_};
+		bufferCodecAuto_,     status_.liveSceneNames};
 }
 
 PipelineHealth BufferModeController::GetPipelineHealth() const
@@ -623,7 +813,7 @@ void BufferModeController::OnFrontendEvent(FrontendEvent event)
 	if (event == FrontendEvent::OutputEncodeError &&
 	    (status_.state == BufferModeState::Filling || status_.state == BufferModeState::Active)) {
 		TRIGGLOW_LOG_WARN(kComponent, "an OBS output stopped on an encoder error: telling the delay buffer");
-		bridge_.ReportBufferObsEncodeError(status_.liveSceneName);
+		bridge_.ReportBufferObsEncodeError(host_);
 	}
 	// v0.7.0: an output about to open its encoder gets the NVENC engine first.
 	if (event == FrontendEvent::StreamingStarting || event == FrontendEvent::RecordingStarting ||
@@ -645,19 +835,21 @@ void BufferModeController::OnFrontendEvent(FrontendEvent event)
 		WarnAboutEncodersAboveBuffer();
 	if (event == FrontendEvent::BufferRestarted)
 		OnBufferRestarted();
+	if (event == FrontendEvent::SceneChanged)
+		OnProgramSceneChanged();
 }
 
 void BufferModeController::WarnAboutEncodersAboveBuffer()
 {
-	if (!bufferOutputCap_ || status_.liveSceneName.empty() ||
+	if (!bufferOutputCap_ || status_.liveSceneNames.empty() ||
 	    (status_.state != BufferModeState::Filling && status_.state != BufferModeState::Active))
 		return;
 
 	// Same bufferfit::Compute() the filter sizes its ring with, so this is the
 	// buffer it uses (or will use, before its first Render()), cap on and off.
-	const auto capped = bridge_.EstimateBufferFit(status_.liveSceneName, status_.delaySeconds,
+	const auto capped = bridge_.EstimateBufferFit(status_.liveSceneNames, status_.delaySeconds,
 						      status_.minResolutionHeight, true, cycleRingClass_);
-	const auto uncapped = bridge_.EstimateBufferFit(status_.liveSceneName, status_.delaySeconds,
+	const auto uncapped = bridge_.EstimateBufferFit(status_.liveSceneNames, status_.delaySeconds,
 							status_.minResolutionHeight, false, cycleRingClass_);
 	const encodercheck::Size cappedSize{capped.width, capped.height};
 	const encodercheck::Size uncappedSize{uncapped.width, uncapped.height};
@@ -702,7 +894,7 @@ void BufferModeController::WarnAboutEncodersAboveBuffer()
 
 void BufferModeController::SyncAudioDelayToVideoEffective()
 {
-	uint32_t effectiveSeconds = bridge_.GetVideoEffectiveDelaySeconds(status_.liveSceneName);
+	uint32_t effectiveSeconds = bridge_.GetVideoEffectiveDelaySeconds(host_);
 	uint32_t targetSeconds = status_.delaySeconds;
 	if (effectiveSeconds > 0 && effectiveSeconds < status_.delaySeconds) {
 		targetSeconds = effectiveSeconds;
@@ -718,7 +910,9 @@ void BufferModeController::SyncAudioDelayToVideoEffective()
 				  effectiveSeconds, status_.delaySeconds);
 	}
 	status_.effectiveDelaySeconds = targetSeconds;
-	bridge_.SetAudioDelayFiltersDelaySeconds(status_.liveSceneName, targetSeconds);
+	bridge_.SetAudioDelayFiltersDelaySeconds(host_, targetSeconds);
+	// Other canvases' video too: their audio is this same delayed mix.
+	bridge_.SetMirrorFiltersDelaySeconds(targetSeconds);
 }
 
 } // namespace trigglow

@@ -189,11 +189,11 @@ Tokens Compute(const PaletteInput &palette)
 	t.lineStrong = EnsureContrast(dark ? Mix(brand::kMist, card, 0.42) : Mix(brand::kInk, card, 0.50),
 				      {card, window, t.field}, kComponentContrast);
 
-	t.accent = brand::kCyan;
-	t.accentTint = dark ? Mix(brand::kCyan, card, 0.12) : Mix(brand::kCyan, card, 0.10);
-	t.accentText = EnsureContrast(dark ? brand::kCyan : FromHex("#006a8e"), {card, window, t.field, t.accentTint},
+	t.accent = brand::kViolet;
+	t.accentTint = dark ? Mix(brand::kViolet, card, 0.12) : Mix(brand::kViolet, card, 0.10);
+	t.accentText = EnsureContrast(dark ? brand::kViolet : brand::kVioletDeep, {card, window, t.field, t.accentTint},
 				      kTextContrast);
-	// The web's "cyan / .40" border of the user's messages.
+	// The web's "accent / .40" border of the user's messages.
 	t.accentBorder = Mix(t.accentText, t.accentTint, 0.45);
 	// Trigi's replies sit on the field color; `code` gets a step lighter
 	// (dark) or darker (light) than that, and the text is pushed to AA on it
@@ -226,19 +226,19 @@ Tokens Compute(const PaletteInput &palette)
 	// the field and still reads as "nothing typed yet" next to real text.
 	t.placeholder = EnsureContrast(t.textMuted, {t.field}, kTextContrast);
 
-	t.focus = EnsureContrast(dark ? brand::kCyan : FromHex("#006a8e"), {card, window, t.field}, kComponentContrast);
+	t.focus =
+		EnsureContrast(dark ? brand::kViolet : brand::kVioletDeep, {card, window, t.field}, kComponentContrast);
 	t.focusPrimary = EnsureContrast(palette.text, {window, card}, kComponentContrast);
 	t.disabledFg = Mix(palette.text, card, 0.45);
 
+	// The web's primary button since 2026-10: one solid violet with white
+	// text, a step darker on hover and two on press (white only gains
+	// contrast). Both stops are the same color, so the QSS gradient renders flat.
 	t.useGradient = true;
-	t.gradientStart = brand::kCyan;
-	t.gradientEnd = brand::kMagenta;
-	// Hover +12 % light, pressed -8 %, like the web's .sp-btn-primary.
-	t.gradientHoverStart = Mix(kWhite, brand::kCyan, 0.20);
-	t.gradientHoverEnd = Mix(kWhite, brand::kMagenta, 0.20);
-	t.gradientPressedStart = Mix(kBlack, brand::kCyan, 0.08);
-	t.gradientPressedEnd = Mix(kBlack, brand::kMagenta, 0.08);
-	t.onGradient = EnsureContrast(brand::kOnGradient,
+	t.gradientStart = t.gradientEnd = brand::kVioletStrong;
+	t.gradientHoverStart = t.gradientHoverEnd = Mix(kBlack, brand::kVioletStrong, 0.10);
+	t.gradientPressedStart = t.gradientPressedEnd = Mix(kBlack, brand::kVioletStrong, 0.20);
+	t.onGradient = EnsureContrast(brand::kOnAccent,
 				      {t.gradientStart, t.gradientEnd, t.gradientHoverStart, t.gradientHoverEnd,
 				       t.gradientPressedStart, t.gradientPressedEnd},
 				      kTextContrast);

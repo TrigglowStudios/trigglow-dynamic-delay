@@ -23,6 +23,8 @@
     <file>icons/chevron-down-ink.svg</file>
     <file>icons/chevron-down-light.svg</file>
     <file>icons/chevron-down-muted.svg</file>
+    <file>icons/chevron-down.svg</file>
+    <file>icons/chevron-right.svg</file>
     <file>icons/chevron-up-ink.svg</file>
     <file>icons/chevron-up-light.svg</file>
     <file>icons/chevron-up-muted.svg</file>
@@ -34,18 +36,23 @@
     <file>icons/eye.svg</file>
     <file>icons/flag.svg</file>
     <file>icons/info.svg</file>
+    <file>icons/keyboard.svg</file>
     <file>icons/loader.svg</file>
     <file>icons/lock.svg</file>
     <file>icons/log-in.svg</file>
     <file>icons/message-circle.svg</file>
     <file>icons/paperclip.svg</file>
+    <file>icons/plus.svg</file>
+    <file>icons/radio.svg</file>
     <file>icons/refresh.svg</file>
+    <file>icons/scissors.svg</file>
     <file>icons/send.svg</file>
     <file>icons/shield.svg</file>
     <file>icons/sliders.svg</file>
     <file>icons/thumbs-down.svg</file>
     <file>icons/thumbs-up.svg</file>
     <file>icons/ticket.svg</file>
+    <file>icons/trash.svg</file>
     <file>icons/user.svg</file>
     <file>icons/wifi-off.svg</file>
     <file>icons/x.svg</file>

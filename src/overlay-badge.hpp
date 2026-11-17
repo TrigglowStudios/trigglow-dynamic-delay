@@ -25,24 +25,27 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QString>
 
 // The live "DELAY 30 s" overlay as ONE image the plugin paints itself with
-// QPainter: ink plate, brand rule, Dynamic Delay mark, the bundled Archivo
-// (or the system UI font when it isn't bundled) and, under the plate, outside
-// it, the small "By Trigglow" signature in the bundled Geist Mono. It replaces v0.5.x's badge
-// PNG + separate GDI+/FreeType text source, which used Segoe UI (Windows only),
-// needed magic offsets to line the two up, and couldn't be centered outside
-// Windows. Same pixels on Windows, macOS and Linux, and one OBS source to move.
+// QPainter, in the Trigglow web's 2026-10 design: one rounded ink plate with the
+// Dynamic Delay mark, "DELAY" in the violet accent and the seconds in the
+// bundled Figtree (or the system UI font when it isn't bundled), and under
+// them, inside the plate, the "Dynamic Delay by Trigglow" signature. It
+// replaced v0.5.x's badge PNG + separate GDI+/FreeType text source, which used
+// Segoe UI (Windows only), needed magic offsets to line the two up, and
+// couldn't be centered outside Windows. Same pixels on Windows, macOS and
+// Linux, and one OBS source to move.
 //
-// Geometry: overlay-layout.hpp (500x180 PNG, 2.5x the 200x72 design: the
-// 200x58 plate, then the signature line on transparent pixels).
+// Geometry: overlay-layout.hpp (500x180 PNG, 2.5x the 200x72 design, all plate).
 // Threading: QPainter text rendering on a QImage is only done on the Qt UI
 // thread here -- which is where every BufferModeController call runs (dock,
 // hotkeys via OBS_TASK_UI, frontend events) -- never on OBS's graphics thread.
 namespace trigglow::ui {
 
 // Paints the badge. `label` is drawn uppercase ("DELAY"), `value` as given
-// ("30 s"), `signature` as given in small type under the plate, below the mark
-// ("By Trigglow"; nothing when empty). Shrinks each text to fit if a fallback
+// ("30 s"), `signature` as given in small type under them, inside the plate
+// ("Dynamic Delay by Trigglow"; nothing when empty). Shrinks each text to fit if a fallback
 // font runs wider than the bundled ones.
+// An empty `label` draws `value` alone on the first line, in mist: the badge
+// without the seconds ("Dynamic Delay" over "by Trigglow").
 QImage RenderDelayBadge(const QString &label, const QString &value, const QString &signature);
 
 // Writes one PNG per seconds value into a folder (the plugin's config folder,
@@ -59,8 +62,13 @@ public:
 	// couldn't be written (logged once per value), or when called off the UI
 	// thread with nothing rendered yet.
 	QString PathFor(uint32_t seconds, const QString &label, const QString &value, const QString &signature);
+	// The same for the badge without the seconds: the mark, `name` and `byline`.
+	QString BrandPath(const QString &name, const QString &byline);
 
 private:
+	// `slot`: the seconds (1-600), or 0 for the badge without them.
+	QString PathForFile(uint32_t slot, const QString &fileName, const QString &label, const QString &value,
+			    const QString &signature);
 	void RemoveStaleFiles();
 
 	QString directory_;

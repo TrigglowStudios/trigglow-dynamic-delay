@@ -128,8 +128,8 @@ void TestColorMath()
 	CHECK(Mix(FromHex("#ffffff"), FromHex("#000000"), 1.0) == FromHex("#ffffff"));
 	CHECK(Mix(FromHex("#ffffff"), FromHex("#000000"), 0.0) == FromHex("#000000"));
 	CHECK(Mix(FromHex("#ffffff"), FromHex("#000000"), 2.0) == FromHex("#ffffff")); // Clamped.
-	CHECK(Mix(brand::kCyan, FromHex("#232629"), 0.12) == FromHex("#1f3b43"));
-	CHECK(Mix(brand::kAmber, FromHex("#31363b"), 0.12) == FromHex("#484334"));
+	CHECK(Mix(FromHex("#00d2ff"), FromHex("#232629"), 0.12) == FromHex("#1f3b43"));
+	CHECK(Mix(FromHex("#f0a202"), FromHex("#31363b"), 0.12) == FromHex("#484334"));
 
 	// EnsureContrast leaves passing colors alone and fixes failing ones.
 	CHECK(EnsureContrast(FromHex("#ffffff"), {FromHex("#000000")}, 4.5) == FromHex("#ffffff"));
@@ -168,27 +168,30 @@ void TestBrandValuesOnDarkAndLight()
 {
 	g_currentTest = "brand values";
 	const Tokens dark = Compute(PaletteOf("Captured dark"));
-	// The proposal's dark tokens on the captured theme.
-	CHECK(dark.accentText == brand::kCyan);
+	// The web's 2026-10 palette on the captured dark theme: violet accent,
+	// tints mixed toward the card, the primary button one solid violet.
+	const PaletteInput &darkPalette = PaletteOf("Captured dark");
+	CHECK(ContrastRatio(dark.accentText, darkPalette.base) >= 4.5); // The violet, lifted to AA if needed.
+	CHECK(RelativeLuminance(dark.accentText) >= RelativeLuminance(brand::kViolet));
 	CHECK(dark.warningText == brand::kAmber);
-	CHECK(dark.accentTint == FromHex("#1f3b43"));
-	CHECK(dark.warningTint == FromHex("#484334"));
-	CHECK(dark.dangerTint == FromHex("#4e3d42"));
-	CHECK(dark.dangerBorder == FromHex("#79494c"));
-	CHECK(dark.gradientStart == brand::kCyan);
-	CHECK(dark.gradientEnd == brand::kMagenta);
-	CHECK(dark.gradientHoverStart == FromHex("#33dbff"));
-	CHECK(dark.gradientHoverEnd == FromHex("#d071ff"));
-	CHECK(dark.gradientPressedStart == FromHex("#00c1eb"));
-	CHECK(dark.gradientPressedEnd == FromHex("#b447eb"));
-	CHECK(dark.onGradient == brand::kOnGradient);
+	CHECK(dark.accentTint == Mix(brand::kViolet, darkPalette.base, 0.12));
+	CHECK(dark.warningTint == Mix(brand::kAmber, darkPalette.window, 0.12));
+	CHECK(dark.dangerTint == Mix(brand::kDanger, darkPalette.window, 0.14));
+	CHECK(dark.gradientStart == brand::kVioletStrong);
+	CHECK(dark.gradientEnd == dark.gradientStart); // Flat: no gradient any more.
+	CHECK(dark.gradientHoverStart == dark.gradientHoverEnd);
+	CHECK(dark.gradientPressedStart == dark.gradientPressedEnd);
+	// Hover and press darken, so the white text only gains contrast.
+	CHECK(RelativeLuminance(dark.gradientHoverStart) < RelativeLuminance(dark.gradientStart));
+	CHECK(RelativeLuminance(dark.gradientPressedStart) < RelativeLuminance(dark.gradientHoverStart));
+	CHECK(dark.onGradient == brand::kOnAccent);
 	CHECK(dark.useGradient);
 
 	const Tokens light = Compute(PaletteOf("Light, white cards"));
 	// Fills stay brand; text variants darken to pass AA on white.
-	CHECK(light.accent == brand::kCyan);
+	CHECK(light.accent == brand::kViolet);
 	CHECK(light.warning == brand::kAmber);
-	CHECK(light.accentText == FromHex("#006a8e"));
+	CHECK(light.accentText == brand::kVioletDeep);
 	CHECK(light.warningText == FromHex("#8a5a00"));
 	CHECK(light.dangerText == FromHex("#b42318"));
 	CHECK(light.useGradient);
@@ -196,9 +199,9 @@ void TestBrandValuesOnDarkAndLight()
 	// OBS 31's Yami Light has grey cards (#e5e5e5 on a #d3d3d3 window): the
 	// text variants are pushed darker than on white cards to keep AA.
 	const Tokens yamiLight = Compute(PaletteOf("Yami Light (OBS 31)"));
-	CHECK(yamiLight.accent == brand::kCyan);
+	CHECK(yamiLight.accent == brand::kViolet);
 	CHECK(yamiLight.useGradient);
-	CHECK(RelativeLuminance(yamiLight.accentText) < RelativeLuminance(FromHex("#006a8e")));
+	CHECK(RelativeLuminance(yamiLight.accentText) < RelativeLuminance(brand::kVioletDeep));
 	CHECK(ContrastRatio(yamiLight.accentText, yamiLight.surface) >= 4.5);
 
 	const Tokens hc = Compute(PaletteOf("HC Black (Windows)"));

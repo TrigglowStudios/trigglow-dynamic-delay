@@ -3,7 +3,7 @@
 # Guía de instalación (paso a paso, con capturas)
 
 Esto explica el instalador de Windows de principio a fin, incluido el aviso de SmartScreen de
-Microsoft Edge que verás porque el instalador todavía no está firmado (Early Access — ver
+Microsoft Edge que verás porque el instalador todavía no está firmado (ver
 `docs/ROADMAP-es.md`). Las capturas de abajo son de una instalación real en una versión anterior,
 antes de que v0.3.1 añadiera el icono/banner de Trigglow que ves hoy en el instalador — los pasos y
 la disposición son iguales, solo el estilo genérico y el número de versión de la esquina están
@@ -16,17 +16,19 @@ y macOS: ver sus secciones más abajo.
 
 | Plugin | OBS mínimo | Probado hasta | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.0.0 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.0 | 31.1.0 | 32.2.2 | Instalador, `.zip` ("Legacy" en OBS 33) | `.pkg` | `.deb`, solo Ubuntu 24.04 con OBS 32.2 |
 
 "Probado hasta" es el OBS más nuevo en el que se ha usado el plugin en directo (en Windows). OBS 33
-está en release candidate: la v0.7.1 ya se instala donde busca los plugins, pero aún no se ha
-probado en directo con él. En un OBS más antiguo que el mínimo el plugin no se carga, y explica por
-qué en el log de OBS. Linux y macOS están más abajo.
+está en release candidate: desde la v0.7.1 el plugin se instala donde busca los plugins, pero aún
+no se ha probado en directo con él. En un OBS más antiguo que el mínimo el plugin no se carga, y
+explica por qué en el log de OBS. Linux y macOS están más abajo; allí el plugin también tiene el modo
+stream y el modo escena, y aún no se ha usado en un directo (alpha).
 
 ## 1. Descarga
 
-Consigue `obs-trigglow-dynamic-delay-0.7.1-windows-x64-setup.exe` desde la
+Consigue `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` desde la
 [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). ¿Prefieres
 instalarlo a mano? El `.zip` de esa misma release solo trae los archivos del plugin — ver
 "Instalar el plugin" en `README-es.md`.
@@ -35,7 +37,7 @@ instalarlo a mano? El `.zip` de esa misma release solo trae los archivos del plu
 
 Como el instalador no está firmado con un certificado de firma de código, Microsoft Defender
 SmartScreen no puede confirmar que sea seguro y avisa antes de dejarlo ejecutar. Es normal para
-software Early Access sin firmar, no una señal de que algo esté mal — pero solo deberías continuar
+software sin firmar, no una señal de que algo esté mal — pero solo deberías continuar
 con instaladores de un origen en el que confíes de verdad (en este caso, la página de Releases de
 GitHub enlazada arriba).
 
@@ -105,16 +107,18 @@ esté marcado en ese mismo menú:
 
 ![Menú de paneles con Trigglow Dynamic Delay listado](images/obs-panel-2-reset-panels.png)
 
-El panel aparece mostrando `● Inactive` — ya puedes elegir una escena en directo y empezar. Ver
-"Using the plugin" en `README-es.md` para qué configurar a continuación.
+El panel aparece: un solo panel con el estado, un solo botón **Activar delay**, el delay y tus
+escenas. Por defecto el delay se aplica a todo OBS (directo y grabación): elige tu **escena en
+directo** y listo. Para retrasar solo la emisión y dejar la grabación en directo, marca **Aplicar el
+delay solo a la emisión** en Opciones > Avanzado. La captura de abajo es de una versión anterior.
+Ver "Usar el plugin" en `README-es.md` para qué configurar a continuación.
 
 ![Panel de Trigglow Dynamic Delay, estado Inactive](images/obs-panel-3-dock.png)
 
 ## 6. Inicia sesión una vez
 
-`Activar delay` necesita una cuenta gratuita de trigglow.com, con la sesión iniciada una vez desde
-el dock (por ahora solo en Windows; macOS y Linux tendrán inicio de sesión con el cliente HTTP
-previsto a continuación, ver `docs/ROADMAP-es.md`):
+Activar el delay necesita una cuenta gratuita de trigglow.com, con la sesión iniciada una vez desde
+el dock (en Windows, y desde la v1.0.0 también en macOS y Linux):
 
 1. Pulsa **Iniciar sesión** en el dock. El navegador abre trigglow.com; inicia sesión ahí o crea una
    cuenta gratuita.
@@ -151,9 +155,9 @@ otro sitio.
 Instalación, con OBS cerrado:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 Los paquetes dejan el plugin en la ubicación del sistema de OBS 33,
@@ -170,12 +174,17 @@ y posteriores) y lo enlaza desde `~/.config/obs-studio/plugins/obs-trigglow-dyna
 los dos.
 
 Tus ajustes y tu inicio de sesión (`~/.config/obs-studio/plugin_config/obs-trigglow-dynamic-delay/`)
-no se tocan nunca al instalar, actualizar ni quitar el plugin. El inicio de sesión todavía no está
-disponible en Linux (ver el paso 6).
+no se tocan nunca al instalar, actualizar ni quitar el plugin. El inicio de sesión funciona en Linux
+desde la v1.0.0 (paso 6), con la libcurl del sistema: los paquetes dependen de ella (`libcurl4t64`
+o `libcurl4` en el `.deb`, `curl` en Arch); con el `.tar.xz`, instala la libcurl de tu distribución
+si `ldd` dice que no encuentra `libcurl.so.4`. El inicio de sesión se guarda en esa carpeta, en un
+fichero que solo tu usuario puede leer (0600).
 
 ## macOS
 
 Instala el `.pkg` de la misma release. Se instala en `~/Library/Application Support/obs-studio/plugins/`, que OBS 33 sigue usando.
+El inicio de sesión funciona desde la v1.0.0 con la libcurl del propio macOS; se guarda en la
+carpeta de configuración del plugin, en un fichero que solo tu usuario puede leer (0600).
 
 ## Dónde quedan los archivos en Windows
 
@@ -209,7 +218,10 @@ un paquete o el `install.sh` del `.tar.xz`.
 
 
 Instala la versión nueva encima de la anterior, igual que antes (con OBS cerrado): tus escenas,
-ajustes y atajos se conservan. **Desde la v0.5.x o anterior, actualizar es obligatorio**: el inicio
+ajustes, atajos e inicio de sesión se conservan. **De cualquier 0.x a la 1.0.0** no hay que hacer
+nada: el delay se sigue aplicando a todo OBS, como antes, en el nuevo dock de un solo panel (el delay
+solo en la emisión es una opción en Opciones > Avanzado), y tus tres atajos conservan sus teclas
+junto a los siete nuevos. **Desde la v0.5.x o anterior, actualizar es obligatorio**: el inicio
 de sesión de esas versiones se apaga cuando se publica la v0.6.0, y las sesiones que ya tienen dejan
 de funcionar tras un periodo de transición. En el primer arranque tu inicio de sesión pasa
 solo al formato nuevo; si el dock te pide iniciar sesión, hazlo una vez (paso 6). Desde la v0.6.0

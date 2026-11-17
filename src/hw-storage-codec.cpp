@@ -1028,6 +1028,37 @@ ProbeOutcome Probe(HwEncoder &encoder, bool quick, const ProviderSettings &setti
 	}
 	if (quick) {
 		outcome.ok = true;
+		// v1.0.0: a warm decoder for the decode worker too, as the full probe
+		// hands over. Without it the worker opened the hardware decoder on its
+		// first frame of this codec -- when the delayed picture starts after a
+		// second Enable, or right after a rung change: ~130 ms a frame while
+		// the device starts, so the picture held for half a second, skipped,
+		// and the degradation policy took the decoder's start for load and
+		// lowered the buffer's resolution (measured in OBS 33). Opened and run
+		// through the probe's packets here, on the setup thread. Not a reason
+		// to refuse the encoder if it fails: the worker opens one as before.
+		if (stop())
+			return outcome;
+		auto decoder = std::make_unique<HwDecoder>(codec, true, settings.obsAdapterIndex, settings.log,
+							   settings.injectFailure);
+		std::string error;
+		if (!decoder->Open(error))
+			return outcome;
+		for (uint32_t i = 0; i < packets.size(); ++i) {
+			storage::EncodedFrame in;
+			in.data = packets[i].data();
+			in.bytes = packets[i].size();
+			in.width = config.width;
+			in.height = config.height;
+			in.seq = i;
+			in.key = keys[i];
+			DecodedImage image;
+			uint64_t outSeq = 0;
+			if (decoder->Decode(in, true, image, outSeq) != storage::DecodeStatus::Frame)
+				return outcome;
+		}
+		decoder->Flush();
+		outcome.decoder = std::move(decoder);
 		return outcome;
 	}
 	if (!keys[kProbeSecondKey]) {

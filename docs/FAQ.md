@@ -2,9 +2,112 @@
 
 # FAQ — Trigglow Dynamic Delay
 
+## All of OBS or only the stream (v1.0.0)
+
+**What does "Apply the delay only to the stream" change?**
+The dock is one panel with one button; this check box, in Options > Advanced, picks what the delay
+applies to. **Off (the default), all of OBS**, as in 0.7 (scene mode): the plugin keeps your
+rendered live scene in RAM and plays it back in a helper scene, before OBS encodes it. Your loading
+scene shows while the delay builds up, then Program is delayed, so the stream **and your
+recording** are delayed; it works with any output and on every platform. **On, only the stream**
+(stream mode, Windows): the plugin points OBS's stream output at a relay inside OBS, on
+`127.0.0.1`, keeps the already-encoded packets and sends them to your platform after the delay. It
+costs far less RAM and CPU and delays every scene, but your recording, the Replay Buffer and OBS's
+preview stay live, and there's no loading scene. The dock's button, the hotkeys, obs-websocket and
+the Stream Deck drive the one you chose, and only that one. The box is locked while a delay is on;
+ticked while you're live, it applies from your next stream. Details: `docs/STREAM_MODE.md`.
+
+**Can I delay more than one scene?**
+Yes, in all of OBS (v1.0.0): add up to 8 under **Delayed scenes** (Add scene). They go into one
+helper scene, **Trigglow Delay Scenes (auto)**, and the delay buffers that one, so it's **one buffer
+and the same RAM** however many you add. The scene in the delay sits on the canvas and the others
+just off it, still running (a little GPU, and their sources keep playing, silenced in the delay).
+While the delay is on, switch with the dock's buttons, the hotkeys "Delayed scene 1" to "8",
+or obs-websocket's `SetDelayedScene`: the new scene enters the buffer at once and
+viewers see it when the delay catches up, with its sound; the previous scene's sound stops at the
+same moment. Picking a delayed scene in OBS's own scene list also works, but OBS has already shown
+it live for its transition by the time the plugin takes it back, so use the others while you're
+live. A scene that isn't one of them shows without delay, as before. Earlier versions put the delay
+filter on your live scene itself; 1.0.0 removes it from there on the first Enable.
+
+**I used a 1.0 test build with stream mode on. Which one do I get now?**
+All of OBS, the default. Test builds saved "Use stream mode" (ticked by default) in
+`stream-mode-settings.json`; 1.0.0 saves the choice as `apply_to` instead and ignores the old key,
+so everyone starts on all of OBS. Tick the box again if you want only the stream.
+
+**Why does only the stream use so little RAM?**
+It keeps what OBS's own encoder already produced for the stream, and nothing else: nothing is
+decoded or encoded again, the CPU only copies bytes: your bitrate times the seconds kept (45 MB
+per minute at 6 Mbps). You choose where they wait (Options > Delay buffer). With Memory, the
+default on an SSD, they stay in RAM and nothing is written to disk. With Disk, the default on a
+hard drive, the plugin keeps the last 600 s (so the delay can be raised live up to the maximum with
+no wait) but only the newest seconds stay in RAM: the rest waits in an encrypted temp file on your
+disk, deleted when the stream ends; measured at 6 Mbps, about 11-16 MB of RAM at any delay up to
+600 s, and about 2.8 GB written per hour. All of OBS (scene mode) stores frames at a quality close to your source, which is why it takes ~190 MB to ~2.3 GB for
+30–60 s.
+
+**Which streams can use only the stream?**
+Streams that go out through OBS's own RTMP output over RTMP or RTMPS: Twitch, YouTube, Kick, TikTok
+and any custom rtmp:// or rtmps:// server, with Enhanced Broadcasting off. Not (yet): Enhanced
+Broadcasting, SRT, RIST and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
+part the relay needs yet). In those cases the dock says why: untick "Apply the delay only to the
+stream" to delay all of OBS.
+
+**Does the stream reconnect when I turn the delay on, off, up or down?**
+No. The relay keeps one connection to your platform and splices: turning the delay on (or raising
+it) jumps back to an older keyframe, so viewers see the last seconds again, never anything newer;
+turning it off (or lowering it) jumps forward. Timestamps are rewritten so the platform sees one
+continuous stream. If you turn the delay on before you start streaming, the stream starts that many
+seconds late on the platform.
+
+**Why does the dock ask me to set the keyframe interval to 2 s?**
+The delay can only move from keyframe to keyframe, so the keyframe interval is the step it moves
+in. With "auto" (0) most encoders use 4–10 s. The dock warns when it's on auto or above 4 s; set it
+in `Settings → Output` (Advanced output mode, "Keyframe Interval"). 2 s is also what most platforms
+ask for.
+
+**The dock warns that OBS's own Stream Delay is on. Why?**
+`Settings → Advanced → Stream Delay` adds its fixed delay on top of this one. Turn it off and use
+Dynamic Delay's.
+
+**What does "Dump what viewers haven't seen" do?**
+Something slipped on screen while delayed? Press it (dock, hotkey or obs-websocket): the seconds
+still waiting in the delay are never sent. The stream jumps to live within about one keyframe
+interval, and the delay comes back on its own after its seconds plus 3 s, rewinding only into what
+came after the dump. Only the stream has it; it does nothing when the delay is off.
+
+**What are presets and "Delay by scene"?**
+Three presets (10, 30 and 60 s by default, in both modes) each set the seconds and turn the delay
+on, from a hotkey or obs-websocket; the dock's preset chips set the seconds. "Delay by scene" (only
+the stream) turns the delay on (with its own seconds, or the
+current ones) or off when you switch to a scene: on in your game scene, off in Just Chatting. Rules
+apply when OBS switches scene and when a stream starts.
+
+**What happens when I stop streaming while delayed?**
+By default the plugin keeps sending the seconds viewers haven't seen yet, then stops ("Stream
+stopped: sending the last 30 s"). **Stop sending now** cuts it, and you can turn it off with
+"When I stop streaming, send the seconds viewers haven't seen". Starting a new stream or closing OBS
+cuts it too.
+
+**Why does OBS show 0 dropped frames with only the stream?**
+OBS now sends the stream to the relay on your own computer, so its own congestion counter only
+sees that local link. The dock shows the connection's state and rate instead, and if the
+stream falls more than 4 s behind (slow upload) jumps back to the delay at the next keyframe rather
+than letting the delay grow.
+
+**Is "only the stream" tested?**
+Its core (the splicing, timestamps, trimming and dump) is unit-tested, and the relay was checked
+end to end on a local machine with a test stream, including delay changes and a dump. It has **not
+yet been run on a live stream to a real platform** (Twitch, Kick, YouTube); that's the next step
+before it's called verified (`docs/STREAM_MODE.md`, "Verification status"). All of OBS, the
+default, is there if anything goes wrong.
+
+## General
+
 **Does the stream cut out or reconnect when I enable, disable, or use the delay?**
-No — never, at any point, for any reason. That's the entire point of this plugin: it never calls
-into OBS's own streaming-output delay setting at all. Instead, two OBS filters buffer video and
+No — never, at any point, for any reason, in either mode. Only the stream keeps one connection to
+your platform and splices the delayed stream (see above). All of OBS never calls into OBS's own
+streaming-output delay setting at all. Instead, two OBS filters buffer video and
 audio in a system-RAM ring, and the plugin switches OBS's Program between your live scene, an
 optional loading scene, and a delayed "wrapper" scene entirely internally — the streaming output
 itself never sees any of that happen. Full technical detail, including why an earlier
@@ -40,17 +143,21 @@ The plugin simply buffers fewer seconds than requested at your chosen quality ra
 dropping below it; lowering the seconds or the quality floor gets you back to the full requested
 duration.
 
-**Why can't I change the delay while it's on?**
-Since v0.6.0 the scenes, the delay seconds and the minimum quality are locked while the delay is
-preparing or on, with a line that says "Turn the delay off to change it." Before, the seconds stayed
-editable and every keystroke resized the buffer in the middle of a live stream. Turn the delay off,
-change it and turn it on again; it fills again for the new number of seconds.
+**Can I change the delay while it's on?**
+Yes, since v1.0.0, in both modes. With only the stream the new delay applies at the next keyframe.
+With all of OBS, lowering it skips viewers forward at once, and raising it holds the picture (or shows
+the loading scene above 3 s) only while the extra seconds build up; the buffer is never emptied.
+Typed values apply on Enter or when the field loses focus, so "300" never passes through 3 and 30.
+The scenes and the minimum quality stay locked while the delay runs: turn the delay off to change
+them.
 
 **What's the maximum delay it supports?**
-The dock's spinner accepts 1–60 seconds as a UI sanity range. The real ceiling is whatever fits
+600 seconds (10 minutes) in both modes. Only the stream keeps the already-encoded stream, about
+45 MB per minute at 6 Mbps, so 600 s fits almost anywhere. With all of OBS the real ceiling is whatever fits
 your machine's detected RAM budget (roughly half of total system RAM, floored at 1GB and capped at
-24GB) at your chosen quality — if 60s at your chosen quality doesn't fit, the dock's live estimate
-will tell you before you enable it, and the plugin buffers as many seconds as actually fit instead.
+24GB) at your chosen quality — if the seconds at your chosen quality don't fit, the dock's live
+estimate will tell you before you enable it, and the plugin buffers as many seconds as actually fit
+instead.
 
 **Does it compress the buffer? Does that lower quality?**
 Yes. It only changes how the buffered frames are kept in memory: the quality floor you pick (480p to
@@ -164,27 +271,33 @@ load drops, it goes back up by itself after 30 s with room to spare, and the not
 What to do about it, if anything: `docs/TROUBLESHOOTING.md`.
 
 **Does it affect local recording or the Replay Buffer?**
-Indirectly, yes, and this is worth understanding: buffer mode works by switching what OBS's Program
-is showing, and both local recording and the Replay Buffer capture that same Program output — so if
-you're recording (or have the Replay Buffer running) while the delay is `Active`, what gets saved is
-the delayed content too, same as what viewers see. There's currently no way to delay the stream
-without also delaying recording/Replay Buffer, or vice versa — that per-output split is explicitly
-out of scope for now (see `docs/ROADMAP.md`).
+**With all of OBS (the default), yes**: that is the point of it. It works by switching what OBS's
+Program shows, and local recording and the Replay Buffer capture that same Program output, so while
+the delay is on (`Active`) what gets saved is the delayed content too, the same as what viewers
+see.
+
+**With "Apply the delay only to the stream", no**: recording, the Replay Buffer and the virtual camera keep the live picture
+while viewers get the delayed stream. The one thing they share is the delay badge, if you show it:
+it's drawn over OBS's program, so the recording shows it too while the delay is on.
+
+To delay only the stream and keep the recording live, tick that box (Options > Advanced).
 
 **The plugin's scene and filters have new names. Do I need to do anything?**
-Since v0.6.0 they end in "(auto)" instead of "(no tocar)": **Trigglow Delay Buffer (auto)**,
+Since v0.6.0 they end in "(auto)" instead of "(no tocar)" (v1.0.0 adds **Trigglow Delay Scenes
+(auto)**, which holds your delayed scenes): **Trigglow Delay Buffer (auto)**,
 **Trigglow Buffer Mode Delay (auto)**, `Trigglow Audio Delay (auto) - <source>` and **Trigglow Delay
 Badge (auto)**. Your scene collections are renamed automatically. Only update Stream Deck,
 obs-websocket or other remote-control actions that use those objects **by name**; the plugin's
 hotkeys aren't affected. If you go back to v0.5.0 or earlier afterwards, it creates its own
 "(no tocar)" set next to the "(auto)" one: delete the set you don't use.
 
-**What is the "By Trigglow" under the live overlay?**
-Since v0.6.0 the "DELAY 30 s" badge is one image the plugin draws itself, with the same look as
-trigglow.com, and it's signed with a small "By Trigglow" under the icon, outside the badge, the same
-in every language. It only shows while the delay is on and **Show delay overlay on stream** is
-ticked in the dock. You can untick it, pick another corner, or move and resize the badge in OBS: it
-stays where you put it.
+**What is the badge viewers see during the delay?**
+One image the plugin draws itself: since v1.0.0 a rounded plate with the Dynamic Delay logo,
+"DELAY" and your seconds, and "Dynamic Delay by Trigglow" under them, the same in every language. It
+only shows while the delay is on. **Show the delay badge to viewers** and **Badge position** (dock:
+Options) work for both modes. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
+you can move and resize it in OBS (it stays where you put it). With only the stream it's drawn over
+OBS's program on its own output channel (up to 600 s) and can't be moved by hand.
 
 **What triggers the `Error` state?**
 Anything that would otherwise leave the plugin in a broken but silent condition: no live scene
@@ -192,15 +305,15 @@ chosen, or a chosen live scene that no longer resolves to anything (e.g. it was 
 shows a clear message explaining what's wrong instead of hanging or crashing.
 
 **Does it work with Twitch/YouTube/Kick/any platform?**
-Yes — buffer mode works entirely on OBS's own Program output, never on the streaming connection to
-any specific platform, so the behavior is identical no matter where you're streaming to.
+Yes. All of OBS (the default) works entirely on OBS's own Program output, so the platform doesn't
+matter. Only the stream works with any platform OBS streams to over RTMP or RTMPS (Twitch, YouTube,
+Kick, TikTok, custom servers); with SRT and WHIP services, delay all of OBS.
 
 **Do I need a web panel or a Trigglow account to use it?**
 No web panel: all control lives inside OBS. Since v0.3.3 you do need to sign in once to a free
-trigglow.com account before Enable works (the sign-in happens in your browser, and the plugin stays
-100% free) — see `docs/ACCOUNT_GATE.md`. **For now, sign-in (and with it Enable delay and Trigi)
-works only on Windows**, also in v0.7.0. macOS and Linux don't have the plugin's HTTP client yet;
-it's planned next (`docs/ROADMAP.md`).
+trigglow.com account before the delay can be turned on, in either mode (the sign-in happens in your
+browser, and the plugin stays 100% free) — see `docs/ACCOUNT_GATE.md`. Since v1.0.0 sign-in (and
+with it the delay and Trigi) works on macOS and Linux too, not only on Windows.
 
 **How does signing in work, and what does the plugin keep?**
 Signing in always happens on trigglow.com, in your browser: the plugin never asks for your password.
@@ -208,8 +321,9 @@ Press **Sign in** in the dock; it shows a code ("The page must show the code KD7
 trigglow.com page shows the same code with the app, its version and when it was requested. Confirm
 only if the codes match and you started it; **It wasn't me** cancels it. From then on the plugin
 keeps its own sign-in, which only works for what the plugin does (checking your account, Trigi and
-your own Dynamic Delay tickets), encrypted with Windows' data protection for your Windows user. Your
-email isn't stored. **Sign out** in the dock also disconnects it on trigglow.com, and you can
+your own Dynamic Delay tickets). On Windows it's encrypted with Windows' data protection for your
+Windows user; on macOS and Linux it's kept in a file only your user can read (mode 0600), not
+encrypted, the way OBS keeps your stream key. Your email isn't stored. **Sign out** in the dock also disconnects it on trigglow.com, and you can
 disconnect it from the web too: Settings → Active sessions → Connected apps.
 
 **I'm on v0.5.x or earlier. Do I have to update?**
@@ -217,9 +331,7 @@ Yes. The sign-in of v0.5.x and earlier is switched off when v0.6.0 is published:
 those versions can no longer sign in to Trigglow, and the sign-ins they already have stop working
 after a transition period, so the delay stops working there. Install the latest version over your
 current one, with OBS closed. On the first start your sign-in moves to the new format by itself; if
-the dock asks you to sign in, do it once. Your scenes and settings are kept. On macOS and Linux,
-sign-in isn't available in the plugin yet (not in v0.7.0 either); it arrives with the HTTP client
-planned next.
+the dock asks you to sign in, do it once. Your scenes and settings are kept.
 
 **The dock or "Report a problem" says to update the plugin. What do I do?**
 "This plugin version can't sign in any more. Update the plugin." in the dock, "Update the plugin to
@@ -236,7 +348,7 @@ problem** in the dock and ask about Dynamic Delay (setting it up, what the dock 
 signing in). It answers right in the dialog. It's an AI and can make mistakes, so check what it
 tells you before changing your setup. If it doesn't sort it out, **Create a ticket with this
 conversation** sends it to the team with the context, and you can always skip Trigi and write to the
-team directly. Trigi is available on Windows when you're signed in; otherwise the dialog opens on
+team directly. Trigi is available when you're signed in (on macOS and Linux since v1.0.0); otherwise the dialog opens on
 the ticket form. The first time, a short notice ("Before you start with Trigi") explains all this,
 and nothing is sent until you accept it and send your first question.
 
@@ -269,14 +381,19 @@ On every OBS start, one check of your sign-in with api.trigglow.com (plus a rene
 and one check of this repository's latest release on api.github.com. Everything else happens only
 when you use it: signing in, signing out, asking Trigi and sending a report. All of it over HTTPS,
 the sign-in only ever sent to api.trigglow.com, and the plugin only opens its own fixed pages on
-www.trigglow.com and GitHub.
+www.trigglow.com and GitHub. With only the stream, your stream goes from your computer straight to the
+service set in OBS; no Trigglow server is in the path.
 
 **Do I need Trigglow's Stream Deck plugin?**
-No — the plugin uses native OBS hotkeys, which Stream Deck can trigger directly with its own
-"System: Hotkey" action. See `docs/STREAM_DECK.md`.
+No. The plugin's ten OBS hotkeys (toggle, on, off, back to live, +5 s, -5 s, dump, three presets)
+work with the Stream Deck's own "System: Hotkey" action. Trigglow's Stream Deck plugin adds keys
+that show the delay's state, over obs-websocket (vendor `trigglow-dynamic-delay`, which any
+obs-websocket tool can use too). See `docs/STREAM_DECK.md`.
 
 **Is it a finished product?**
-No — it's explicitly marked as **MVP / Early Access**. It's functional and meant for real live use,
-but with a deliberately limited scope (see `docs/ROADMAP.md` for what comes next), and one risk
+On Windows, yes: **v1.0.0** is the first stable release, meant for real live use, with a
+deliberately focused scope (see `docs/ROADMAP.md` for what comes next). The macOS and Linux builds
+are still alpha: they build and pass CI, but haven't been run on a live stream yet. "Only the stream" (stream mode) is new in 1.0.0 and hasn't been run on a live
+stream to a real platform yet (see "Is "only the stream" tested?" above). One risk
 area — a GPU crash observed under an earlier design — that's believed reduced but not yet
 specifically re-confirmed (`docs/SPEC.md` §7).

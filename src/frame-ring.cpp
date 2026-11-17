@@ -49,13 +49,29 @@ const char *SlotStateName(SlotState state)
 
 FrameRing::FrameRing(size_t slotCount, const FrameArena::Config &arena)
 	: arena_(arena),
-	  headers_(std::max<size_t>(1, slotCount))
+	  headers_(std::max<size_t>(1, slotCount)),
+	  window_(headers_.size())
 {
+}
+
+void FrameRing::SetWindow(size_t slots)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	window_ = std::clamp<size_t>(slots, 1, headers_.size());
+}
+
+size_t FrameRing::Window() const
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	return window_;
 }
 
 bool FrameRing::Reserve(uint64_t captureNs, Reservation &out, uint32_t tag)
 {
 	FrameArena::Allocation previous;
+	// Frames past a lowered window, freed outside the lock like `previous`.
+	FrameArena::Allocation evicted[kMaxEvictionsPerReserve];
+	size_t evictedCount = 0;
 	{
 		std::lock_guard<std::mutex> lock(mutex_);
 		Header &header = headers_[writeIndex_];
@@ -81,11 +97,25 @@ bool FrameRing::Reserve(uint64_t captureNs, Reservation &out, uint32_t tag)
 		writeIndex_ = (writeIndex_ + 1) % headers_.size();
 		if (buffered_ < headers_.size())
 			++buffered_;
+		// v1.0.0: a window lowered live frees the oldest frames past it --
+		// never the slot just reserved, nor one still encoding or pinned.
+		while (buffered_ > window_ && buffered_ > 1 && evictedCount < kMaxEvictionsPerReserve) {
+			Header &oldest = headers_[(writeIndex_ + headers_.size() - buffered_) % headers_.size()];
+			if (oldest.state == SlotState::Reserved || oldest.state == SlotState::Encoding ||
+			    oldest.pins > 0)
+				break;
+			evicted[evictedCount++] = oldest.payload.allocation;
+			oldest.payload = Payload{};
+			oldest.state = SlotState::Free;
+			--buffered_;
+		}
 		oldest_ = (writeIndex_ + headers_.size() - buffered_) % headers_.size();
 	}
 	// The overwritten frame's bytes, outside the ring lock (FrameArena::Free
 	// is O(1) and never calls the OS).
 	arena_.Free(previous);
+	for (size_t i = 0; i < evictedCount; ++i)
+		arena_.Free(evicted[i]);
 	return true;
 }
 
@@ -362,7 +392,9 @@ FrameRing::Counts FrameRing::GetCounts() const
 	Counts counts;
 	counts.buffered = buffered_;
 	counts.reserveFailures = reserveFailures_;
-	for (const Header &header : headers_) {
+	// Slots outside the window are Free and unpinned: only the window counts.
+	for (size_t p = 0; p < buffered_; ++p) {
+		const Header &header = headers_[IndexAt(p)];
 		switch (header.state) {
 		case SlotState::Reserved:
 			++counts.reserved;

@@ -2,6 +2,138 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.0.0 — 2026-11-17
+
+Dynamic Delay sale de beta en Windows: versión 1.0, con la nueva imagen de Trigglow. Las versiones
+de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han usado en un directo).
+
+**Antes de actualizar:** nada que hacer. Se instala como la v0.7.3; tus escenas, ajustes, atajos e
+inicio de sesión se mantienen.
+
+**Novedades:**
+- **Un solo panel, con todo OBS por defecto.** El dock es un solo panel: el estado, un solo botón
+  "Activar delay", el delay (con -5/+5 y tus presets), tus escenas en directo y de carga, y, plegados,
+  Presets con atajo y Opciones. Por defecto el delay se aplica a todo OBS, como en la 0.7: mientras
+  se acumula se ve tu escena de carga, y después tu directo y tu grabación van los dos con delay. En
+  Opciones > Avanzado, **"Aplicar el delay solo a la emisión (la grabación y la vista previa no se
+  retrasan)"** cambia al nuevo modo stream de abajo; se bloquea mientras hay un delay activo. El
+  botón, los atajos, obs-websocket y el Stream Deck manejan la opción elegida. Si probaste una build
+  de prueba de la 1.0 con "Usar el modo stream" marcado, vuelves a empezar con todo OBS. Las
+  tarjetas Delay y Escenas también se pliegan: plegadas, su cabecera sigue mostrando los segundos y
+  la primera escena con delay. La versión y "Reportar un problema" quedan fijos abajo del panel, también al hacer
+  scroll.
+- **Varias escenas con delay, un solo búfer.** En todo OBS, añade hasta 8 escenas en **Escenas con
+  delay** (Añadir escena). Con el delay activo, cambia entre ellas con los botones del dock, los
+  atajos nuevos "Escena con delay 1" a "8", u obs-websocket (`SetDelayedScene`): tu
+  audiencia ve el cambio cuando el delay llega a él, imagen y sonido juntos, nunca en directo.
+  Todas comparten el mismo búfer, así que más escenas no gastan más RAM (las que no están en
+  pantalla siguen renderizándose fuera del lienzo, algo de GPU). También puedes elegirlas en la
+  lista de escenas de OBS, pero OBS muestra antes su transición sin delay un momento. Al desactivar
+  el delay se ve en directo la escena que estaba en el delay.
+- **Solo a la emisión (la opción avanzada; Windows, macOS y Linux): el delay sobre tu
+  directo.** El plugin guarda el stream que OBS ya ha codificado y lo envía más tarde, en vez de guardar tu imagen renderizada en
+  RAM. No se codifica dos veces, y tú eliges dónde esperan los segundos retenidos: en RAM, o en un
+  archivo temporal cifrado en tu disco (su clave solo en la memoria de OBS, el archivo se borra al
+  terminar el directo), donde el delay ocupa unos 11-16 MB de RAM con cualquier duración hasta 600 s
+  (medido a 6 Mbps; unos 450 MB en disco). Con él:
+  - **De 0 a 600 s de delay, cambiable en directo.** Actívalo, quítalo, súbelo o bájalo cuando
+    quieras; tu directo nunca se reconecta. Al activarlo, los espectadores vuelven a ver los
+    últimos segundos y nunca nada más nuevo. Subirlo es al instante en cuanto el directo lleva ese
+    tiempo (con Memoria, hasta tu preset o regla por escena más alto).
+  - **Todas las escenas van con delay**, así que puedes cambiar de escena con el delay activo.
+  - **Tu grabación, el Replay Buffer y la cámara virtual siguen en directo.**
+  - **Al parar el directo,** el plugin envía los segundos que los espectadores aún no han visto
+    (opcional).
+  - Funciona con tus ajustes de emisión de OBS de siempre (Twitch, YouTube, Kick, TikTok y
+    cualquier servidor RTMP o RTMPS); no hay que cambiar nada. Con Enhanced Broadcasting, SRT o
+    WHIP, el dock lo dice: retrasa todo OBS en su lugar.
+  - **Tú eliges dónde vive el búfer del delay** (Opciones > Búfer del delay): Memoria (más RAM,
+    nada se escribe en disco) o Disco (poca RAM, pero el directo se escribe en un archivo temporal
+    cifrado, unos 2,8 GB por hora a 6 Mbps). Automático, lo predeterminado, elige Memoria en un SSD
+    y Disco en un disco duro, y el dock dice cuál ha detectado. Al lado, hasta dónde puedes subir el
+    delay al instante: hasta 600 s con Disco, hasta tu preset o regla por escena más alto con
+    Memoria.
+  - El dock muestra adónde va tu directo y su estado, la RAM y el disco usados y el bitrate.
+  - Si Disco no puede usar el disco (lleno, con fallos o demasiado lento), el delay sigue en RAM,
+    guardando lo de tu preset o regla por escena más alto; el directo no se corta.
+  - En macOS y Linux está en alpha como el resto de esas versiones: compilado y comprobado en la
+    CI, aún no usado en un directo. Allí el plugin lleva su propio FFmpeg para ello (LGPL, enlazado
+    dentro); RTMPS usa el TLS propio de macOS y, en Linux, el OpenSSL 3 del sistema (los paquetes
+    ahora dependen de él).
+- **A todo OBS también cambia el delay en directo, hasta 600 s.** Bájalo y los espectadores
+  saltan hacia delante al momento; súbelo y la imagen se congela (o sale la escena de carga, por
+  encima de 3 s) solo durante los segundos de más. El buffer nunca vuelve a empezar desde cero.
+  Antes había que quitar el delay para cambiarlo, y el máximo era 60 s. Para cambiar con el delay
+  activado a una escena que no está entre tus escenas con delay (abajo), usa solo a la emisión; el
+  dock lo dice.
+- **Todo OBS retrasa también tu lienzo vertical.** OBS manda el mismo audio a todos los lienzos, así
+  que con el delay activo un lienzo vertical (Aitum Vertical, o el lienzo vertical de la Emisión
+  mejorada de Twitch) llevaba el sonido retrasado con su imagen en directo. Ahora, si otro lienzo
+  tiene una escena con el mismo nombre que una de tus escenas con delay, el vídeo de esa escena se
+  retrasa los mismos segundos; mientras se llena su búfer, y cada vez que ese lienzo cambia a otra
+  escena con delay, se ve en negro durante el delay. El dock te avisa claramente cuando pasa esto:
+  el delay mantiene un segundo búfer de vídeo, así que usa **el doble de RAM, CPU y GPU**,
+  aproximadamente. Para evitarlo, quita ese lienzo de la emisión.
+- **Inicio de sesión en macOS y Linux.** La cuenta gratuita, y con ella activar el delay, Trigi e
+  "Informar de un problema", ya funcionan también ahí (solo funcionaban en Windows desde la 0.6.0).
+  La sesión se guarda en un archivo que solo puede leer tu usuario.
+- **La insignia de delay para los espectadores también solo a la emisión**, en la esquina que
+  elijas, hasta 600 s. Un solo "Mostrar la insignia de delay a los espectadores" y una sola esquina
+  (Opciones) para las dos.
+- **La insignia sin los segundos.** Desmarca "Mostrar los segundos en la insignia" (Opciones) y tu
+  audiencia ve solo el logo de Dynamic Delay y "Dynamic Delay by Trigglow", sin saber cuánto delay
+  llevas. Funciona en los dos modos y cambia al momento, también con el delay activo.
+- **Comprobación de ajustes:** el dock te avisa cuando el intervalo de fotogramas clave está en
+  automático o pasa de 4 s (el delay se mueve en pasos de ese tamaño) y cuando el Retardo de
+  emisión propio de OBS está activado (se suman).
+- **Borrar lo que aún no se ha emitido (solo a la emisión).** ¿Se ha visto algo que no debía? Un botón o
+  un atajo y los segundos que aún esperan en el delay no se envían nunca: el directo salta al
+  momento actual y el delay vuelve solo.
+- **Delay por escena (solo a la emisión).** Activa el delay (con sus propios segundos) o quítalo al
+  cambiar a una escena: activado en tu escena de juego y quitado en la de charla, sin tocar nada.
+- **Tres presets de delay**, cada uno con su atajo, con cualquiera de las dos opciones; la tarjeta
+  Delay del dock los tiene como atajos rápidos.
+- **Atajos nuevos:** Volver al directo, Delay +5 s y Delay -5 s. Los tres de siempre mantienen su
+  nombre y su tecla.
+- **Control por obs-websocket** (vendor `trigglow-dynamic-delay`), para que un Stream Deck muestre
+  el estado del delay en su tecla.
+- **Fuera de beta.** El dock ya no muestra la etiqueta "Beta" junto a la versión.
+- **El nuevo diseño de Trigglow en el dock.** El mismo aspecto que trigglow.com: la tipografía
+  Figtree, el violeta de acento, un botón principal violeta sólido en lugar del degradado de cian a
+  magenta, y tarjetas, campos y botones redondeados. Sigue adaptándose al tema de OBS (oscuro, claro
+  o alto contraste).
+- **Un overlay nuevo.** La insignia que ve tu audiencia durante un delay es una sola placa
+  redondeada con el nuevo diseño: el logo de Dynamic Delay, "DELAY" y tus segundos, y debajo
+  "Dynamic Delay by Trigglow". La insignia dibujada por una versión anterior se sustituye la primera
+  vez que sale.
+- **El nuevo logo de Dynamic Delay en todos los sitios donde el plugin muestra uno:** la insignia de
+  delay, el icono del instalador, su logo pequeño en las páginas interiores y su banner de bienvenida
+  y de finalización. Llevan la T de Trigglow dentro del cronómetro en lugar del antiguo botón de
+  play.
+- **Pantalla de carga por defecto.** Si no eliges escena de carga, el plugin muestra ahora un vídeo
+  tranquilo de Trigglow "Poniendo delay" (en inglés si OBS no está en español) mientras se llena el
+  delay, en lugar de una pantalla en blanco. Vive en su propia escena, "Trigglow Delay Loading
+  (auto)", que el plugin crea la primera vez; el selector de escena de carga del dock la muestra como
+  "Trigglow (por defecto)". La insignia de delay con tus segundos sigue saliendo sobre el directo
+  retrasado como antes.
+
+**Qué arregla (modo escena, comprobado fotograma a fotograma en OBS 33):**
+- **Vídeo retrasado fluido.** La imagen retrasada repetía un fotograma y se saltaba el siguiente
+  varias veces por segundo a 60 fps (más o menos uno de cada seis), así que el movimiento se veía a
+  tirones y el sonido iba hasta dos fotogramas desfasado. Ahora muestra cada fotograma justo el delay
+  después de que pasara, con el sonido a la par. La v0.7.3 también lo tenía.
+- **Sin congelarse al volver a poner el delay.** Poner el delay por segunda vez en una sesión de OBS
+  (o después de que el buffer bajara su calidad) congelaba la imagen retrasada medio segundo al
+  empezar, luego saltaba hacia delante, y podía bajar la resolución del buffer durante el resto del
+  delay.
+- **Sin destello negro en la pantalla de carga.** El vídeo "Poniendo delay" por defecto salía en
+  negro unos fotogramas cada vez que se ponía el delay, mientras se abría el vídeo.
+- **Los delays largos mantienen el sonido a la par.** Poner, subir o bajar un delay de unos minutos
+  podía dejar todo el sonido de OBS unos 20 ms por detrás de la imagen hasta reiniciar OBS, un poco
+  más cada vez: la memoria de audio del delay se preparaba o se liberaba de golpe en los hilos de tus
+  fuentes de audio, y OBS tomaba esa pausa por una fuente con retraso. Ahora entra y sale poco a
+  poco.
+
 ## v0.7.3 — 2026-11-11 (Early Access)
 
 Una versión de corrección: tu micro y el resto del audio van a la par que el vídeo retrasado.
@@ -422,7 +554,9 @@ recoge primero lo que vas a notar, después el detalle técnico y al final las l
   resuelve, **Crear ticket con esta conversación** se lo pasa al equipo con el contexto. La primera
   vez, un aviso breve explica qué es Trigi y qué pasa con tus datos, y siempre puedes escribir al
   equipo en su lugar. **El log de OBS nunca se envía a la IA.** Los datos técnicos de OBS son
-  opcionales y ves exactamente qué se envía antes de marcarlos.
+  opcionales y ves exactamente qué se envía antes de marcarlos. Los datos técnicos de OBS vienen
+  marcados por defecto (solo cifras y estados, nunca nombres de escenas o fuentes); desmárcalos para
+  no enviarlos.
 - **Inicio de sesión más seguro.** El dock muestra un código, y la página de trigglow.com debe
   mostrar el mismo antes de que confirmes; **No he sido yo** en la página cancela la solicitud. El
   plugin guarda su propio inicio de sesión, cifrado para tu usuario de Windows, y **Cerrar sesión**

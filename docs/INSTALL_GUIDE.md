@@ -3,7 +3,7 @@
 # Installation guide (step by step, with screenshots)
 
 This walks through the Windows installer end to end, including the Microsoft Edge SmartScreen
-warning you'll see because the installer isn't code-signed yet (Early Access — see
+warning you'll see because the installer isn't code-signed yet (see
 `docs/ROADMAP.md`). Screenshots below are from a real install on an older version, before v0.3.1
 added the Trigglow icon/wizard banner shown in the installer today — the steps and layout are
 otherwise unchanged, only that generic styling and the version number in the corner are out of date.
@@ -14,17 +14,19 @@ Linux and macOS: see their sections below.
 
 | Plugin | Minimum OBS | Tested up to | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.0.0 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.0 | 31.1.0 | 32.2.2 | Installer, `.zip` ("Legacy" in OBS 33) | `.pkg` | `.deb`, Ubuntu 24.04 with OBS 32.2 only |
 
 "Tested up to" is the newest OBS the plugin was run in live (on Windows). OBS 33 is in release
-candidate: v0.7.1 already installs where it looks for plugins, but hasn't been tested in it live. In
-an OBS older than the minimum the plugin doesn't load, and says why in the OBS log. Linux and macOS
-are covered below.
+candidate: since v0.7.1 the plugin installs where it looks for plugins, but hasn't been tested in it
+live. In an OBS older than the minimum the plugin doesn't load, and says why in the OBS log. Linux and
+macOS are covered below; there the plugin has stream mode and scene mode too, and hasn't been run
+on a live stream yet (alpha).
 
 ## 1. Download
 
-Get `obs-trigglow-dynamic-delay-0.7.1-windows-x64-setup.exe` from the
+Get `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` from the
 [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). Prefer to
 install by hand instead? The `.zip` in the same release contains just the plugin files — see
 "Installing the plugin" in `README.md`.
@@ -32,7 +34,7 @@ install by hand instead? The `.zip` in the same release contains just the plugin
 ## 2. Windows SmartScreen: why it appears, and how to get past it
 
 Because the installer isn't signed with a code-signing certificate, Microsoft Defender SmartScreen
-can't vouch for it and warns you before letting it run. This is expected for unsigned Early Access
+can't vouch for it and warns you before letting it run. This is expected for unsigned
 software, not a sign that anything is wrong — but you should only click through it for installers
 you actually trust the source of (in this case, the GitHub Releases page linked above).
 
@@ -101,15 +103,18 @@ Delay"** is checked in that same menu:
 
 ![Docks menu with Trigglow Dynamic Delay listed](images/obs-panel-2-reset-panels.png)
 
-The dock appears, showing `● Inactive` — you're ready to pick a live scene and go. See `README.md`
-("Using the plugin") for what to configure next.
+The dock appears: one panel with the status, one **Turn delay on** button, the delay and your
+scenes. By default the delay applies to all of OBS (stream and recording): pick your **live
+scene** and you're set. To delay only the stream and keep the recording live, tick **Apply the
+delay only to the stream** in Options > Advanced. The screenshot below is from an earlier version.
+See `README.md` ("Using the plugin") for what to configure next.
 
 ![Trigglow Dynamic Delay dock, Inactive state](images/obs-panel-3-dock.png)
 
 ## 6. Sign in once
 
-`Enable delay` needs a free trigglow.com account, signed in once from the dock (Windows only for
-now; macOS and Linux get sign-in with the HTTP client planned next, see `docs/ROADMAP.md`):
+Turning the delay on needs a free trigglow.com account, signed in once from the dock (on Windows,
+and since v1.0.0 on macOS and Linux too):
 
 1. Press **Sign in** in the dock. Your browser opens trigglow.com; sign in there, or create a free
    account.
@@ -144,9 +149,9 @@ The Flatpak OBS isn't supported: it runs plugins inside its own runtime and keep
 Install, with OBS closed:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-0.7.1-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 The packages put the plugin in OBS 33's system location,
@@ -163,12 +168,16 @@ later) and links it from `~/.config/obs-studio/plugins/obs-trigglow-dynamic-dela
 not both.
 
 Your settings and sign-in (`~/.config/obs-studio/plugin_config/obs-trigglow-dynamic-delay/`) are
-never touched by installing, updating or removing. Sign-in isn't available on Linux yet (see step
-6).
+never touched by installing, updating or removing. Sign-in works on Linux since v1.0.0 (step 6),
+over the system's libcurl: the packages depend on it (`libcurl4t64` or `libcurl4` for the `.deb`,
+`curl` for Arch); with the `.tar.xz`, install your distro's libcurl if `ldd` reports `libcurl.so.4`
+as not found. The sign-in is kept in that folder in a file only your user can read (0600).
 
 ## macOS
 
 Install the `.pkg` from the same release. It goes to `~/Library/Application Support/obs-studio/plugins/`, which OBS 33 keeps using.
+Sign-in works since v1.0.0 over macOS's own libcurl; the sign-in is kept in the plugin's config
+folder in a file only your user can read (0600).
 
 ## Where the files go on Windows
 
@@ -199,8 +208,10 @@ you had copied the plugin by hand into `~/.config/obs-studio/plugins/`, delete t
 package or the `.tar.xz`'s `install.sh`.
 
 
-Install the new version over the old one, the same way (with OBS closed): your scenes, settings and
-hotkeys are kept. **From v0.5.x or earlier, updating is required**: the sign-in of those versions is
+Install the new version over the old one, the same way (with OBS closed): your scenes, settings,
+hotkeys and sign-in are kept. **From any 0.x to 1.0.0** there's nothing to do: the delay still
+applies to all of OBS, as before, in the new one-panel dock (the stream-only delay is an option
+under Options > Advanced), and your three hotkeys keep their bindings next to the seven new ones. **From v0.5.x or earlier, updating is required**: the sign-in of those versions is
 switched off when v0.6.0 is published, and the sign-ins they already have stop working after a
 transition period. On the first start your sign-in moves to the new format by itself; if the dock
 asks you to sign in, do it once (step 6). Since v0.6.0 the objects the plugin manages end in

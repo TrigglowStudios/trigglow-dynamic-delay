@@ -200,7 +200,11 @@ private:
 			const uint32_t applied = status.effectiveDelaySeconds > 0
 							 ? std::min(status.effectiveDelaySeconds, status.delaySeconds)
 							 : status.delaySeconds;
-			fillDeadline_ = Clock::now() + std::chrono::seconds(applied);
+			// v1.0.0: the window's own length (a live raise fills only its
+			// extra seconds).
+			fillDeadline_ = Clock::now() + (status.fillWindowMs > 0
+								? std::chrono::milliseconds(status.fillWindowMs)
+								: std::chrono::milliseconds(applied * 1000ULL));
 			fillArmed_ = true;
 		}
 		std::lock_guard<std::mutex> lock(publishMutex_);

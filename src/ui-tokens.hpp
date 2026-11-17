@@ -60,15 +60,20 @@ double ContrastRatio(Rgb a, Rgb b);
 // contrasts more with the backgrounds) until it does, or the pole itself.
 Rgb EnsureContrast(Rgb color, std::initializer_list<Rgb> backgrounds, double minRatio);
 
-// Brand constants (the Trigglow web palette).
+// Brand constants: the Trigglow web palette since its 2026-10 rework
+// (apps/web/src/theme-tokens.css). The web's token names are historical
+// ("pulse-cyan" is now the violet accent); these use what the colors are.
+// No gradient any more: the primary button is one solid violet.
 namespace brand {
-constexpr Rgb kInk{0x0f, 0x10, 0x16};        // --color-pulse-ink
-constexpr Rgb kMist{0xf2, 0xf1, 0xee};       // --color-pulse-mist
-constexpr Rgb kCyan{0x00, 0xd2, 0xff};       // --color-pulse-cyan / signal
-constexpr Rgb kMagenta{0xc4, 0x4d, 0xff};    // --color-pulse-magenta
-constexpr Rgb kAmber{0xf0, 0xa2, 0x02};      // --color-pulse-amber
-constexpr Rgb kDanger{0xff, 0x6b, 0x6b};     // --color-pulse-danger
-constexpr Rgb kOnGradient{0x0b, 0x0c, 0x12}; // .sp-btn-primary text
+constexpr Rgb kInk{0x16, 0x13, 0x18};          // --color-pulse-ink
+constexpr Rgb kMist{0xef, 0xe9, 0xe1};         // --color-pulse-mist
+constexpr Rgb kViolet{0xa1, 0x8a, 0xff};       // --color-pulse-cyan: the accent (text, icons, focus)
+constexpr Rgb kVioletStrong{0x74, 0x52, 0xee}; // --color-pulse-accent-strong: filled buttons, white text 5.0:1
+constexpr Rgb kVioletDeep{0x5b, 0x3f, 0xd6};   // Accent text and focus on light themes (AA on white)
+constexpr Rgb kCoral{0xff, 0x8a, 0x5c};        // --color-pulse-magenta: the second accent
+constexpr Rgb kAmber{0xf4, 0xb5, 0x45};        // --color-pulse-amber
+constexpr Rgb kDanger{0xf2, 0x64, 0x5f};       // --color-pulse-danger
+constexpr Rgb kOnAccent{0xff, 0xff, 0xff};     // --color-primary-foreground: text on the filled button
 } // namespace brand
 
 enum class Scheme {
@@ -108,7 +113,7 @@ struct Tokens {
 
 	Rgb warning; // Amber fill (rules, progress chunk on dark themes).
 	Rgb warningText;
-	Rgb warningTint;   // Update banner and BETA chip background.
+	Rgb warningTint;   // Update banner and warning chip background.
 	Rgb progressChunk; // Filling progress bar.
 
 	Rgb danger; // Red fill (Error rule).

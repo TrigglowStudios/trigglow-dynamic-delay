@@ -202,7 +202,8 @@ public:
 private:
 	struct Prefs {
 		int noticeAccepted = 0;
-		bool includeDiagnostics = false;
+		// On by default: only figures and states, never scene or source names.
+		bool includeDiagnostics = true;
 	};
 	void LoadPrefs();
 	void SavePrefs() const;

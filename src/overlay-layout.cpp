@@ -109,6 +109,11 @@ std::string BadgeFileName(uint32_t seconds)
 	return "delay-badge-r" + std::to_string(kRenderVersion) + "-" + std::to_string(ClampSeconds(seconds)) + "s.png";
 }
 
+std::string BadgeBrandFileName()
+{
+	return "delay-badge-r" + std::to_string(kRenderVersion) + "-brand.png";
+}
+
 bool IsStaleBadgeFile(const std::string &fileName)
 {
 	const std::string prefix = "delay-badge-";

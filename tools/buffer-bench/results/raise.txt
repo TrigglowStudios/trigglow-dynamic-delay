@@ -1,0 +1,4 @@
+cd6_10 raise reached 300s behind at t= 661 (after 1 s); longest no-bytes stretch after t=20: (1, 348)
+ed6_10 raise reached 300s behind at t= 661 (after 1 s); longest no-bytes stretch after t=20: (0, 0)
+r60_6_10 raise reached 300s behind at t= 895 (after 235 s); longest no-bytes stretch after t=20: (233, 894)
+rd_6_10 raise reached 300s behind at t= 945 (after 285 s); longest no-bytes stretch after t=20: (284, 944)

@@ -2,6 +2,124 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.0.0 — 2026-11-17
+
+Dynamic Delay comes out of beta on Windows: version 1.0, in Trigglow's new look. The macOS and Linux
+builds are still alpha (they build and pass CI, but haven't been run on a live stream yet).
+
+**Before you update:** nothing to do. Install it like v0.7.3; your scenes, settings, hotkeys and
+sign-in are kept.
+
+**What's new:**
+- **One panel, all of OBS by default.** The dock is one panel: the status, one "Turn delay on"
+  button, the delay (with -5/+5 and your presets), your live and loading scenes, and folded Hotkey
+  presets and Options. By default the delay applies to all of OBS, as in 0.7: your loading scene
+  shows while it builds up, then your stream and your recording are both delayed. Under Options >
+  Advanced, **"Apply the delay only to the stream (recording and preview stay live)"** switches to
+  the new stream mode below; it's locked while a delay is on. The button, the hotkeys,
+  obs-websocket and the Stream Deck drive the one you chose. If you tried a 1.0 test build with
+  "Use stream mode" ticked, you start on all of OBS again. The Delay and Scenes cards fold too:
+  folded, their header still shows the seconds and the first delayed scene. The version and
+  "Report a problem" stay pinned at the bottom of the panel, even when you scroll it.
+- **Several delayed scenes, one buffer.** In all of OBS, add up to 8 scenes under **Delayed
+  scenes** (Add scene). With the delay on, switch between them from the dock's buttons, the new
+  hotkeys "Delayed scene 1" to "8", or obs-websocket (`SetDelayedScene`): viewers
+  see the switch when the delay catches up, picture and sound together, never live. They all share
+  the one buffer, so more scenes take no more RAM (the scenes not on screen keep rendering off the
+  canvas, a little GPU). Picking one in OBS's own scene list works too, but OBS shows its transition
+  live for a moment first. Turning the delay off shows the scene that was in the delay, live.
+- **Only the stream (the advanced option; Windows, macOS and Linux): the delay on your stream
+  itself.** The plugin holds the stream OBS has already encoded and sends it out later, instead of keeping your
+  rendered picture in RAM. There's no second encode, and you choose where the held seconds wait:
+  in RAM, or in an encrypted temp file on your disk (its key only in OBS's memory, the file deleted
+  when the stream ends), where the delay takes about 11-16 MB of RAM at any length up to 600 s
+  (measured at 6 Mbps; about 450 MB on disk). With it:
+  - **0 to 600 s of delay, changed while you're live.** Turn it on, off, up or down at any moment;
+    your stream never reconnects. Turning it on, viewers see the last seconds again and never
+    anything newer. Raising it is instant once the stream has run that long (with Memory, up to
+    your highest preset or scene rule).
+  - **Every scene is delayed**, so you can switch scenes while delayed.
+  - **Your recording, Replay Buffer and virtual camera stay live.**
+  - **When you stop streaming,** the plugin sends the seconds viewers haven't seen yet (optional).
+  - It works with your usual OBS stream settings (Twitch, YouTube, Kick, TikTok and any RTMP or
+    RTMPS server); nothing to change. With Enhanced Broadcasting, SRT or WHIP, the dock says so:
+    delay all of OBS instead.
+  - **You choose where the delay buffer lives** (Options > Delay buffer): Memory (more RAM,
+    nothing written to disk) or Disk (little RAM, but the stream is written to an encrypted temp
+    file, about 2.8 GB per hour at 6 Mbps). Automatic, the default, picks Memory on an SSD and Disk
+    on a hard drive, and the dock says which it found. Next to it, how far you can raise the delay
+    instantly: up to 600 s with Disk, up to your highest preset or scene rule with Memory.
+  - The dock shows where your stream goes and its state, the RAM and disk used and the bitrate.
+  - If Disk can't use the disk (full, failing or too slow), the delay goes on in RAM, keeping as
+    much as your highest preset or scene rule; the stream isn't interrupted.
+  - On macOS and Linux it's alpha like the rest of those builds: built and checked in CI, not yet
+    run on a live stream. The plugin carries its own FFmpeg for it there (LGPL, linked in); RTMPS
+    uses macOS's own TLS and, on Linux, the system's OpenSSL 3 (the packages now depend on it).
+- **All of OBS changes the delay live too, up to 600 s.** Lower it and viewers skip forward at
+  once; raise it and the picture holds (or the loading scene shows, above 3 s) only for the extra
+  seconds. The buffer never starts again from empty. Before, you had to turn the delay off to
+  change it, and the most was 60 s. To switch to a scene that isn't one of your delayed scenes
+  (below) while delayed, use only the stream; the dock says so.
+- **All of OBS delays your vertical canvas too.** OBS sends the same audio to every canvas, so with
+  the delay on, a vertical canvas (Aitum Vertical, or the vertical canvas of Twitch's Enhanced
+  Broadcasting) got the delayed sound with its live picture. Now, when another canvas has a scene
+  with the same name as one of your delayed scenes, that scene's video is delayed by the same
+  seconds; while its buffer fills, and each time that canvas switches to another delayed scene, it
+  shows black for the delay. The dock warns you clearly when this applies: the delay keeps a second
+  video buffer, so it uses about **twice the RAM, CPU and GPU**. To avoid it, take that canvas out
+  of your stream.
+- **Sign-in on macOS and Linux.** The free account, and with it turning the delay on, Trigi and
+  "Report a problem", now work there too (they were Windows only since 0.6.0). The sign-in is kept
+  in a file only your user can read.
+- **The delay badge for viewers with only the stream too**, in the corner you choose, up to 600 s.
+  One "Show the delay badge to viewers" and one corner (Options) for both.
+- **The badge without the seconds.** Untick "Show the seconds on the badge" (Options) and viewers
+  see only the Dynamic Delay logo and "Dynamic Delay by Trigglow", not how long the delay is. It
+  works in both modes and changes at once, even while the delay is on.
+- **Settings checks:** the dock tells you when the keyframe interval is on auto or above 4 s (the
+  delay moves in steps of it) and when OBS's own Stream Delay is on (it adds up).
+- **Dump what viewers haven't seen (only the stream).** Something slipped on screen? One button or
+  hotkey and the seconds still waiting in the delay are never sent: the stream jumps to live and the
+  delay comes back on its own.
+- **Delay by scene (only the stream).** Turn the delay on (with its own seconds) or off when you switch
+  to a scene: on in your game scene, off in Just Chatting, without touching anything.
+- **Three delay presets**, each with its own hotkey, with either choice; the dock's Delay card has
+  them as quick picks.
+- **New hotkeys:** Back to live, Delay +5 s and Delay -5 s. The three existing ones keep their
+  names and bindings.
+- **Control over obs-websocket** (vendor `trigglow-dynamic-delay`), so a Stream Deck can show the
+  delay's state on its key.
+- **Out of beta.** The dock no longer shows the "Beta" tag next to the version.
+- **Trigglow's new design in the dock.** The same look as trigglow.com: the Figtree typeface, the
+  violet accent, a solid violet main button instead of the cyan-to-magenta gradient, and rounded
+  cards, fields and buttons. It still follows your OBS theme (dark, light or high contrast).
+- **A new overlay.** The badge your viewers see during a delay is one rounded plate in the new
+  design: the Dynamic Delay logo, "DELAY" and your seconds, and "Dynamic Delay by Trigglow" under
+  them. A badge drawn by an earlier version is replaced the first time it shows.
+- **The new Dynamic Delay logo everywhere the plugin shows one:** the delay badge, the installer's
+  icon, its small logo on the inner pages and its Welcome and Finished banner. They show the
+  Trigglow T inside the stopwatch instead of the old play button.
+- **A loading screen by default.** If you don't choose a loading scene, the plugin now shows a
+  calm Trigglow "Adding delay" video (in Spanish when OBS is in Spanish) while the delay fills,
+  instead of a blank screen. It lives in its own scene, "Trigglow Delay Loading (auto)", that the
+  plugin creates the first time; the dock's loading-scene picker shows it as "Trigglow (default)".
+  The delay badge with your seconds still shows over the delayed stream as before.
+
+**What it fixes (scene mode, checked frame by frame in OBS 33):**
+- **Smooth delayed video.** The delayed picture repeated one frame and skipped the next several
+  times a second at 60 fps (about one frame in six), so motion looked jerky and the sound was up to
+  two frames off. It now shows every frame exactly the delay after it happened, with the sound in
+  step. v0.7.3 had this too.
+- **No freeze when the delay starts again.** Turning the delay on a second time in an OBS session
+  (or after the buffer lowered its quality) froze the delayed picture for about half a second as it
+  started, then skipped ahead, and could lower the buffer's resolution for the rest of the delay.
+- **No black flash on the loading screen.** The default "Adding delay" video showed black for a few
+  frames each time the delay was turned on, while the video opened.
+- **Long delays keep the sound in step.** Turning on, raising or lowering a delay of a few minutes
+  could leave all of OBS's sound about 20 ms behind the picture until OBS restarted, a little more
+  each time: the delay's audio memory was set up or given back all at once on your audio sources'
+  own threads, and OBS took that pause for a late source. It now comes and goes a little at a time.
+
 ## v0.7.3 — 2026-11-11 (Early Access)
 
 A fix release: your mic and the rest of your audio stay in sync with the delayed video.
@@ -390,7 +508,8 @@ the technical detail, and the known limitations last.
   with this conversation** hands it to the team with the context. The first time, a short notice
   says what Trigi is and what happens with your data, and you can always write to the team instead.
   **Your OBS log is never sent to the AI.** The OBS technical data is optional and you see exactly
-  what is sent before you tick it.
+  what is sent before you tick it. The OBS technical data is ticked by default (figures and states only,
+  never scene or source names); untick it to leave it out.
 - **Safer sign-in.** The dock shows a code, and the trigglow.com page must show the same one before
   you confirm; **It wasn't me** on the page cancels the request. The plugin keeps its own sign-in,
   encrypted for your Windows user, and **Sign out** also disconnects it on trigglow.com. Your v0.5.x

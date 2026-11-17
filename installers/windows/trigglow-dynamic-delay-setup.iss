@@ -3,7 +3,7 @@
 ; Unsigned by default: building this in CI produces a working .exe, but
 ; without a code-signing certificate Windows SmartScreen will show an
 ; "Unknown publisher" warning on first run (click "More info" -> "Run
-; anyway"). Normal for Early Access software; see README.md for the
+; anyway"). Normal for an unsigned installer; see README.md for the
 ; signing tradeoff.
 ;
 ; v0.7.1: installs into OBS's plugin folder for all users,
@@ -188,6 +188,7 @@ Source: "{#PluginStageDir}\{#PluginName}.dll"; DestDir: "{app}"; Flags: ignoreve
 ; FFmpeg DLLs (LGPL; CMakeLists.txt's OS_WINDOWS block). swresample-7.dll:
 ; avcodec-63.dll has a real (non-delay-loaded) dependency on it.
 Source: "{#PluginStageDir}\avcodec-63.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PluginStageDir}\avformat-63.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avutil-61.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; OBS 31 and 32: <folder>\bin\64bit\<name>.dll, with its own FFmpeg copies.
@@ -196,6 +197,7 @@ Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}"; Flags: ignorever
 ; nothing to the download.
 Source: "{#PluginStageDir}\{#PluginName}.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avcodec-63.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
+Source: "{#PluginStageDir}\avformat-63.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\avutil-61.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}\bin\64bit"; Flags: ignoreversion
 ; One data folder for both. Listed one by one, so a staged build without any
@@ -203,8 +205,17 @@ Source: "{#PluginStageDir}\swresample-7.dll"; DestDir: "{app}\bin\64bit"; Flags:
 ; without it.
 Source: "{#PluginStageDir}\data\locale\en-US.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
 Source: "{#PluginStageDir}\data\locale\es-ES.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\locale\pt-BR.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\locale\zh-CN.ini"; DestDir: "{app}\data\locale"; Flags: ignoreversion
 ; v0.5.x overlay badge frame, kept as a fallback (src/overlay-badge.cpp).
 Source: "{#PluginStageDir}\data\images\delay-badge.png"; DestDir: "{app}\data\images"; Flags: ignoreversion
+; Default loading video, shown while the delay fills when no loading scene is
+; chosen (ObsFrontendBridge::EnsureDefaultLoadingScene).
+Source: "{#PluginStageDir}\data\videos\adding-delay-en.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\videos\adding-delay-es.mp4"; DestDir: "{app}\data\videos"; Flags: ignoreversion
+; Its first frame, a still under the video while the video opens.
+Source: "{#PluginStageDir}\data\images\adding-delay-en.jpg"; DestDir: "{app}\data\images"; Flags: ignoreversion
+Source: "{#PluginStageDir}\data\images\adding-delay-es.jpg"; DestDir: "{app}\data\images"; Flags: ignoreversion
 ; Brand fonts for the dock and the overlay (Archivo, Geist Mono; SIL OFL 1.1),
 ; with their licenses next to them as the OFL requires.
 Source: "{#PluginStageDir}\data\fonts\*.ttf"; DestDir: "{app}\data\fonts"; Flags: ignoreversion

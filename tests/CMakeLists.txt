@@ -82,6 +82,75 @@ target_include_directories(overlay_layout_tests PRIVATE "${_src}")
 set_target_properties(overlay_layout_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME overlay_layout_tests COMMAND overlay_layout_tests)
 
+# v1.0.0 stream mode: the packet history and the splicing scheduler.
+add_executable(
+  packet_delay_core_tests
+  packet_delay_core_tests.cpp
+  "${_src}/packet-delay-core.cpp"
+  "${_src}/packet-delay-core.hpp"
+  "${_src}/payload-store.cpp"
+  "${_src}/payload-store.hpp"
+)
+target_include_directories(packet_delay_core_tests PRIVATE "${_src}")
+set_target_properties(packet_delay_core_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME packet_delay_core_tests COMMAND packet_delay_core_tests)
+
+# v1.0.0 stream mode: the history's byte store (contiguous blocks, the spill's
+# state machine with a scripted backend).
+add_executable(payload_store_tests payload_store_tests.cpp "${_src}/payload-store.cpp" "${_src}/payload-store.hpp")
+target_include_directories(payload_store_tests PRIVATE "${_src}")
+set_target_properties(payload_store_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME payload_store_tests COMMAND payload_store_tests)
+
+# v1.0.0 stream mode: the encrypted spill file (real temp files, the system's
+# AES: bcrypt on Windows, CommonCrypto on macOS, OpenSSL on Linux when found;
+# without it the encryption checks are skipped).
+add_executable(
+  spill_file_tests
+  spill_file_tests.cpp
+  "${_src}/spill-file.cpp"
+  "${_src}/spill-file.hpp"
+  "${_src}/payload-store.cpp"
+  "${_src}/payload-store.hpp"
+)
+target_include_directories(spill_file_tests PRIVATE "${_src}")
+set_target_properties(spill_file_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(WIN32)
+  target_link_libraries(spill_file_tests PRIVATE bcrypt)
+elseif(NOT APPLE)
+  find_package(OpenSSL QUIET COMPONENTS Crypto)
+  if(OpenSSL_FOUND)
+    target_compile_definitions(spill_file_tests PRIVATE TRIGGLOW_SPILL_OPENSSL)
+    target_link_libraries(spill_file_tests PRIVATE OpenSSL::Crypto)
+  endif()
+endif()
+add_test(NAME spill_file_tests COMMAND spill_file_tests)
+
+# v1.0.0 stream mode: where the delay buffer lives (Auto / Memory / Disk) and
+# the hardware-free parts of the drive type detection.
+add_executable(drive_kind_tests drive_kind_tests.cpp "${_src}/drive-kind.cpp" "${_src}/drive-kind.hpp")
+target_include_directories(drive_kind_tests PRIVATE "${_src}")
+set_target_properties(drive_kind_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(APPLE)
+  target_link_libraries(drive_kind_tests PRIVATE "-framework IOKit" "-framework CoreFoundation")
+endif()
+add_test(NAME drive_kind_tests COMMAND drive_kind_tests)
+
+# v1.0.0 one panel: what the delay applies to ("apply_to", the migration of
+# 1.0 test builds' "mode_enabled") and the router following the dock's check
+# box (src/apply-to.*, src/delay-router.hpp).
+add_executable(
+  apply_to_tests
+  apply_to_tests.cpp
+  check.hpp
+  "${_src}/apply-to.cpp"
+  "${_src}/apply-to.hpp"
+  "${_src}/delay-router.hpp"
+)
+target_include_directories(apply_to_tests PRIVATE "${_src}")
+set_target_properties(apply_to_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME apply_to_tests COMMAND apply_to_tests)
+
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
 # with a fake codec (threads, no FFmpeg).
@@ -106,6 +175,19 @@ add_executable(
 target_include_directories(frame_ring_tests PRIVATE "${_src}")
 set_target_properties(frame_ring_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME frame_ring_tests COMMAND frame_ring_tests)
+
+# v1.0.0: the audio delay line that keeps its history across live delay
+# changes (src/audio-delay-line.*).
+add_executable(
+  audio_delay_line_tests
+  audio_delay_line_tests.cpp
+  check.hpp
+  "${_src}/audio-delay-line.cpp"
+  "${_src}/audio-delay-line.hpp"
+)
+target_include_directories(audio_delay_line_tests PRIVATE "${_src}")
+set_target_properties(audio_delay_line_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME audio_delay_line_tests COMMAND audio_delay_line_tests)
 
 add_executable(
   degradation_policy_tests
@@ -205,6 +287,43 @@ if(WIN32)
         "${_ffmpeg}/bin/swresample-7.dll" "$<TARGET_FILE_DIR:hw_storage_codec_tests>"
     )
     add_test(NAME hw_storage_codec_tests COMMAND hw_storage_codec_tests)
+
+    # v1.0.0: manual end-to-end check of the stream mode relay with FFmpeg's
+    # command line tools standing in for OBS and the platform. Not a ctest:
+    # it opens local ports. See the file's header for how to run it.
+    add_executable(
+      relay_harness
+      relay_harness.cpp
+      "${_src}/stream-relay.cpp"
+      "${_src}/stream-relay.hpp"
+      "${_src}/packet-delay-core.cpp"
+      "${_src}/packet-delay-core.hpp"
+      "${_src}/payload-store.cpp"
+      "${_src}/payload-store.hpp"
+      "${_src}/spill-file.cpp"
+      "${_src}/spill-file.hpp"
+    )
+    target_include_directories(relay_harness PRIVATE "${_src}" "${_ffmpeg}/include")
+    target_compile_definitions(relay_harness PRIVATE TRIGGLOW_HAVE_STREAM_RELAY)
+    target_link_libraries(
+      relay_harness
+      PRIVATE
+        "${_ffmpeg}/lib/avformat.lib"
+        "${_ffmpeg}/lib/avcodec.lib"
+        "${_ffmpeg}/lib/avutil.lib"
+        ws2_32
+        iphlpapi
+        psapi
+        bcrypt
+    )
+    set_target_properties(relay_harness PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    add_custom_command(
+      TARGET relay_harness
+      POST_BUILD
+      COMMAND
+        "${CMAKE_COMMAND}" -E copy_if_different "${_ffmpeg}/bin/avformat-63.dll" "${_ffmpeg}/bin/avcodec-63.dll"
+        "${_ffmpeg}/bin/avutil-61.dll" "${_ffmpeg}/bin/swresample-7.dll" "$<TARGET_FILE_DIR:relay_harness>"
+    )
   endif()
 endif()
 

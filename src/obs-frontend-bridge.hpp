@@ -117,6 +117,10 @@ enum class FrontendEvent {
 	SceneCollectionChanging,
 	SceneCollectionChanged,
 	ThemeChanged, // OBS switched theme (or its font size): the dock restyles itself.
+	// v1.0.0: Program changed scene (OBS_FRONTEND_EVENT_SCENE_CHANGED; with a
+	// transition, once it ends). Several delayed scenes: a click on one of
+	// them in OBS's scene list switches the delay to it.
+	SceneChanged,
 	Other,
 };
 
@@ -204,7 +208,9 @@ public:
 	// doesn't resolve.
 	// ringClass (v0.7.0): what the ring is (or would be) sized for, as
 	// SetBufferFilterStorageClass() pushes it.
-	VideoDelayFilter::BufferFitEstimate EstimateBufferFit(const std::string &liveSceneName,
+	// v1.0.0: `scenes` are the delayed scenes: the first one's size (the
+	// scene holding them has the canvas's), the audio sources of all of them.
+	VideoDelayFilter::BufferFitEstimate EstimateBufferFit(const std::vector<std::string> &scenes,
 							      uint32_t requestedDelaySeconds,
 							      uint32_t minResolutionHeight, bool capToOutput,
 							      bufferfit::RingClass ringClass) const;
@@ -258,7 +264,36 @@ public:
 	// delay filter attached (disabled by default — see SetBufferFilterEnabled).
 	// Returns false if liveSceneName doesn't resolve to a real scene, or
 	// setup otherwise fails.
+	//
+	// v1.0.0: BufferModeController passes kDelayedScenes here (the scene
+	// EnsureDelayedScenes() fills), never one of the streamer's scenes: a
+	// previous live scene the wrapper still holds is removed with the filter
+	// an earlier version left on it.
 	bool EnsureBufferWrapperScene(const std::string &liveSceneName) const;
+
+	// v1.0.0, several delayed scenes. Idempotent: ensures the scene
+	// autonames::kDelayedScenes exists and holds exactly one item per scene of
+	// `scenes` (missing scenes and helper scenes are skipped, items of scenes
+	// no longer listed removed), then places them (SelectDelayedScene()).
+	// Every item stays VISIBLE, so all their sources stay active (heard, and
+	// rendered off the canvas): switching only moves items. Returns false if
+	// none of `scenes` could be added.
+	bool EnsureDelayedScenes(const std::vector<std::string> &scenes, const std::string &selected) const;
+	// Puts `selected`'s item at 0,0 and every other item off the canvas
+	// (visible). The delay filter on the holder buffers what's at 0,0, so
+	// viewers see the switch one delay later. False if it isn't one of them.
+	bool SelectDelayedScene(const std::string &selected) const;
+	// The scene whose item sits at 0,0 in the holder, or empty.
+	std::string SelectedDelayedScene() const;
+	// Removes the video delay filter an earlier version left on any scene
+	// other than the holder (scene mode now filters only the holder). Only
+	// while the delay is off; filters switched on are left alone.
+	void RemoveStrayBufferFilters() const;
+	// Opens the audio filters (set_gate_open) of the audio sources of
+	// `selectedScene` -- the global ones (Desktop Audio, Mic/Aux) included --
+	// and closes the other filters under `hostName`. An empty
+	// `selectedScene` opens them all (the delay off).
+	bool SetAudioDelayGates(const std::string &hostName, const std::string &selectedScene) const;
 
 	// Enables/disables the buffer filter attached by EnsureBufferWrapperScene.
 	// No-op (returns false) if that hasn't been called successfully yet for
@@ -270,6 +305,31 @@ public:
 	// included). While it's on, the filter is guarded: switched off from
 	// outside the dock, it's switched back on (DelayFilterEnableSignal()).
 	bool SetBufferFilterEnabled(const std::string &liveSceneName, bool enabled) const;
+
+	// --- Other canvases (Aitum Vertical, Enhanced Broadcasting's extra
+	// canvases) ---
+	//
+	// OBS mixes ONE audio for every canvas, so the audio filters delay it on
+	// all of them: a canvas whose video isn't delayed too plays its picture
+	// the whole delay ahead of its sound. On every canvas other than the main
+	// one, each scene named like one of the delayed scenes gets its own
+	// VideoDelayFilter (a "mirror"): attached at Enable(), switched and tuned
+	// together with the main filter by the setters above and removed again by
+	// SetBufferFilterEnabled(false). Each mirror has its own ring, codecs and
+	// RAM: the dock warns that the delay then costs about twice the
+	// resources. The main filter alone drives the effective delay, the health
+	// notice and the encoder ceiling. Empty in the core build (Streamlabs'
+	// libobs has no canvas API).
+
+	// Names of the canvases that would get a mirror for these scenes, each once.
+	std::vector<std::string> ListMirrorCanvases(const std::vector<std::string> &sceneNames) const;
+	// Attaches (disabled) a mirror filter to each matching scene and keeps it
+	// for the setters, until SetBufferFilterEnabled(false). Returns the
+	// canvases' names.
+	std::vector<std::string> AttachMirrorFilters(const std::vector<std::string> &sceneNames) const;
+	// The mirrors' delay alone: the main filter's effective one when RAM
+	// trims it, so every canvas's video keeps to the one audio delay.
+	void SetMirrorFiltersDelaySeconds(uint32_t seconds) const;
 
 	// Pushes `seconds` into the already-attached filter's configured delay,
 	// through its set_managed_delay_seconds proc: the filter then keeps the
@@ -420,6 +480,19 @@ public:
 	// yet (EnsureBufferWrapperScene hasn't been called/succeeded).
 	bool ShowBufferWrapperScene() const;
 
+	// The scene to show while the delay fills when the user chose no loading
+	// scene: autonames::kDefaultLoadingScene, holding the bundled "adding
+	// delay" video (data/videos, in OBS's language) looping and fitted to the
+	// canvas. Created the first time, reused after; the video file is
+	// re-pointed on every call so a change of OBS language follows. Returns
+	// its name, or an empty string when it can't be made (video missing, the
+	// name taken by something that isn't a scene, or a core-only build, whose
+	// host has its own loading view) -- the delayed view then stays blank, as
+	// before. v1.0.0: with the video's first frame as a still under it
+	// (autonames::kDefaultLoadingStill), so Program shows that frame, never
+	// black, while the video opens.
+	std::string EnsureDefaultLoadingScene() const;
+
 	// --- Audio delay orchestration ---
 	//
 	// AudioDelayFilter can't be attached to the live SCENE the way
@@ -511,12 +584,20 @@ public:
 
 private:
 #ifndef TRIGGLOW_CORE_ONLY
+	// EnsureDefaultLoadingScene()'s parts: an item fitted to the canvas,
+	// centred; the still under the video (added once, re-pointed each call).
+	static void FitLoadingItemToCanvas(obs_sceneitem_t *item);
+	static void EnsureDefaultLoadingStill(obs_scene_t *scene);
+#endif
+#ifndef TRIGGLOW_CORE_ONLY
 	// Must match obs_frontend_event_cb exactly: void(*)(enum obs_frontend_event, void*).
 	static void FrontendEventCallback(enum obs_frontend_event event, void *privateData);
 #else
 	// Core build: no frontend keeps the wrapper scene in its scene list, so the
 	// bridge holds a reference to it (EnsureBufferWrapperScene()) until Shutdown().
 	mutable obs_source_t *wrapperKeepAlive_ = nullptr;
+	// Same for the delayed scenes' holder (EnsureDelayedScenes()).
+	mutable obs_source_t *delayedScenesKeepAlive_ = nullptr;
 	// The outputs' "start" signal (core build): FrontendEvent::StreamingStarted
 	// on the controller thread, like OBS's STREAMING/RECORDING/REPLAY_BUFFER_STARTED.
 	static void OutputStartSignal(void *param, calldata_t *data);
@@ -563,6 +644,13 @@ private:
 	std::vector<OBSSourceAutoRelease> AudioFiltersFor(const std::string &liveSceneName) const;
 	// Drops activeAudioFilters_, unguarding each filter that still exists.
 	void ForgetActiveAudioFilters() const;
+	// The mirrors AttachMirrorFilters() kept, each with its own reference.
+	std::vector<OBSSourceAutoRelease> MirrorFilters() const;
+	// The main filter (BufferFilterFor) then every mirror: what the setters
+	// push their value into. Empty without the main filter.
+	std::vector<OBSSourceAutoRelease> AllBufferFilters(const std::string &liveSceneName) const;
+	// Switches off, empties and removes every mirror, then forgets them.
+	void DetachMirrorFilters() const;
 
 	// "enable" signal handler, connected to the delay filters while the delay
 	// keeps them on (ConnectGuard()): a guarded filter switched off from
@@ -583,6 +671,11 @@ private:
 	// its own strong reference, released when the vector goes away, so a
 	// child removed from the scene meanwhile can't be freed under the caller.
 	std::vector<OBSSourceAutoRelease> GetAudioCapableChildren(const std::string &liveSceneName) const;
+	// The same for several scenes, each source once.
+	std::vector<OBSSourceAutoRelease> GetAudioCapableChildrenOf(const std::vector<std::string> &scenes) const;
+	// v1.0.0: the RAM `sources` audio delay filters take per second of delay
+	// (OBS's channels x sample rate x 4 bytes each).
+	static uint64_t AudioBytesPerSecondFor(size_t sources);
 
 	FrontendEventHandler handler_;
 	OverlayImageProvider overlayImageProvider_;
@@ -593,6 +686,8 @@ private:
 	// releases it; null while the delay is off. Bookkeeping of the const
 	// setters that switch the filter, hence mutable. UI thread only.
 	mutable obs_weak_source_t *activeBufferFilter_ = nullptr;
+	// Mirror filters on other canvases (see AttachMirrorFilters()). UI thread.
+	mutable std::vector<obs_weak_source_t *> mirrorFilters_;
 	// GetBufferPipelineHealth() logged that the filter went away (once per
 	// activation).
 	mutable bool loggedBufferFilterGone_ = false;

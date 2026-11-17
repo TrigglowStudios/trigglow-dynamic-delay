@@ -16,6 +16,9 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -24,11 +27,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QPointer>
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+#include <QDockWidget>
+#include <QImage>
+#include <QTimer>
+#endif
 
 extern "C" {
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <plugin-support.h>
+#include <util/platform.h>
 }
 
 #ifdef TRIGGLOW_HAVE_FFMPEG
@@ -37,19 +47,24 @@ extern "C" {
 }
 #endif
 
+#include "apply-to.hpp"
 #include "audio-delay-filter.hpp"
 #include "auth-manager.hpp"
 #include "buffer-mode-controller.hpp"
 #include "bug-report.hpp"
+#include "delay-router.hpp"
+#include "delay-targets.hpp"
 #include "hotkeys.hpp"
 #include "i18n.hpp"
 #include "logging.hpp"
 #include "obs-frontend-bridge.hpp"
 #include "overlay-badge.hpp"
 #include "settings-ui.hpp"
+#include "stream-delay-controller.hpp"
 #include "ui-tasks.hpp"
 #include "ui-theme.hpp"
 #include "video-delay-filter.hpp"
+#include "websocket-vendor.hpp"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -69,6 +84,8 @@ constexpr const char *kComponent = "plugin-main";
 constexpr const char *kDockId = "trigglow_dynamic_delay_dock";
 constexpr const char *kDockTitle = "Trigglow Dynamic Delay";
 constexpr const char *kBufferSettingsFile = "buffer-mode-settings.json";
+// v1.0.0 stream mode: its own file, so scene mode's stays exactly as before.
+constexpr const char *kStreamSettingsFile = "stream-mode-settings.json";
 
 // All plugin-lifetime state lives in one place, constructed in
 // obs_module_load() and torn down in obs_module_unload(). No globals spread
@@ -95,12 +112,24 @@ struct PluginState {
 	// see docs/ACCOUNT_GATE.md for why this gate exists at all.
 	std::unique_ptr<trigglow::AuthManager> authManager;
 	std::unique_ptr<trigglow::BufferModeController> bufferController;
+	// v1.0.0 stream mode (the delay on the encoded stream, only when the
+	// streamer ticks "Apply the delay only to the stream") and the router the
+	// dock's button, the hotkeys and obs-websocket go through, to the selected
+	// mode only. The targets wrap the two controllers for the router.
+	std::unique_ptr<trigglow::StreamDelayController> streamController;
+	std::unique_ptr<trigglow::SceneDelayTarget> sceneTarget;
+	std::unique_ptr<trigglow::StreamDelayTarget> streamTarget;
+	std::unique_ptr<trigglow::DelayRouter> router;
 	std::unique_ptr<trigglow::DelayHotkeys> hotkeys;
 	// Not owned past AddDock(): OBS's dock system takes ownership of the
-	// QWidget once obs_frontend_add_dock_by_id() returns true. Kept here
-	// only as a non-owning reference for potential future use (e.g. forcing
-	// a refresh), never deleted from this side.
-	trigglow::TrigglowDelayDock *dock = nullptr;
+	// QWidget once obs_frontend_add_dock_by_id() returns true, and may destroy
+	// it first, hence the QPointer. Detached on unload, never deleted here.
+	QPointer<trigglow::TrigglowDelayDock> dock;
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local test builds only: StartDockShots(). Declared before the
+	// controllers' last use and destroyed first.
+	std::unique_ptr<QTimer> shotTimer;
+#endif
 	// False only when buffer-mode-settings.json exists, couldn't be parsed and
 	// couldn't be set aside either (see LoadBufferSettings): then the file is
 	// left untouched on exit instead of being replaced by the defaults.
@@ -109,7 +138,7 @@ struct PluginState {
 
 PluginState *g_state = nullptr;
 
-// Registers the bundled Archivo/Geist Mono (data/fonts) for the plugin's own
+// Registers the bundled Figtree/Geist Mono (data/fonts) for the plugin's own
 // widgets and the overlay -- never as OBS's UI font -- and logs ONE line
 // either way. Without them every role falls back to OBS's UI font.
 void LoadBrandFonts()
@@ -139,6 +168,22 @@ void LoadBrandFonts()
 	} else {
 		TRIGGLOW_LOG_INFO(kComponent, "brand fonts loaded from %s: %s", where.constData(), loaded.constData());
 	}
+}
+
+// The badge PNG both modes show: "DELAY 30 s", or only the Dynamic Delay mark
+// and name when the streamer turned the seconds off (one setting, kept by the
+// stream controller). UI thread.
+std::string BadgeImagePath(trigglow::ui::DelayBadgeFiles &files, uint32_t seconds)
+{
+	if (g_state && g_state->streamController && !g_state->streamController->OverlayShowSeconds())
+		return files
+			.BrandPath(QString::fromUtf8(Str("Overlay.Brand.Name")),
+				   QString::fromUtf8(Str("Overlay.Brand.Byline")))
+			.toStdString();
+	const QString label = QString::fromUtf8(Str("Overlay.Label"));
+	const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
+	const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
+	return files.PathFor(seconds, label, value, signature).toStdString();
 }
 
 // Moves an unreadable settings file out of the way (rename, or copy if that
@@ -270,6 +315,21 @@ bool LoadBufferSettings(trigglow::BufferModeController &controller)
 				loadingScene ? loadingScene : "", showOverlay,
 				static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")), bufferOutputCap,
 				codecWorkers, bufferCodecAuto);
+	// v1.0.0: the delayed scenes ("live_scenes"), live_scene being the first;
+	// a file from an earlier version has live_scene only.
+	if (obs_data_array_t *scenes = obs_data_get_array(data, "live_scenes")) {
+		std::vector<std::string> names;
+		for (size_t i = 0; i < obs_data_array_count(scenes); ++i) {
+			obs_data_t *item = obs_data_array_item(scenes, i);
+			const char *name = obs_data_get_string(item, "name");
+			if (name && *name)
+				names.emplace_back(name);
+			obs_data_release(item);
+		}
+		obs_data_array_release(scenes);
+		if (!names.empty())
+			controller.SetLiveScenes(std::move(names));
+	}
 
 	TRIGGLOW_LOG_INFO(kComponent,
 			  "settings loaded (delay=%us, min_res=%up, live=\"%s\", loading=\"%s\", output_cap=%s, "
@@ -298,6 +358,15 @@ void SaveBufferSettings(const trigglow::BufferModeController &controller)
 	obs_data_set_int(data, "delay_seconds", snapshot.delaySeconds);
 	obs_data_set_int(data, "min_resolution_height", snapshot.minResolutionHeight);
 	obs_data_set_string(data, "live_scene", snapshot.liveSceneName.c_str());
+	obs_data_array_t *scenes = obs_data_array_create();
+	for (const std::string &name : snapshot.liveSceneNames) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "name", name.c_str());
+		obs_data_array_push_back(scenes, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "live_scenes", scenes);
+	obs_data_array_release(scenes);
 	obs_data_set_string(data, "loading_scene", snapshot.loadingSceneName.c_str());
 	obs_data_set_bool(data, "show_overlay", snapshot.showOverlay);
 	obs_data_set_int(data, "overlay_corner", snapshot.overlayCorner);
@@ -316,6 +385,377 @@ void SaveBufferSettings(const trigglow::BufferModeController &controller)
 	// File name only: the full path carries the Windows user name.
 	TRIGGLOW_LOG_INFO(kComponent, "settings saved (%s in the plugin's OBS config folder)", kBufferSettingsFile);
 }
+
+QString ModuleConfigPath(const char *file)
+{
+	char *rawPath = obs_module_get_config_path(obs_current_module(), file);
+	QString path = rawPath ? QString::fromUtf8(rawPath) : QString();
+	bfree(rawPath);
+	return path;
+}
+
+// "apply_to" (apply-to.hpp): what the delay applies to. Missing: all of OBS.
+// 1.0 test builds saved "mode_enabled" (true by default) instead; 1.0 was never
+// released, so it is ignored and dropped on the next save: everyone starts on
+// all of OBS, the default.
+trigglow::ApplyTo ReadApplyTo(obs_data_t *data)
+{
+	obs_data_item_t *item = obs_data_item_byname(data, "apply_to");
+	trigglow::ApplyToType type = trigglow::ApplyToType::Missing;
+	std::string text;
+	if (item) {
+		if (obs_data_item_gettype(item) == OBS_DATA_STRING) {
+			type = trigglow::ApplyToType::String;
+			const char *value = obs_data_item_get_string(item);
+			text = value ? value : "";
+		} else {
+			type = trigglow::ApplyToType::Other;
+		}
+		obs_data_item_release(&item);
+	}
+	const trigglow::ApplyToSetting setting =
+		trigglow::ParseApplyTo(type, text, obs_data_has_user_value(data, "mode_enabled"));
+	if (setting.warn)
+		TRIGGLOW_LOG_WARN(kComponent,
+				  "\"apply_to\" in %s is neither \"all\" nor \"stream\" -- the delay applies to all of "
+				  "OBS",
+				  kStreamSettingsFile);
+	if (setting.droppedModeEnabled)
+		TRIGGLOW_LOG_INFO(kComponent,
+				  "%s: \"mode_enabled\" from a 1.0 test build ignored and dropped (apply_to=%s)",
+				  kStreamSettingsFile, trigglow::ApplyToName(setting.value));
+	return setting.value;
+}
+
+// Stream mode settings, and what the delay applies to. The stream goes only to
+// the streamer's own OBS service; a "destinations" array left by a 1.0
+// pre-release is ignored and dropped on the next save.
+void LoadStreamSettings(trigglow::StreamDelayController &controller)
+{
+	const QString path = ModuleConfigPath(kStreamSettingsFile);
+	if (path.isEmpty() || !QFileInfo::exists(path))
+		return;
+	obs_data_t *data = obs_data_create_from_json_file(path.toUtf8().constData());
+	if (!data) {
+		const QString setAside = SetAsideInvalidSettingsFile(path);
+		TRIGGLOW_LOG_WARN(kComponent, "settings file %s is not valid JSON -- %s; using defaults",
+				  kStreamSettingsFile, setAside.isEmpty() ? "left as is" : "moved aside");
+		return;
+	}
+	controller.SetApplyTo(ReadApplyTo(data));
+	if (obs_data_has_user_value(data, "delay_seconds"))
+		controller.SetDelaySeconds(static_cast<uint32_t>(obs_data_get_int(data, "delay_seconds")));
+	if (obs_data_has_user_value(data, "keep_seconds"))
+		controller.SetKeepSeconds(static_cast<uint32_t>(obs_data_get_int(data, "keep_seconds")));
+	if (obs_data_has_user_value(data, "drain_on_stop"))
+		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
+	// Missing (settings from before the choice) or unknown: Automatic.
+	controller.SetBufferStorage(trigglow::relay::ParseBufferStorage(obs_data_get_string(data, "buffer_storage")));
+	if (obs_data_has_user_value(data, "show_overlay"))
+		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
+	if (obs_data_has_user_value(data, "overlay_corner"))
+		controller.SetOverlayCorner(static_cast<uint32_t>(obs_data_get_int(data, "overlay_corner")));
+	// Both modes' badge. Missing (settings from before the choice): the seconds show.
+	if (obs_data_has_user_value(data, "overlay_show_seconds"))
+		controller.SetOverlayShowSeconds(obs_data_get_bool(data, "overlay_show_seconds"));
+	for (int i = 0; i < 3; ++i) {
+		const std::string key = "preset" + std::to_string(i + 1);
+		if (obs_data_has_user_value(data, key.c_str()))
+			controller.SetPreset(i, static_cast<uint32_t>(obs_data_get_int(data, key.c_str())));
+	}
+	std::vector<trigglow::SceneRule> rules;
+	if (obs_data_array_t *array = obs_data_get_array(data, "scene_rules")) {
+		const size_t count = obs_data_array_count(array);
+		for (size_t i = 0; i < count; ++i) {
+			obs_data_t *item = obs_data_array_item(array, i);
+			trigglow::SceneRule rule;
+			rule.scene = obs_data_get_string(item, "scene");
+			const long long action = obs_data_get_int(item, "action");
+			rule.action = action == 1   ? trigglow::SceneAction::DelayOn
+				      : action == 2 ? trigglow::SceneAction::DelayOff
+						    : trigglow::SceneAction::None;
+			rule.seconds = static_cast<uint32_t>(obs_data_get_int(item, "seconds"));
+			obs_data_release(item);
+			if (!rule.scene.empty())
+				rules.push_back(std::move(rule));
+		}
+		obs_data_array_release(array);
+	}
+	controller.SetSceneRules(std::move(rules));
+	obs_data_release(data);
+	TRIGGLOW_LOG_INFO(kComponent, "stream mode settings loaded (apply_to=%s, delay=%us, keep=%us, buffer %s)",
+			  trigglow::ApplyToName(controller.ApplyToChoice()), controller.DelaySeconds(),
+			  controller.KeepSeconds(),
+			  trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
+}
+
+void SaveStreamSettings(const trigglow::StreamDelayController &controller)
+{
+	const QString path = ModuleConfigPath(kStreamSettingsFile);
+	if (path.isEmpty())
+		return;
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	obs_data_t *data = obs_data_create();
+	obs_data_set_string(data, "apply_to", trigglow::ApplyToName(controller.ApplyToChoice()));
+	obs_data_set_int(data, "delay_seconds", controller.DelaySeconds());
+	obs_data_set_int(data, "keep_seconds", controller.KeepSeconds());
+	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
+	obs_data_set_string(data, "buffer_storage",
+			    trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
+	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
+	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
+	obs_data_set_bool(data, "overlay_show_seconds", controller.OverlayShowSeconds());
+	for (int i = 0; i < 3; ++i)
+		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
+	obs_data_array_t *rules = obs_data_array_create();
+	for (const trigglow::SceneRule &rule : controller.SceneRules()) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "scene", rule.scene.c_str());
+		obs_data_set_int(item, "action", static_cast<long long>(rule.action));
+		obs_data_set_int(item, "seconds", rule.seconds);
+		obs_data_array_push_back(rules, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "scene_rules", rules);
+	obs_data_array_release(rules);
+	obs_data_save_json_safe(data, path.toUtf8().constData(), "tmp", "bak");
+	obs_data_release(data);
+}
+
+// The dock shows one delay value and one badge for both modes. The modes keep
+// their own copies (each in its own settings file), so at load the mode that
+// isn't selected takes the selected one's; from then on the dock writes both
+// (the badge) or carries the seconds over when the streamer switches.
+void AlignSharedSettings(trigglow::BufferModeController &scene, trigglow::StreamDelayController &stream)
+{
+	const trigglow::BufferModeStatus s = scene.GetStatus();
+	if (stream.HandlesControls()) {
+		if (s.delaySeconds != stream.DelaySeconds())
+			scene.SetDelaySeconds(stream.DelaySeconds());
+		if (s.showOverlay != stream.ShowOverlay())
+			scene.SetShowOverlay(stream.ShowOverlay());
+		if (s.overlayCorner != stream.OverlayCorner())
+			scene.SetOverlayCorner(stream.OverlayCorner());
+	} else {
+		stream.SetDelaySeconds(s.delaySeconds);
+		stream.SetShowOverlay(s.showOverlay);
+		stream.SetOverlayCorner(s.overlayCorner);
+	}
+}
+
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+// Local test builds only (CMake refuses the option in CI): with
+// TRIGGLOW_TEST_DOCK_SHOTS=<folder> in OBS's environment, the plugin polls
+// <folder>/request.txt, runs its lines, then renames it to request.done:
+//   shot <name> <width> [open|closed] [height]
+//                               the dock rendered offscreen to <name>.png
+//                               (RenderForTest(); "open": sections open;
+//                               height: at least that tall)
+//   apply all|stream            what the delay applies to
+//   enable | disable            through the router, like a hotkey
+//   delay <seconds>             through the router
+//   stream start|stop           OBS's own Start/Stop Streaming
+//   canvas add <canvas> <scene> a second canvas (like Aitum Vertical's) with a
+//                               scene called <scene> holding a red color
+//                               source; its output's center pixel goes to
+//                               <folder>/canvas.log (ms r g b), ~20 a second
+//   canvas color red|blue|green that color source's color
+//   canvas remove               the canvas gone again
+// Screenshots of the dock at fixed widths without sending any input to any
+// window.
+struct TestCanvas {
+	obs_canvas_t *canvas = nullptr;
+	obs_scene_t *scene = nullptr;
+	obs_source_t *color = nullptr;
+	// A canvas only renders while something takes its video: this test
+	// output, like Aitum Vertical's stream or recording.
+	obs_output_t *probe = nullptr;
+	FILE *log = nullptr;
+	uint64_t lastNs = 0;
+};
+TestCanvas g_testCanvas;
+constexpr uint32_t kTestCanvasShotWidth = 64;
+constexpr uint32_t kTestCanvasShotHeight = 36;
+
+void TestCanvasFrame(void *param, struct video_data *frame)
+{
+	auto *tc = static_cast<TestCanvas *>(param);
+	const uint64_t now = os_gettime_ns();
+	if (!tc->log || now - tc->lastNs < 50000000ULL)
+		return;
+	tc->lastNs = now;
+	const uint8_t *px = frame->data[0] + static_cast<size_t>(frame->linesize[0]) * (kTestCanvasShotHeight / 2) +
+			    (kTestCanvasShotWidth / 2) * 4;
+	fprintf(tc->log, "%llu %d %d %d\n", static_cast<unsigned long long>(now / 1000000ULL), px[0], px[1], px[2]);
+	fflush(tc->log);
+}
+
+constexpr const char *kTestCanvasProbeId = "trigglow_test_canvas_probe";
+
+void RegisterTestCanvasProbe()
+{
+	obs_output_info info = {};
+	info.id = kTestCanvasProbeId;
+	info.flags = OBS_OUTPUT_VIDEO;
+	info.get_name = [](void *) -> const char * {
+		return "Trigglow test canvas probe";
+	};
+	info.create = [](obs_data_t *, obs_output_t *output) -> void * {
+		return output;
+	};
+	info.destroy = [](void *) {
+	};
+	info.start = [](void *data) -> bool {
+		auto *output = static_cast<obs_output_t *>(data);
+		video_scale_info conversion = {};
+		conversion.format = VIDEO_FORMAT_RGBA;
+		conversion.width = kTestCanvasShotWidth;
+		conversion.height = kTestCanvasShotHeight;
+		conversion.range = VIDEO_RANGE_FULL;
+		conversion.colorspace = VIDEO_CS_SRGB;
+		obs_output_set_video_conversion(output, &conversion);
+		return obs_output_begin_data_capture(output, 0);
+	};
+	info.stop = [](void *data, uint64_t) {
+		obs_output_end_data_capture(static_cast<obs_output_t *>(data));
+	};
+	info.raw_video = [](void *, struct video_data *frame) {
+		TestCanvasFrame(&g_testCanvas, frame);
+	};
+	obs_register_output(&info);
+}
+
+void SetTestCanvasColor(const QString &name)
+{
+	if (!g_testCanvas.color)
+		return;
+	// ABGR.
+	const long long color = name == QLatin1String("blue")    ? 0xFFFF0000LL
+				: name == QLatin1String("green") ? 0xFF00FF00LL
+								 : 0xFF0000FFLL;
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "color", color);
+	obs_source_update(g_testCanvas.color, settings);
+	obs_data_release(settings);
+}
+
+void RemoveTestCanvas()
+{
+	TestCanvas &tc = g_testCanvas;
+	if (!tc.canvas)
+		return;
+	if (tc.probe) {
+		obs_output_force_stop(tc.probe);
+		obs_output_release(tc.probe);
+	}
+	obs_canvas_set_channel(tc.canvas, 0, nullptr);
+	if (tc.color)
+		obs_source_release(tc.color);
+	if (tc.scene) {
+		obs_canvas_scene_remove(tc.scene);
+		obs_scene_release(tc.scene); // The reference obs_canvas_scene_create() gave.
+	}
+	obs_canvas_remove(tc.canvas);
+	obs_canvas_release(tc.canvas);
+	if (tc.log)
+		fclose(tc.log);
+	tc = TestCanvas{};
+}
+
+void AddTestCanvas(const QString &folder, const QString &canvasName, const QString &sceneName)
+{
+	RemoveTestCanvas();
+	TestCanvas &tc = g_testCanvas;
+	obs_video_info ovi = {};
+	obs_get_video_info(&ovi);
+	tc.canvas = obs_canvas_create(canvasName.toUtf8().constData(), &ovi, PROGRAM);
+	if (!tc.canvas) {
+		TRIGGLOW_LOG_WARN(kComponent, "test canvas: could not create it");
+		return;
+	}
+	tc.scene = obs_canvas_scene_create(tc.canvas, sceneName.toUtf8().constData());
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "width", ovi.base_width);
+	obs_data_set_int(settings, "height", ovi.base_height);
+	tc.color = obs_source_create("color_source_v3", "Trigglow test canvas color", settings, nullptr);
+	obs_data_release(settings);
+	SetTestCanvasColor(QStringLiteral("red"));
+	obs_scene_add(tc.scene, tc.color);
+	obs_canvas_set_channel(tc.canvas, 0, obs_scene_get_source(tc.scene));
+	tc.log = fopen((folder + QStringLiteral("/canvas.log")).toLocal8Bit().constData(), "w");
+	tc.probe = obs_output_create(kTestCanvasProbeId, "Trigglow test canvas probe", nullptr, nullptr);
+	bool connected = false;
+	if (tc.probe) {
+		obs_output_set_media(tc.probe, obs_canvas_get_video(tc.canvas), obs_get_audio());
+		connected = obs_output_start(tc.probe);
+	}
+	TRIGGLOW_LOG_INFO(kComponent, "test canvas \"%s\" with scene \"%s\" (video %s, output %s)",
+			  canvasName.toUtf8().constData(), sceneName.toUtf8().constData(),
+			  obs_canvas_has_video(tc.canvas) ? "yes" : "no", connected ? "connected" : "NOT connected");
+}
+
+void StartDockShots()
+{
+	const char *dir = std::getenv("TRIGGLOW_TEST_DOCK_SHOTS");
+	if (!dir || !*dir)
+		return;
+	TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: dock shots on request");
+	RegisterTestCanvasProbe();
+	const QString folder = QString::fromUtf8(dir);
+	g_state->shotTimer = std::make_unique<QTimer>();
+	QObject::connect(g_state->shotTimer.get(), &QTimer::timeout, [folder] {
+		if (!g_state || !g_state->dock)
+			return;
+		QFile file(folder + QStringLiteral("/request.txt"));
+		if (!file.exists() || !file.open(QIODevice::ReadOnly))
+			return;
+		const QStringList lines =
+			QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+		file.close();
+		QFile::remove(folder + QStringLiteral("/request.done"));
+		file.rename(folder + QStringLiteral("/request.done"));
+		// The dock may sit in a hidden dock widget in a fresh profile.
+		if (auto *dockWidget = qobject_cast<QDockWidget *>(g_state->dock->parentWidget()))
+			dockWidget->setVisible(true);
+		for (const QString &line : lines) {
+			const QStringList w = line.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+			if (w.isEmpty())
+				continue;
+			TRIGGLOW_LOG_INFO(kComponent, "test request: %s", line.trimmed().toUtf8().constData());
+			if (w[0] == QLatin1String("shot") && w.size() >= 3) {
+				const QImage image = g_state->dock->RenderForTest(
+					w[2].toInt(), w.size() > 3 && w[3] == QLatin1String("open"),
+					w.size() > 4 ? w[4].toInt() : 0);
+				image.save(folder + QLatin1Char('/') + w[1] + QStringLiteral(".png"));
+			} else if (w[0] == QLatin1String("apply") && w.size() >= 2) {
+				g_state->streamController->SetApplyTo(w[1] == QLatin1String("stream")
+									      ? trigglow::ApplyTo::Stream
+									      : trigglow::ApplyTo::All);
+				SaveStreamSettings(*g_state->streamController);
+			} else if (w[0] == QLatin1String("enable")) {
+				g_state->router->Enable();
+			} else if (w[0] == QLatin1String("disable")) {
+				g_state->router->Disable();
+			} else if (w[0] == QLatin1String("delay") && w.size() >= 2) {
+				g_state->router->SetDelay(static_cast<uint32_t>(w[1].toUInt()));
+			} else if (w[0] == QLatin1String("stream") && w.size() >= 2) {
+				if (w[1] == QLatin1String("start"))
+					obs_frontend_streaming_start();
+				else
+					obs_frontend_streaming_stop();
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 4 && w[1] == QLatin1String("add")) {
+				AddTestCanvas(folder, w[2], w[3]);
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 3 && w[1] == QLatin1String("color")) {
+				SetTestCanvasColor(w[2]);
+			} else if (w[0] == QLatin1String("canvas") && w.size() >= 2 &&
+				   w[1] == QLatin1String("remove")) {
+				RemoveTestCanvas();
+			}
+		}
+	});
+	g_state->shotTimer->start(300);
+}
+#endif
 
 } // namespace
 
@@ -372,10 +812,7 @@ bool obs_module_load(void)
 			std::make_unique<trigglow::ui::DelayBadgeFiles>(rawDir ? QString::fromUtf8(rawDir) : QString());
 		bfree(rawDir);
 		g_state->bridge.SetOverlayImageProvider([files = g_state->badgeFiles.get()](uint32_t seconds) {
-			const QString label = QString::fromUtf8(Str("Overlay.Label"));
-			const QString value = QString::fromUtf8(Str("Overlay.Value")).arg(seconds);
-			const QString signature = QString::fromUtf8(Str("Overlay.Signature"));
-			return files->PathFor(seconds, label, value, signature).toStdString();
+			return BadgeImagePath(*files, seconds);
 		});
 	}
 
@@ -407,22 +844,79 @@ bool obs_module_load(void)
 	// A suspended or inactive account (HTTP 403 from the server) blocks it too.
 	g_state->bufferController->SetAuthorizationCheck(
 		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI): scene
+	// mode's gate, with the same environment variable as stream mode's.
+	if (const char *skipScene = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE");
+	    skipScene && std::strcmp(skipScene, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: scene mode's account gate is skipped");
+		g_state->bufferController->SetAuthorizationCheck(nullptr);
+	}
+#endif
 
 	g_state->saveSettingsOnExit = LoadBufferSettings(*g_state->bufferController);
 
-	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->bufferController);
+	// v1.0.0 stream mode: same free-account gate as scene mode.
+	g_state->streamController = std::make_unique<trigglow::StreamDelayController>();
+	g_state->streamController->SetAuthorizationCheck(
+		[auth = g_state->authManager.get()] { return auth->CanEnable(); });
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local end-to-end test builds only (CMake refuses the option in CI).
+	if (const char *skip = std::getenv("TRIGGLOW_TEST_SKIP_ACCOUNT_GATE"); skip && std::strcmp(skip, "1") == 0) {
+		TRIGGLOW_LOG_WARN(kComponent, "TEST BUILD: stream mode's account gate is skipped");
+		g_state->streamController->SetAuthorizationCheck(nullptr);
+	}
+#endif
+	g_state->streamController->SetOverlayImageProvider(
+		[files = g_state->badgeFiles.get()](uint32_t seconds) { return BadgeImagePath(*files, seconds); });
+	LoadStreamSettings(*g_state->streamController);
+	g_state->streamController->Init();
+	AlignSharedSettings(*g_state->bufferController, *g_state->streamController);
+	g_state->sceneTarget =
+		std::make_unique<trigglow::SceneDelayTarget>(*g_state->bufferController, *g_state->streamController);
+	g_state->streamTarget = std::make_unique<trigglow::StreamDelayTarget>(*g_state->streamController);
+	g_state->router = std::make_unique<trigglow::DelayRouter>(*g_state->sceneTarget, *g_state->streamTarget,
+								  [stream = g_state->streamController.get()] {
+									  return stream->HandlesControls();
+								  });
+
+	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->router);
 	g_state->hotkeys->Init();
 
-	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->authManager);
+	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->streamController,
+						     *g_state->router, *g_state->authManager);
 	g_state->dock = dock;
+	dock->SetSettingsChanged([] {
+		if (g_state && g_state->streamController)
+			SaveStreamSettings(*g_state->streamController);
+	});
+	g_state->streamController->SetStatusCallback([] {
+		if (!g_state)
+			return;
+		if (g_state->dock)
+			g_state->dock->OnStreamStatusChanged();
+		trigglow::websocket::NotifyStatus();
+	});
 	g_state->bridge.AddDock(kDockId, kDockTitle, dock);
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	StartDockShots();
+#endif
 
 	TRIGGLOW_LOG_INFO(kComponent, "loaded successfully");
 	return true;
 }
 
+// obs-websocket registers its plugin API while it loads, after this module's
+// obs_module_load(): the vendor requests go in here.
+void obs_module_post_load(void)
+{
+	if (g_state && g_state->router)
+		trigglow::websocket::Register(*g_state->router);
+}
+
 void obs_module_unload(void)
 {
+	trigglow::websocket::Unregister();
 	// Before anything is torn down: aborts every network call still in
 	// flight (a Trigi answer can take up to 90 s), drops every result not yet
 	// delivered and waits for those threads, at most 2 s in all. Nothing of
@@ -432,6 +926,9 @@ void obs_module_unload(void)
 
 	if (!g_state)
 		return;
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	g_state->shotTimer.reset();
+#endif
 
 	if (g_state->saveSettingsOnExit)
 		SaveBufferSettings(*g_state->bufferController);
@@ -440,6 +937,15 @@ void obs_module_unload(void)
 	// back into.
 	if (g_state->hotkeys)
 		g_state->hotkeys->Shutdown();
+	// Cuts the relay (and whatever it was still sending) and joins its threads.
+	if (g_state->streamController) {
+		SaveStreamSettings(*g_state->streamController);
+		g_state->streamController->SetStatusCallback(nullptr);
+		g_state->streamController->Shutdown();
+	}
+	if (g_state->dock)
+		g_state->dock->Detach();
+	g_state->dock = nullptr;
 	// Cancels any in-flight login poll timer before teardown (its network
 	// calls already ended above) -- see AuthManager::Shutdown().
 	if (g_state->authManager)

@@ -13,7 +13,7 @@ include(buildspec_common)
 # OBS is refused. Only built as something to compile and link against; the
 # package never ships them. Qt comes from the distro (Ubuntu 24.04's Qt 6.4,
 # the oldest the package declares), FFmpeg is the plugin's own static build
-# (.github/scripts/linux/build-ffmpeg.sh).
+# (.github/scripts/build-ffmpeg.sh).
 function(_check_dependencies_linux)
   set(arch ${CMAKE_SYSTEM_PROCESSOR})
   set(platform linux-${arch})

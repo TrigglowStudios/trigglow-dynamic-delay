@@ -486,7 +486,198 @@ Response Send(const Request &req)
 
 } // namespace trigglow::http
 
-#else // !_WIN32
+#elif defined(TRIGGLOW_HAVE_CURL) // !_WIN32, v1.0.0
+
+// macOS and Linux: libcurl (the system's on macOS, the distro's on Linux; OBS
+// itself depends on it), with the same rules as the WinHTTP path above:
+// HTTPS on 443 only, TLS 1.2+, no redirects, no cookies, capped body,
+// header values without CR/LF, cancellable, nothing logged.
+
+#include <curl/curl.h>
+
+#include <algorithm>
+#include <mutex>
+
+namespace trigglow::http {
+
+namespace {
+
+struct CurlCall {
+	const Request *request = nullptr;
+	Response *response = nullptr;
+	bool tooLarge = false;
+};
+
+size_t OnBody(char *data, size_t size, size_t count, void *param)
+{
+	auto *call = static_cast<CurlCall *>(param);
+	const size_t bytes = size * count;
+	if (call->response->body.size() + bytes > call->request->maxResponseBytes) {
+		call->tooLarge = true;
+		return 0; // Aborts the transfer.
+	}
+	call->response->body.append(data, bytes);
+	return bytes;
+}
+
+size_t OnHeader(char *data, size_t size, size_t count, void *param)
+{
+	auto *call = static_cast<CurlCall *>(param);
+	const size_t bytes = size * count;
+	const std::string line(data, bytes);
+	constexpr char kRetryAfter[] = "retry-after:";
+	constexpr size_t kLen = sizeof(kRetryAfter) - 1;
+	if (line.size() > kLen) {
+		std::string head = line.substr(0, kLen);
+		for (char &c : head)
+			c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+		if (head == kRetryAfter) {
+			std::string value = line.substr(kLen);
+			while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+				value.erase(value.begin());
+			while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' '))
+				value.pop_back();
+			call->response->retryAfter = value;
+		}
+	}
+	return bytes;
+}
+
+int OnProgress(void *param, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+	auto *call = static_cast<CurlCall *>(param);
+	return (call->request->cancel && call->request->cancel->IsCancelled()) ? 1 : 0;
+}
+
+bool HasLineBreak(const std::string &s)
+{
+	return s.find('\r') != std::string::npos || s.find('\n') != std::string::npos;
+}
+
+Error MapError(CURLcode code)
+{
+	switch (code) {
+	case CURLE_COULDNT_RESOLVE_HOST:
+		return Error::Resolve;
+	case CURLE_COULDNT_CONNECT:
+		return Error::Connect;
+	case CURLE_OPERATION_TIMEDOUT:
+		return Error::Timeout;
+	case CURLE_ABORTED_BY_CALLBACK:
+		return Error::Cancelled;
+	case CURLE_SSL_CONNECT_ERROR:
+	case CURLE_PEER_FAILED_VERIFICATION:
+	case CURLE_SSL_CERTPROBLEM:
+	case CURLE_SSL_CIPHER:
+	case CURLE_SSL_CACERT_BADFILE:
+		return Error::Tls;
+	default:
+		return Error::Other;
+	}
+}
+
+} // namespace
+
+bool Available()
+{
+	static std::once_flag once;
+	static bool ok = false;
+	std::call_once(once, [] { ok = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK; });
+	return ok;
+}
+
+Response Send(const Request &req)
+{
+	Response result;
+	if (!Available()) {
+		result.error = Error::Unavailable;
+		return result;
+	}
+	bool invalid = req.host.empty() || HasLineBreak(req.host) || HasLineBreak(req.path) ||
+		       HasLineBreak(req.method) || HasLineBreak(req.userAgent);
+	for (const Header &h : req.headers)
+		invalid = invalid || h.name.empty() || HasLineBreak(h.name) || HasLineBreak(h.value);
+	if (invalid) {
+		result.error = Error::Invalid;
+		return result;
+	}
+	if (req.cancel && req.cancel->IsCancelled()) {
+		result.error = Error::Cancelled;
+		return result;
+	}
+
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		result.error = Error::Other;
+		return result;
+	}
+	CurlCall call{&req, &result, false};
+	const std::string url = "https://" + req.host + ":443" + (req.path.empty() ? "/" : req.path);
+	curl_slist *headers = nullptr;
+	for (const Header &h : req.headers)
+		headers = curl_slist_append(headers, (h.name + ": " + h.value).c_str());
+	// No "Expect: 100-continue" round trip on uploads.
+	headers = curl_slist_append(headers, "Expect:");
+
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+#if LIBCURL_VERSION_NUM >= 0x075500
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+#else // macOS 12's libcurl 7.79.
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS, static_cast<long>(CURLPROTO_HTTPS));
+#endif
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+	curl_easy_setopt(curl, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_2));
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, req.userAgent.c_str());
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
+	if (!req.body.empty()) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req.body.data());
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(req.body.size()));
+	}
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
+			 static_cast<long>(req.timeouts.resolveMs + req.timeouts.connectMs));
+	if (req.timeouts.totalMs > 0)
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(req.timeouts.totalMs));
+	// No progress for the send/receive timeout: libcurl's low-speed limit.
+	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME,
+			 static_cast<long>((std::max(req.timeouts.receiveMs, req.timeouts.sendMs) + 999) / 1000));
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, OnBody);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &call);
+	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, OnHeader);
+	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &call);
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, OnProgress);
+	curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &call);
+
+	const CURLcode code = curl_easy_perform(curl);
+	long status = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	result.systemError = static_cast<unsigned long>(code);
+	if (call.tooLarge) {
+		result.error = Error::TooLarge;
+		result.body.clear();
+		return result;
+	}
+	if (code != CURLE_OK) {
+		result.error = MapError(code);
+		result.body.clear();
+		return result;
+	}
+	result.status = static_cast<int>(status);
+	result.error = Error::None;
+	return result;
+}
+
+} // namespace trigglow::http
+
+#else // Neither WinHTTP nor libcurl: the standalone unit tests on Linux/macOS.
 
 namespace trigglow::http {
 

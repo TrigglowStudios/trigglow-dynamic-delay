@@ -19,11 +19,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <QElapsedTimer>
+#include <QImage>
 #include <QLocale>
 #include <QPointer>
 #include <QString>
 #include <QWidget>
 
+#include <functional>
+#include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -34,6 +38,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QLabel;
 class QSpinBox;
 class QBoxLayout;
+class QVBoxLayout;
 class QCheckBox;
 class QComboBox;
 class QFrame;
@@ -42,20 +47,26 @@ class QPushButton;
 class QTimer;
 class QResizeEvent;
 
-// TrigglowDelayDock is the plugin's main Qt view. It is a thin view
-// over BufferModeController: every button click calls straight into the
-// controller's public methods, and the dock repaints itself whenever the
-// controller reports a status change — the exact same callback path used
-// after a hotkey press, so the dock and the hotkeys can never show
-// inconsistent state.
+// TrigglowDelayDock is the plugin's dock: since v1.0.0 ONE panel for both
+// delay engines. By default the delay applies to all of OBS (scene mode,
+// BufferModeController): the loading scene shows while the buffer fills, then
+// Program, the stream AND the recording are delayed. One advanced check box,
+// "Apply the delay only to the stream" (apply-to.hpp), switches to stream
+// mode (StreamDelayController): only the platform gets the delay, recording
+// and preview stay live.
 //
-// Buffer mode (no-reconnect delay, issue #173) only, as of 2026-08-24 —
-// reconnect mode (native obs_output_set_delay, DelayController) is no
-// longer wired into the dock or hotkeys after live testing confirmed
-// buffer mode works well and having two mechanisms + a mode selector was
-// confusing for a non-technical streamer. DelayController/its hotkeys
-// aren't deleted from the repo (may come back), just not instantiated —
-// see plugin-main.cpp.
+// Top to bottom: the update banner, the status card (one state for the
+// selected mode), the account card, the one "Turn delay on" / "Turn delay off"
+// button, the delay card (seconds, -5/+5, presets), the scenes card (all of
+// OBS only), stream mode's "Settings to check", and the folded sections
+// (Delay by scene, Hotkey presets, Options with the advanced check box), then
+// the footer. The button goes through DelayRouter, like the hotkeys and the
+// Stream Deck, so all of them drive the selected mode only.
+//
+// It is a thin view: every control calls the controllers (or the router), and
+// the dock repaints from their status -- the same callbacks a hotkey press
+// fires, so the dock and the hotkeys can never disagree. Stream mode's own
+// parts are built and refreshed in settings-ui-stream.cpp.
 //
 // Look: ui-theme.hpp (tokens from OBS's palette, brand fonts, SVG icons), one
 // style sheet set on the dock and recomputed when OBS switches theme. Widgets
@@ -64,20 +75,42 @@ class QResizeEvent;
 //
 // Ownership: once passed to ObsFrontendBridge::AddDock() ->
 // obs_frontend_add_dock_by_id(), OBS's dock system owns this widget's
-// lifetime. plugin-main.cpp must not delete it manually.
+// lifetime. plugin-main.cpp must not delete it manually; it calls Detach()
+// before the controllers go away.
 namespace trigglow {
 
 class SceneComboBox;
 class AuthManager;
+class DelayRouter;
 class FieldIcon;
+class StreamDelayController;
+struct StreamDelayStatus;
 struct UpdateCheckResult;
 
 class TrigglowDelayDock : public QWidget {
 	Q_OBJECT
 
 public:
-	explicit TrigglowDelayDock(BufferModeController &bufferController, AuthManager &authManager,
-				   QWidget *parent = nullptr);
+	TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
+			  DelayRouter &router, AuthManager &authManager, QWidget *parent = nullptr);
+
+	// Settings changed through the dock that live in stream-mode-settings.json
+	// (what the delay applies to, presets, scene rules...), to persist them.
+	void SetSettingsChanged(std::function<void()> callback) { onSettingsChanged_ = std::move(callback); }
+	// Stream mode's status changed (its controller's status callback).
+	void OnStreamStatusChanged();
+	// Stops every timer and makes every refresh a no-op: called on module
+	// unload, before the controllers go away, when OBS hasn't destroyed the
+	// dock yet.
+	void Detach();
+
+#ifdef TRIGGLOW_TEST_SKIP_ACCOUNT_GATE
+	// Local test builds only (plugin-main.cpp's dock shots): the dock's
+	// content rendered offscreen at `width` logical px on the dock's
+	// background, with the folded sections open or not. Never shown, never
+	// sends input anywhere.
+	QImage RenderForTest(int width, bool sectionsOpen, int minHeight = 0);
+#endif
 
 	// Recomputes tokens, fonts and icons from the application palette (OBS's
 	// active theme). Wired to OBS_FRONTEND_EVENT_THEME_CHANGED and to palette
@@ -92,7 +125,87 @@ protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+	// A collapsible section: a header button (chevron, title, count chip)
+	// over a body that hides when folded; `box` holds both.
+	struct Section {
+		QWidget *box = nullptr;
+		QPushButton *header = nullptr;
+		QLabel *count = nullptr;
+		QWidget *body = nullptr;
+		bool open = false;
+		// Shown in the header's chip while folded ("30 s", the live scene).
+		QString summary;
+	};
+	// One scene rule (stream mode): scene, action, seconds, remove.
+	// v1.0.0: a delayed scene after the first one: its picker and a remove button.
+	struct ExtraSceneRow {
+		QWidget *row = nullptr;
+		SceneComboBox *combo = nullptr;
+		QPushButton *remove = nullptr;
+	};
+	struct RuleRow {
+		QFrame *card = nullptr;
+		QComboBox *scene = nullptr;
+		QComboBox *action = nullptr;
+		QSpinBox *seconds = nullptr;
+		QPushButton *remove = nullptr;
+	};
+
 	void BuildUi();
+	// Small builders: a field label above its control, the lock inside a
+	// locked field, an icon + hint line (hidden until shown), and a check box
+	// with a wrapping label.
+	QLabel *MakeEyebrow(const QString &text, QWidget *buddy, QWidget *parent = nullptr);
+	void AddFieldLock(QWidget *field);
+	QWidget *MakeNoteRow(QWidget *parent, QLabel *&icon, const QString &text);
+	QWidget *MakeCheckRow(QWidget *parent, QCheckBox *&check, QLabel *&text, const QString &label);
+	QFrame *BuildDelayCard();
+	QFrame *BuildScenesCard();
+	void BuildOptions(QVBoxLayout *body);
+	Section *AddSection(QVBoxLayout *parent, const QString &title, bool open);
+	void SetSectionOpen(Section &section, bool open);
+	void SetSectionSummary(Section &section, const QString &summary);
+	void BuildPresets(QVBoxLayout *body);
+	// settings-ui-stream.cpp: stream mode's parts.
+	void BuildStreamStatusRows(QVBoxLayout *body);
+	QFrame *BuildWarningsCard();
+	void BuildRules(QVBoxLayout *body);
+	QWidget *BuildBufferBlock(QWidget *host);
+	void AddRuleRow(const std::string &scene, int action, int seconds);
+	void RemoveRuleRow(QFrame *card);
+	void RulesChanged();
+	void RefreshStreamStatus(const StreamDelayStatus &status);
+	void RefreshDestination(const StreamDelayStatus &status);
+	void RefreshWarnings(const StreamDelayStatus &status);
+	void RefreshBuffer(const StreamDelayStatus &status);
+	// Rules for components only this dock has (section headers, preset chips,
+	// the 5 s steps, icon buttons), from the same tokens.
+	QString ExtraStyleSheet() const;
+
+	// True while the controls go to stream mode ("only the stream" ticked
+	// and stream mode can run here): what the dock shows.
+	bool StreamOnly() const;
+	// The advanced check box: switches the mode, carrying the seconds over so
+	// the delay card keeps showing one value.
+	void SetApplyToStream(bool streamOnly);
+	// Shows the parts of the selected mode and hides the other's.
+	void ApplyModeVisibility(bool streamOnly);
+	void SettingsChanged();
+	// The whole dock from both controllers' status.
+	void Refresh();
+	void RefreshSceneStatus(const BufferModeStatus &status);
+	void RefreshSceneFields(const BufferModeStatus &status);
+	// v1.0.0, several delayed scenes: a picker row under the first one, its
+	// removal, the list written to the controller, and the rows and the
+	// switch buttons brought in line with the status.
+	void AddExtraSceneRow(const std::string &scene);
+	void RemoveExtraSceneRow(QWidget *row);
+	void DelayedScenesChanged();
+	void RefreshDelayedScenes(const BufferModeStatus &status);
+	void RefreshDelayCard(uint32_t delaySeconds, bool streamOnly);
+	void RefreshApplyTo(const BufferModeStatus &scene, const StreamDelayStatus &stream);
+	void GuardWheel(QWidget *field);
+
 	void resizeEvent(QResizeEvent *event) override;
 	// Tags `widget` with a QSS role (tgRole) and remembers its font role, so
 	// ApplyTheme() can re-apply capitalization/letter spacing on theme change.
@@ -109,9 +222,10 @@ private:
 	void FitUpdateBanner();
 	// Icons that don't depend on state (banner, footer, buttons).
 	void ApplyStaticIcons();
-	// On a real state change, announces `message` (headline and detail) to
-	// screen readers -- assertively for errors.
-	void AnnounceStatus(BufferModeState state, const QString &message);
+	// On a real state change (`state` names it, per mode), announces
+	// `message` (headline and detail) to screen readers -- assertively for
+	// errors.
+	void AnnounceStatus(const QString &state, bool error, const QString &message);
 	// A QAccessibleAnnouncementEvent on the status card (Qt 6.8+; earlier Qt
 	// has no such event and this does nothing), only while a screen reader
 	// is active.
@@ -120,7 +234,6 @@ private:
 	// Reflows rows that don't fit side by side at the current dock width.
 	void ApplyNarrowLayout(int width);
 	void OnStatusChanged(const BufferModeStatus &status);
-	void RefreshFromStatus(const BufferModeStatus &status);
 
 	// Degradation notice (v0.6.0): asks BufferModeController::GetPipelineHealth()
 	// (cheap, never blocks on the graphics thread) whether the buffer runs
@@ -146,7 +259,9 @@ private:
 	// window -- when BufferModeStatus::fillGeneration changes while Filling --
 	// for the seconds that window has to fill (same pattern DelayController's
 	// own apply watchdog used).
-	void ArmFillTimer(uint32_t seconds);
+	// v1.0.0: in ms (BufferModeStatus::fillWindowMs): a live raise fills only
+	// its extra seconds, a change while Filling what's left of the window.
+	void ArmFillTimer(uint32_t milliseconds);
 	void DisarmFillTimer();
 
 	// Live "18 s left" countdown + progress bar shown while Filling --
@@ -155,7 +270,7 @@ private:
 	// indication of how much longer, which is exactly the kind of silent
 	// wait a user has no way to distinguish from the plugin being stuck.
 	// Ticks fillProgressTimer_ against fillElapsed_/fillTotalSeconds_;
-	// doesn't touch anything RefreshFromStatus already owns (color,
+	// doesn't touch anything RefreshSceneStatus already owns (color,
 	// controls-enabled state) since no real status change is happening,
 	// just the passage of time within the same Filling status.
 	void UpdateFillProgress();
@@ -202,14 +317,21 @@ private:
 	void ShowUpdateNotice(const UpdateCheckResult &result);
 
 	BufferModeController &bufferController_;
+	StreamDelayController &streamController_;
+	DelayRouter &router_;
 	AuthManager &authManager_;
+	std::function<void()> onSettingsChanged_;
+	bool detached_ = false;
+	// Set while Refresh() writes values into the controls, so their change
+	// signals don't write them back.
+	bool refreshing_ = false;
 
 	ui::Theme theme_;
 	bool themeApplied_ = false;
 	bool applyingTheme_ = false;
 	std::vector<std::pair<QPointer<QWidget>, ui::FontRole>> fontRoles_;
 	bool hasAnnouncedState_ = false;
-	BufferModeState announcedState_ = BufferModeState::Inactive;
+	QString announcedState_;
 
 	// Status card: eyebrow + seconds chip, icon + headline, detail, and while
 	// Filling a 4 px progress bar with "12 / 30 s" and "18 s left".
@@ -223,6 +345,19 @@ private:
 	QProgressBar *fillBar_ = nullptr;
 	QLabel *fillProgressLabel_ = nullptr;
 	QLabel *fillRemainingLabel_ = nullptr;
+	// Stream mode only: where it sends (the streamer's OBS service, with the
+	// relay's state while it runs), the relay's stats, the scene rule applied
+	// last and the last problem.
+	QWidget *sendsRow_ = nullptr;
+	QLabel *sendsLabel_ = nullptr;
+	QLabel *sendsState_ = nullptr;
+	QLabel *statsLabel_ = nullptr;
+	QWidget *ruleRow_ = nullptr;
+	QLabel *ruleIcon_ = nullptr;
+	QLabel *ruleLabel_ = nullptr;
+	QWidget *noticeRow_ = nullptr;
+	QLabel *noticeIcon_ = nullptr;
+	QLabel *noticeLabel_ = nullptr;
 	// "Status: Delay on. Viewers see..." without the degradation notice.
 	QString statusAccessibleName_;
 	// Degradation notice (see RefreshPipelineHealth()): a hairline, the
@@ -238,30 +373,67 @@ private:
 	// The cause the notice gave last (None while hidden): a new cause is
 	// announced, a new rung for the same cause isn't.
 	PipelineLoad healthCause_ = PipelineLoad::None;
+	// All of OBS only: the live and loading scene pickers.
+	QFrame *scenesCard_ = nullptr;
+	// Other-canvas notice (RefreshFitEstimate()): its own card under the
+	// status card, amber rule and title, shown whenever a delayed scene also
+	// lives on another canvas (Aitum Vertical...) -- the delay then runs a
+	// second video buffer there, about twice the RAM, CPU and GPU.
+	QFrame *canvasNotice_ = nullptr;
+	QLabel *canvasIcon_ = nullptr;
+	QLabel *canvasTitle_ = nullptr;
+	QLabel *canvasBody_ = nullptr;
 	SceneComboBox *liveSceneCombo_ = nullptr;
 	SceneComboBox *loadingSceneCombo_ = nullptr;
+	// Delay card: the seconds of the selected mode (1-600, live), 5 s steps
+	// and the three presets as quick picks.
 	QSpinBox *secondsSpin_ = nullptr;
-	// "Turn the delay off to change it.": shown under the delay | quality row
-	// while both are locked (Filling, Active).
+	QPushButton *lessButton_ = nullptr;
+	QPushButton *moreButton_ = nullptr;
+	QBoxLayout *chipRow_ = nullptr;
+	QPushButton *presetChips_[3] = {nullptr, nullptr, nullptr};
+	// "Turn the delay off to change the scenes or the minimum quality.": shown
+	// under the scene pickers while those are locked (Filling, Active).
+	// v1.0.0: the seconds stay editable, the delay changes live.
 	QWidget *delayLockedRow_ = nullptr;
 	QLabel *delayLockedIcon_ = nullptr;
-	// (field, lock): the lock drawn inside the live/loading scene pickers, the
-	// seconds and the quality while they're locked (Filling, Active), where
-	// their arrows were.
+	// v1.0.0: while the delay runs, that switching scenes needs stream mode
+	// (scene mode delays the live scene only).
+	QWidget *sceneSwitchRow_ = nullptr;
+	QLabel *sceneSwitchIcon_ = nullptr;
+	QLabel *sceneSwitchText_ = nullptr;
+	// v1.0.0, several delayed scenes: the pickers after the first one, "Add
+	// scene" (up to BufferModeController::kMaxDelayedScenes), and while the
+	// delay runs one button per delayed scene to put it in the delay.
+	std::vector<ExtraSceneRow> extraSceneRows_;
+	QVBoxLayout *extraScenesList_ = nullptr;
+	QPushButton *addSceneButton_ = nullptr;
+	QWidget *switchBlock_ = nullptr;
+	QVBoxLayout *switchList_ = nullptr;
+	std::vector<QPushButton *> switchButtons_;
+	std::vector<std::string> switchNames_; // What switchButtons_ were built for.
+	// (field, lock): the lock drawn inside the live/loading scene pickers and
+	// the quality while they're locked (Filling, Active), where their arrows
+	// were.
 	std::vector<std::pair<QWidget *, FieldIcon *>> fieldLocks_;
 	// "Calidad minima" -- floor on the delayed video's resolution; see
 	// BufferModeStatus::minResolutionHeight / VideoDelayFilter::EnsureRingSized.
+	// In Options with the RAM estimate, all of OBS only (qualityBlock_).
+	QWidget *qualityBlock_ = nullptr;
 	QComboBox *minResolutionCombo_ = nullptr;
-	// "Show overlay" -- BufferModeStatus::showOverlay (the "Delay 30s" text
-	// shown on the delayed output while Active).
+	// The delay badge ("Delay 30 s" on what viewers see while the delay is
+	// on): one check box and one corner for both modes, written to both
+	// controllers.
 	QCheckBox *overlayCheck_ = nullptr;
 	// The check box's text, as a word-wrapping label (a QCheckBox can't wrap,
 	// which pushed narrow docks wider than their window). Clicking it toggles.
 	QLabel *overlayText_ = nullptr;
 	QComboBox *overlayCornerCombo_ = nullptr; // Which canvas corner the overlay sits in.
+	// "Show the seconds on the badge": off leaves only the mark and the name.
+	QCheckBox *overlaySecondsCheck_ = nullptr;
+	QLabel *overlaySecondsText_ = nullptr;
 	// Rows that reflow to a column when the dock is narrow -- see ApplyNarrowLayout().
 	QBoxLayout *accountLayout_ = nullptr; // Text | inline button; stacked when narrow.
-	QBoxLayout *tuningRow_ = nullptr;
 	QBoxLayout *buttonRow_ = nullptr;
 	QBoxLayout *footerRow_ = nullptr;
 	// Shows what secondsSpin_/minResolutionCombo_'s current combo would
@@ -280,7 +452,58 @@ private:
 	QLabel *reqSceneIcon_ = nullptr;
 	QLabel *reqSceneText_ = nullptr;
 	QLabel *hintLabel_ = nullptr;
+	// Stream mode: drop what viewers haven't seen yet, and stop sending the
+	// last seconds after OBS stopped.
+	QPushButton *dumpButton_ = nullptr;
+	QPushButton *cutButton_ = nullptr;
 	QTimer *fillTimer_ = nullptr;
+
+	// Stream mode's "Settings to check": its own amber card, opened the first
+	// time something shows up.
+	QFrame *warningsCard_ = nullptr;
+	QVBoxLayout *warningsLayout_ = nullptr;
+	std::vector<std::pair<QLabel *, QLabel *>> warningRows_; // (icon, text)
+	int lastWarningCount_ = 0;
+
+	// The folded sections: Delay by scene (stream mode only), Hotkey presets
+	// and Options.
+	std::vector<std::unique_ptr<Section>> sections_;
+	Section *warningsSection_ = nullptr;
+	Section *rulesSection_ = nullptr;
+	Section *optionsSection_ = nullptr;
+	// The delay and scenes cards fold too (open by default).
+	Section *delaySection_ = nullptr;
+	Section *scenesSection_ = nullptr;
+	QWidget *rulesDivider_ = nullptr;
+	QVBoxLayout *rulesList_ = nullptr;
+	std::vector<RuleRow> ruleRows_;
+	QLabel *rulesEmpty_ = nullptr;
+	QPushButton *addRule_ = nullptr;
+	QBoxLayout *presetRow_ = nullptr;
+	QSpinBox *presetSpins_[3] = {nullptr, nullptr, nullptr};
+	// The RAM estimate said "only fits..." last time: Options opens once when
+	// it starts saying so, so the warning isn't hidden in a fold.
+	bool fitWarned_ = false;
+
+	// Options, stream mode only: where the delay buffer lives (Automatic /
+	// Memory / Disk), how far a live raise is instant, one hint line; and
+	// sending the last seconds when the stream stops.
+	QWidget *bufferBlock_ = nullptr;
+	QWidget *bufferHead_ = nullptr; // FitRow: the eyebrow and bufferInstant_.
+	QComboBox *bufferCombo_ = nullptr;
+	QLabel *bufferInstant_ = nullptr;
+	QLabel *bufferHint_ = nullptr;
+	QWidget *drainRow_ = nullptr;
+	QCheckBox *drainCheck_ = nullptr;
+	QLabel *drainText_ = nullptr;
+
+	// Options > Advanced: "Apply the delay only to the stream", its hint, and
+	// the lock line while a delay runs.
+	QCheckBox *applyCheck_ = nullptr;
+	QLabel *applyText_ = nullptr;
+	QLabel *applyHint_ = nullptr;
+	QWidget *applyLockRow_ = nullptr;
+	QLabel *applyLockIcon_ = nullptr;
 
 	// Free-account row (see RefreshAccountUi()): icon + text, an inline
 	// secondary button (Sign out / Cancel) and, below, a full-width one
@@ -311,7 +534,8 @@ private:
 	// counts down FROM.
 	QTimer *fillProgressTimer_ = nullptr;
 	QElapsedTimer fillElapsed_;
-	uint32_t fillTotalSeconds_ = 0;
+	uint32_t fillTotalSeconds_ = 0; // Rounded up, for the "12 / 30 s" text.
+	uint32_t fillTotalMs_ = 0;
 	// The fill window fillTimer_ is armed for (BufferModeStatus::fillGeneration);
 	// fillArmed_ is false whenever the timer is disarmed.
 	uint32_t armedFillGeneration_ = 0;
