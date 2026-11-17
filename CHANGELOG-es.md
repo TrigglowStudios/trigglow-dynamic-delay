@@ -2,7 +2,7 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## v1.0.0 — 2026-11-11
+## v1.0.0 — 2026-11-17
 
 Dynamic Delay sale de beta en Windows: versión 1.0, con la nueva imagen de Trigglow. Las versiones
 de macOS y Linux siguen en alpha (compilan y pasan la CI, pero aún no se han usado en un directo).
