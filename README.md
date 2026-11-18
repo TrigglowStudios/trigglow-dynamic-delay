@@ -497,7 +497,7 @@ src/
   settings-ui.{hpp,cpp}            → the Qt dock, one panel for both modes (status, the one
                                      button, delay, live/loading scene, options with quality, fit
                                      estimate and the advanced check box, fill countdown,
-                                     degradation notice, update notice)
+                                     degradation notice, update card)
   ui-tokens.{hpp,cpp}              → pure color tokens derived from OBS's palette, with the WCAG
                                      AA contract unit-tested in tests/
   ui-theme.{hpp,cpp}               → the UI's single style sheet, bundled brand fonts and
@@ -527,6 +527,13 @@ src/
   log-redact.{hpp,cpp}             → pure, line-by-line redaction of the OBS log, unit-tested
   update-checker.{hpp,cpp}         → checks this repo's latest GitHub release against the running
                                      version
+  release-info.{hpp,cpp}           → pure parsing of that release: version, Windows installer
+                                     path, size and SHA-256, the allowed download redirect,
+                                     unit-tested
+  update-installer.{hpp,cpp}       → v1.1.0 update from OBS (Windows): download, size + SHA-256
+                                     check, start the installer, wait for its admin-rights signal
+  update-dialog.{hpp,cpp}          → the "new version" window (once per version at OBS start, and
+                                     from the dock's update card)
   background-tasks.{hpp,cpp}       → cancellable background jobs (sign-in, Trigi, tickets, update
   cancel-token.{hpp,cpp}             check) with a bounded shutdown when OBS unloads the plugin,
   ui-tasks.{hpp,cpp}                 unit-tested; ui-tasks ties them to Qt's event loop

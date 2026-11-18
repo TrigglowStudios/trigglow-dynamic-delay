@@ -251,8 +251,8 @@ std::string VerificationUrlPrefix()
 
 bool IsAllowedWebUrl(std::string_view url)
 {
-	static constexpr std::array<const char *, 4> kPages = {web::kAppSupport, web::kPublicSupport, web::kPrivacy,
-							       web::kProduct};
+	static constexpr std::array<const char *, 5> kPages = {web::kAppSupport, web::kPublicSupport, web::kPrivacy,
+							       web::kProduct, web::kChangelog};
 	for (const char *page : kPages) {
 		const std::string_view p(page);
 		if (!StartsWith(url, p))

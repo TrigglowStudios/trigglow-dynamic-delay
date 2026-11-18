@@ -18,19 +18,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "cancel-token.hpp"
+#include "release-info.hpp"
 
 // Checks this repo's latest published GitHub release against the running
-// plugin's own version -- the ONLY update-awareness this plugin has today:
-// distribution is otherwise fully manual (the user has to notice a new
-// version themselves on trigglow.com/dynamic-delay or GitHub). Deliberately
-// simple: a public, unauthenticated GET against GitHub's REST API, no new
-// trigglow.com backend endpoint needed. Kept Qt-free (plain filesystem/
-// networking code only) -- same "one small file, one job" split as
-// bug-report.hpp/win-http.hpp; TrigglowDelayDock runs it as one of its
-// background jobs (ui-tasks.hpp), cancelled when the dock or OBS closes.
+// plugin's own version: a public, unauthenticated GET against GitHub's REST
+// API, no trigglow.com endpoint needed. Kept Qt-free; TrigglowDelayDock runs
+// it as one of its background jobs (ui-tasks.hpp), cancelled when the dock or
+// OBS closes.
+//
+// v1.1.0: the answer also carries the Windows installer of that release (its
+// download path, size and SHA-256, release-info.hpp), which update-installer.hpp
+// downloads and runs so the update happens from OBS itself, without sending
+// the streamer to GitHub.
 namespace trigglow {
 
 struct UpdateCheckResult {
@@ -40,40 +43,10 @@ struct UpdateCheckResult {
 	// bothering a streamer about failing.
 	bool checked = false;
 	bool updateAvailable = false;
-	std::string latestVersion; // e.g. "0.4.0" (leading 'v' already stripped). Empty if !checked.
-	// GitHub release page to open on click: always one of this repo's release
-	// pages (see IsOwnReleasePageUrl). Empty if !checked.
-	std::string releaseUrl;
+	std::string latestVersion; // e.g. "1.1.0" (leading 'v' already stripped). Empty if !checked.
+	// The installer to update in place (Windows), when the release has a valid one.
+	std::optional<release::Installer> windowsInstaller;
 };
-
-// This repo's release pages, the only URLs the update notice ever opens.
-inline constexpr const char *kOwnReleasePagePrefix =
-	"https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/";
-inline constexpr const char *kOwnLatestReleasePage =
-	"https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest";
-
-// True only for kOwnReleasePagePrefix followed by a plain path ([A-Za-z0-9._-]
-// segments separated by single '/', no ".."): html_url comes from the
-// network, so another host or repo, another scheme, a query, a fragment,
-// percent-escapes, whitespace or control characters are all rejected.
-inline bool IsOwnReleasePageUrl(const std::string &url)
-{
-	const std::string prefix = kOwnReleasePagePrefix;
-	if (url.size() <= prefix.size() || url.compare(0, prefix.size(), prefix) != 0)
-		return false;
-	char previous = '/';
-	for (size_t i = prefix.size(); i < url.size(); ++i) {
-		const char c = url[i];
-		const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-				   c == '.' || c == '-' || c == '_';
-		if (!plain && c != '/')
-			return false;
-		if (c == '/' && previous == '/')
-			return false;
-		previous = c;
-	}
-	return url.find("..", prefix.size()) == std::string::npos;
-}
 
 // BLOCKING -- callers must not run this on the UI thread, same contract as
 // every call in win-http.hpp (this is built directly on top of http::Send).

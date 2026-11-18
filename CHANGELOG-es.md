@@ -2,6 +2,21 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## Sin publicar
+
+**Novedades:**
+- **Actualiza desde OBS.** Cuando sale una versión nueva, el dock la enseña en una tarjeta con un
+  botón **Actualizar**, y la primera vez que abres OBS después de publicarse una ventana te avisa
+  (una sola vez). En Windows, **Actualizar ahora** descarga el instalador, lo comprueba con el
+  SHA-256 que GitHub publica para él y lo ejecuta: Windows pide permiso una vez, OBS se cierra, la
+  actualización se instala en unos segundos y OBS se vuelve a abrir solo. Tus escenas, ajustes,
+  atajos y sesión se conservan. Espera mientras estás en directo, grabando o con el delay activo
+  (cerrar OBS los cortaría) y te dice por qué. **Novedades** abre el historial de cambios en
+  trigglow.com. En macOS, Linux o una instalación manual, el botón abre la página de descarga de
+  trigglow.com; ya nada te manda a GitHub.
+- La tarjeta de actualización tiene un diseño nuevo: la franja de la marca, la versión nueva y la
+  tuya, y una X que la oculta hasta que vuelvas a abrir OBS.
+
 ## v1.0.0 — 2026-11-11
 
 Dynamic Delay sale de beta en Windows: versión 1.0, con la nueva imagen de Trigglow. Las versiones

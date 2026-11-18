@@ -104,6 +104,19 @@ default, is there if anything goes wrong.
 
 ## General
 
+**How do I update the plugin?**
+From OBS, since v1.1.0. When a new version is out, the dock shows it in a card at the top, and the
+first time you open OBS after it's published a window tells you (once per version). On Windows,
+with the plugin installed by its installer, press **Update** and then **Update now**: the plugin
+downloads the installer, checks it against the SHA-256 GitHub publishes for it (a download that
+doesn't match is deleted, never run), and starts it. Windows asks for permission once; then OBS
+closes, the update installs in a few seconds with only a progress window, and OBS opens again on
+its own. Your scenes, settings, hotkeys and sign-in are kept. The button waits while you're live,
+recording or with the delay on, because closing OBS would cut them. If you say no to Windows'
+prompt, nothing changes and OBS stays open. On macOS and Linux, or if you installed the plugin by
+hand, the button opens the download page on trigglow.com instead. **What's new** opens the
+changelog on trigglow.com.
+
 **Does the stream cut out or reconnect when I enable, disable, or use the delay?**
 No — never, at any point, for any reason, in either mode. Only the stream keeps one connection to
 your platform and splices the delayed stream (see above). All of OBS never calls into OBS's own
@@ -336,10 +349,11 @@ the dock asks you to sign in, do it once. Your scenes and settings are kept.
 **The dock or "Report a problem" says to update the plugin. What do I do?**
 "This plugin version can't sign in any more. Update the plugin." in the dock, "Update the plugin to
 use Trigi" in "Report a problem" or "Update required" on the trigglow.com sign-in page all mean the
-same: your version is too old for what you're trying to do. Download the latest version (**Get the
-update** in the dialog, the update notice in the dock, or the
-[latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)) and install
-it with OBS closed; your settings and your sign-in are kept. Meanwhile you can still send a report
+same: your version is too old for what you're trying to do. Update it: since v1.1.0, the **Update**
+button on the dock's update card does it from OBS (see "How do I update the plugin?"); from older
+versions, or with **Get the update** in the dialog, download it from
+[trigglow.com/dynamic-delay](https://www.trigglow.com/dynamic-delay) and install it with OBS closed.
+Your settings and your sign-in are kept. Meanwhile you can still send a report
 from the form in the dialog or from [trigglow.com/support](https://www.trigglow.com/support).
 
 **What is Trigi?**

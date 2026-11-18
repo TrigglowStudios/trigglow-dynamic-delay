@@ -67,6 +67,9 @@ inline constexpr const char *kAppSupport = "https://www.trigglow.com/app/support
 inline constexpr const char *kPublicSupport = "https://www.trigglow.com/support";
 inline constexpr const char *kPrivacy = "https://www.trigglow.com/legal/privacy";
 inline constexpr const char *kProduct = "https://www.trigglow.com/dynamic-delay";
+// v1.1.0: the plugin's changelog on trigglow.com ("What's new" in the update
+// window): kChangelog + "?product=dynamic-delay#v<version>".
+inline constexpr const char *kChangelog = "https://www.trigglow.com/changelog";
 inline constexpr const char *kRepo = "https://github.com/TrigglowStudios/trigglow-dynamic-delay/";
 inline constexpr const char *kLatestRelease =
 	"https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest";

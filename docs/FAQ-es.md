@@ -110,6 +110,19 @@ si algo falla.
 
 ## General
 
+**¿Cómo actualizo el plugin?**
+Desde OBS, desde la v1.1.0. Cuando sale una versión nueva, el dock la enseña en una tarjeta arriba
+del todo, y la primera vez que abres OBS después de publicarse una ventana te avisa (una vez por
+versión). En Windows, con el plugin instalado con su instalador, pulsa **Actualizar** y luego
+**Actualizar ahora**: el plugin descarga el instalador, lo comprueba con el SHA-256 que GitHub
+publica para él (una descarga que no coincide se borra y nunca se ejecuta) y lo abre. Windows pide
+permiso una vez; después OBS se cierra, la actualización se instala en unos segundos con solo una
+ventana de progreso y OBS se vuelve a abrir solo. Tus escenas, ajustes, atajos y sesión se
+conservan. El botón espera mientras estás en directo, grabando o con el delay activo, porque cerrar
+OBS los cortaría. Si dices que no al aviso de Windows, no cambia nada y OBS sigue abierto. En macOS
+y Linux, o si instalaste el plugin a mano, el botón abre la página de descarga de trigglow.com.
+**Novedades** abre el historial de cambios en trigglow.com.
+
 **¿Se corta o reconecta el stream al activar, desactivar o usar el delay?**
 No — nunca, en ningún momento, por ningún motivo, en ninguno de los dos modos. Solo a la emisión
 mantiene una sola conexión con tu plataforma y empalma el directo retrasado (ver arriba). A todo OBS
@@ -357,10 +370,11 @@ conservan.
 "Esta versión del plugin ya no puede iniciar sesión. Actualiza el plugin." en el dock, "Actualiza el
 plugin para usar Trigi" en "Reportar un problema" o "Actualización necesaria" en la página de inicio
 de sesión de trigglow.com significan lo mismo: tu versión es demasiado antigua para lo que intentas
-hacer. Descarga la última versión (**Descargar la actualización** en el diálogo, el aviso de
-actualización del dock o la
-[última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)) e
-instálala con OBS cerrado; tus ajustes y tu inicio de sesión se conservan. Mientras tanto puedes
+hacer. Actualízalo: desde la v1.1.0, el botón **Actualizar** de la tarjeta de actualización del dock
+lo hace desde OBS (ver "¿Cómo actualizo el plugin?"); desde versiones anteriores, o con
+**Descargar la actualización** en el diálogo, descárgalo desde
+[trigglow.com/dynamic-delay](https://www.trigglow.com/dynamic-delay) e instálalo con OBS cerrado.
+Tus ajustes y tu inicio de sesión se conservan. Mientras tanto puedes
 seguir enviando un reporte desde el formulario del diálogo o desde
 [trigglow.com/support](https://www.trigglow.com/support).
 

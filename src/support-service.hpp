@@ -82,7 +82,7 @@ public:
 		LegacySignIn,    // A v0.5.x sign-in not migrated yet: ticket form (guest route).
 		AccountInactive, // Ticket form; the dock explains the account state.
 		Disabled,        // The server turned Trigi off (or 403 client_disabled): ticket form, quietly.
-		Outdated,        // "Update the plugin to use Trigi" + web::kLatestRelease.
+		Outdated,        // "Update the plugin to use Trigi" + web::kProduct.
 		Unknown,         // Signed in, but the start check hasn't answered yet: ticket form.
 	};
 	TrigiGate Gate() const;

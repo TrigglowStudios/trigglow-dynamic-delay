@@ -81,6 +81,14 @@ relevant additions from these releases.
      **Who:** whoever writes the forum submission text — fold this into the same disclosure
      paragraph as the account-gate network use above rather than treating it separately.
 
+- **v1.1.0 adds the update from OBS — add it to the disclosure:** only when the user presses
+  **Update now** (Windows, plugin installed by its installer), the plugin downloads that release's
+  `-windows-x64-setup.exe` from `github.com` (one redirect, followed only to GitHub's asset hosts
+  `release-assets.githubusercontent.com` / `objects.githubusercontent.com`), keeps it only if its
+  size and SHA-256 match what `api.github.com` announced, and runs it (Windows asks for admin
+  rights). Never automatic: the check itself is still the one GET above.
+  **Who:** whoever writes the forum submission text.
+
 - **v0.6.0 changes the network disclosure — update the listing text with all of this:**
   1. **Sign-in is new (device link v2)** and still happens only in the user's browser on
      trigglow.com: the dock shows a code that the page must match. The plugin then keeps its own

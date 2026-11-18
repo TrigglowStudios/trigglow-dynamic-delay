@@ -402,6 +402,16 @@ set(
 )
 
 trigglow_add_client_test(json_tests json_tests.cpp "${_src}/json.cpp" "${_src}/json.hpp")
+# v1.1.0: what the update check reads from GitHub's latest release, and the
+# checks on its installer URL, redirect and SHA-256 (src/release-info.hpp).
+trigglow_add_client_test(
+  release_info_tests
+  release_info_tests.cpp
+  "${_src}/release-info.cpp"
+  "${_src}/release-info.hpp"
+  "${_src}/json.cpp"
+  "${_src}/json.hpp"
+)
 # Redaction of OBS's log before it is attached to a ticket (src/log-redact.hpp).
 trigglow_add_client_test(log_redact_tests log_redact_tests.cpp "${_src}/log-redact.cpp" "${_src}/log-redact.hpp")
 # Safe rendering of Trigi's replies (src/chat-text.hpp).
