@@ -27,12 +27,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "background-tasks.hpp"
 #include "buffer-mode-controller.hpp"
+#include "release-info.hpp"
 #include "ui-theme.hpp"
 
 class QLabel;
@@ -86,6 +88,7 @@ class FieldIcon;
 class StreamDelayController;
 struct StreamDelayStatus;
 struct UpdateCheckResult;
+class UpdateDialog;
 
 class TrigglowDelayDock : public QWidget {
 	Q_OBJECT
@@ -217,9 +220,6 @@ private:
 	// the gap to the text is part of the icon box.
 	void SetButtonIcon(QPushButton *button, ui::IconId icon, const QColor &color,
 			   Qt::Alignment alignment = Qt::AlignLeft);
-	// OBS themes give QPushButton a fixed height; the banner takes the
-	// height of the layout inside it instead.
-	void FitUpdateBanner();
 	// Icons that don't depend on state (banner, footer, buttons).
 	void ApplyStaticIcons();
 	// On a real state change (`state` names it, per mode), announces
@@ -315,6 +315,14 @@ private:
 	// just stays silent, never shown to the user -- see
 	// UpdateCheckResult::checked's comment).
 	void ShowUpdateNotice(const UpdateCheckResult &result);
+	// v1.1.0: the update window (update-dialog.hpp), raised if already open.
+	void OpenUpdateDialog();
+	// Opens it by itself once per published version, once OBS's window is up
+	// (update-installer.hpp remembers which version it showed).
+	void PromptAtStartOnce();
+	// Why updating now would cut something (empty when it wouldn't): OBS
+	// streaming or recording, or a delay running.
+	QString UpdateBusyReason() const;
 
 	BufferModeController &bufferController_;
 	StreamDelayController &streamController_;
@@ -520,14 +528,20 @@ private:
 
 	// See CheckForUpdateAsync()/ShowUpdateNotice(). Hidden (setVisible(false))
 	// until/unless a real update is found -- Qt layouts skip hidden widgets
-	// entirely, so this reserves no space while empty. updateReleaseUrl_ is
-	// what its click handler opens. The whole banner is one button.
-	QPushButton *updateNoticeButton_ = nullptr;
+	// entirely, so this reserves no space while empty. v1.1.0: a card whose
+	// button opens the update window; the X hides it until OBS starts again.
+	QFrame *updateCard_ = nullptr;
 	QLabel *updateIcon_ = nullptr;
 	QLabel *updateTitle_ = nullptr;
 	QLabel *updateVersion_ = nullptr;
-	QLabel *updateExternalIcon_ = nullptr;
-	QString updateReleaseUrl_;
+	QPushButton *updateButton_ = nullptr;
+	QPushButton *updateDismiss_ = nullptr;
+	std::string updateLatest_;                          // The newer version found, empty until then.
+	std::optional<release::Installer> updateInstaller_; // Set when it can install in place.
+	QPointer<UpdateDialog> updateDialog_;
+	QTimer *promptTimer_ = nullptr;
+	int promptTicks_ = 0;  // Seconds OBS's window has been up in a row.
+	int promptWaited_ = 0; // Seconds waited in all.
 
 	// See UpdateFillProgress()'s comment. fillElapsed_ is armed alongside
 	// fillTimer_ in ArmFillTimer(); fillTotalSeconds_ is what the countdown

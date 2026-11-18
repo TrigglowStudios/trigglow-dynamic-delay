@@ -1801,7 +1801,9 @@ trigi-page.* / trigi-widgets.* / trigi-states.* → §3.8 -- Trigi's page, its s
                                 state decisions
 report-bug-dialog.*           → §3.8 -- "Report a problem": Trigi, signed-in and guest tickets
 bug-report.* / log-redact.*   → §3.8 -- OBS's current log, read and redacted in memory
-update-checker.*              → latest GitHub release check; opens only this repo's releases
+update-checker.*              → latest GitHub release check (release-info.* parses it)
+update-installer.* / update-dialog.* → v1.1.0 update from OBS: download, SHA-256 check, installer
+                                handshake (/TRIGGLOWUPDATE event), the "new version" window
 background-tasks.* / cancel-token.* / ui-tasks.* → §3.8 -- cancellable background jobs, owners
                                 and the bounded shutdown on unload
 scene-combo-box.*             → dock combo box populated from obs_frontend_get_scene_names()

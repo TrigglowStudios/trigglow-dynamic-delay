@@ -525,7 +525,7 @@ src/
   settings-ui.{hpp,cpp}            → el dock Qt, un solo panel para los dos modos (estado, el
                                      único botón, delay, escena en directo/de carga, opciones con
                                      calidad, estimación de ajuste y la casilla avanzada, cuenta
-                                     atrás de llenado, aviso de degradación, aviso de actualización)
+                                     atrás de llenado, aviso de degradación, tarjeta de actualización)
   ui-tokens.{hpp,cpp}              → tokens de color puros derivados de la paleta de OBS, con el
                                      contrato WCAG AA probado en tests/
   ui-theme.{hpp,cpp}               → la hoja de estilo única de la UI, las fuentes de marca
@@ -560,6 +560,14 @@ src/
   log-redact.{hpp,cpp}             → redacción pura, línea a línea, del log de OBS, con tests
   update-checker.{hpp,cpp}         → compara la última release de GitHub de este repositorio contra
                                      la versión en ejecución
+  release-info.{hpp,cpp}           → lectura pura de esa release: versión, ruta, tamaño y SHA-256
+                                     del instalador de Windows y el redirect de descarga permitido,
+                                     con tests
+  update-installer.{hpp,cpp}       → v1.1.0, actualizar desde OBS (Windows): descarga, comprobación
+                                     de tamaño + SHA-256, abrir el instalador y esperar su señal de
+                                     permisos de administrador
+  update-dialog.{hpp,cpp}          → la ventana de "nueva versión" (una vez por versión al abrir
+                                     OBS, y desde la tarjeta de actualización del dock)
   background-tasks.{hpp,cpp}       → trabajos en segundo plano cancelables (inicio de sesión, Trigi,
   cancel-token.{hpp,cpp}             tickets, comprobación de actualizaciones) con un cierre acotado
   ui-tasks.{hpp,cpp}                 cuando OBS descarga el plugin, con tests; ui-tasks los une al

@@ -629,16 +629,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 		    .arg(focus));
 	add(QStringLiteral("QPushButton[tgVariant=\"link\"]:disabled { color: %1; }").arg(disabled));
 
-	// Update banner: the whole banner is one button.
-	// Its height comes from the layout inside (TrigglowDelayDock::FitUpdateBanner).
-	add(QStringLiteral("QPushButton#tgUpdateBanner { background-color: %1; border: 1px solid %2; border-left: 3px "
-			   "solid %3; border-radius: 10px; padding: 0px; margin: 0px; max-height: 200px; text-align: "
-			   "left; }")
-		    .arg(warningTint, line, hc ? text : warning));
-	add(QStringLiteral("QPushButton#tgUpdateBanner:hover { border-color: %1; border-left: 3px solid %2; }")
-		    .arg(warningText, hc ? text : warning));
-	add(QStringLiteral("QPushButton#tgUpdateBanner:focus { border: 2px solid %1; border-left: 3px solid %2; }")
-		    .arg(focus, hc ? text : warning));
+	// Update card and window (v1.1.0): the icon sits on an accent-tinted
+	// square, like the web's feature badges. High contrast outlines it.
+	add(QStringLiteral("QFrame#tgUpdateBadge { background-color: %1; border: 1px solid %2; border-radius: 10px; }")
+		    .arg(hc ? card : accentTint, hc ? text : accentTint));
 
 	// Fill progress: 4 px, rounded ends. High contrast outlines the track instead of
 	// tinting it (track and chunk would both be the text color).

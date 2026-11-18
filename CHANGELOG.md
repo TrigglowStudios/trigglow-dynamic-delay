@@ -2,6 +2,20 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## Unreleased
+
+**What's new:**
+- **Update from OBS.** When a new version is out, the dock shows a card with it and an **Update**
+  button, and the first time you open OBS after it's published a window tells you once. On
+  Windows, **Update now** downloads the installer, checks it against the SHA-256 GitHub publishes
+  for it, and runs it: Windows asks for permission once, OBS closes, the update installs in a few
+  seconds and OBS opens again on its own. Your scenes, settings, hotkeys and sign-in are kept. It
+  waits while you're live, recording or with the delay on (closing OBS would cut them) and says
+  why. **What's new** opens the changelog on trigglow.com. On macOS, Linux or a manual install, the
+  button opens the download page on trigglow.com instead; nothing sends you to GitHub any more.
+- The update card has a new look: the brand rule, the new version and yours, and an X that hides
+  it until OBS starts again.
+
 ## v1.0.0 — 2026-11-11
 
 Dynamic Delay comes out of beta on Windows: version 1.0, in Trigglow's new look. The macOS and Linux

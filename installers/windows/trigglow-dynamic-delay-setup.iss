@@ -244,6 +244,9 @@ Type: dirifempty; Name: "{app}"
 ; its working folder (it finds its locale files from there). Started as the
 ; signed-in user, never elevated, and only when OBS was found.
 Filename: "{code:GetObsExe}"; WorkingDir: "{code:GetObsBinDir}"; Description: "{cm:LaunchProgram,OBS Studio}"; Flags: nowait postinstall skipifsilent runasoriginaluser; Check: ObsExeExists
+; v1.1.0, update from OBS (/TRIGGLOWUPDATE, silent): OBS comes back on its
+; own, as the signed-in user, like it was before the plugin closed it.
+Filename: "{code:GetObsExe}"; WorkingDir: "{code:GetObsBinDir}"; Flags: nowait runasoriginaluser; Check: RelaunchObsAfterUpdate
 
 [Code]
 const
@@ -257,6 +260,10 @@ const
   // (S-1-5-32-545) read and run, for the folder, its subfolders and files.
   // SIDs, not names: the names are translated on a Spanish Windows.
   LockedDownGrants = '/grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX';
+  // Update from OBS (HandOverFromObs): the plugin's event name prefix, and
+  // the only right Setup asks for on it.
+  UpdateEventPrefix = 'Local\TrigglowDynamicDelayUpdate-';
+  EventModifyState = $0002;
 
 var
   // OBS Studio's install folder, '' when not found.
@@ -304,6 +311,71 @@ end;
 function ObsExeExists(): Boolean;
 begin
   Result := (ObsDir <> '') and FileExists(GetObsExe(''));
+end;
+
+// v1.1.0, update from OBS (src/update-installer.hpp): the plugin starts this
+// installer with /SILENT /TRIGGLOWUPDATE=<event> and waits in OBS. Once Setup
+// runs with admin rights it sets that event; the plugin then closes OBS, Setup
+// waits for it to be gone, installs and starts OBS again. The name is the
+// plugin's own event (fixed prefix, then digits and dashes); anything else
+// leaves Setup in its normal mode.
+function OpenEvent(dwDesiredAccess: Cardinal; bInheritHandle: Boolean; lpName: string): THandle;
+  external 'OpenEventW@kernel32.dll stdcall';
+function SetEvent(hEvent: THandle): Boolean;
+  external 'SetEvent@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function UpdateEventName(): string;
+var
+  Name: string;
+  I: Integer;
+begin
+  Result := '';
+  Name := ExpandConstant('{param:TRIGGLOWUPDATE|}');
+  if (Length(Name) <= Length(UpdateEventPrefix)) or (Length(Name) > 80) or
+    (Copy(Name, 1, Length(UpdateEventPrefix)) <> UpdateEventPrefix) then
+    Exit;
+  for I := Length(UpdateEventPrefix) + 1 to Length(Name) do
+    if not (((Name[I] >= '0') and (Name[I] <= '9')) or (Name[I] = '-')) then
+      Exit;
+  Result := Name;
+end;
+
+function IsObsUpdate(): Boolean;
+begin
+  Result := UpdateEventName() <> '';
+end;
+
+// The [Run] entry that starts OBS again after an update from OBS (the
+// postinstall one is skipped in silent mode).
+function RelaunchObsAfterUpdate(): Boolean;
+begin
+  Result := IsObsUpdate() and WizardSilent() and ObsExeExists();
+end;
+
+// Tells the plugin waiting in OBS that Setup has admin rights: OBS can close.
+// Then waits up to 60 s for OBS to be gone (the retry box below takes over).
+procedure HandOverFromObs();
+var
+  Event: THandle;
+  Waited: Integer;
+begin
+  Event := OpenEvent(EventModifyState, False, UpdateEventName());
+  if Event <> 0 then
+  begin
+    SetEvent(Event);
+    CloseHandle(Event);
+    Log('Update from OBS: signalled the plugin, waiting for OBS to close');
+  end
+  else
+    Log('Update from OBS: could not open the plugin''s event (' + IntToStr(DLLGetLastError()) + ')');
+  Waited := 0;
+  while CheckForMutexes(ObsMutex) and (Waited < 120) do
+  begin
+    Sleep(500);
+    Waited := Waited + 1;
+  end;
 end;
 
 // "31.1.0" or "32.2.2.0" -> a packed version; False when it isn't one.
@@ -378,6 +450,9 @@ begin
   else
     Log('Could not read the version of ' + GetObsExe('') + '; minimum not checked here');
 
+  // Update from OBS: only the elevated Setup signals (the one that installs).
+  if IsObsUpdate() and IsAdmin() then
+    HandOverFromObs();
   while Result and CheckForMutexes(ObsMutex) do
     if SuppressibleMsgBox(CustomMessage('ObsRunning'), mbError, MB_RETRYCANCEL, IDCANCEL) = IDCANCEL then
       Result := False;

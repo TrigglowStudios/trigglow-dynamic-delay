@@ -21,47 +21,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "logging.hpp"
 #include "win-http.hpp"
 
-extern "C" {
-#include <obs-module.h>
-}
-
-#include <array>
+#ifdef TRIGGLOW_TEST_UPDATE_SOURCE
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#endif
 
 namespace trigglow {
 
 namespace {
 constexpr const char *kComponent = "update-checker";
-constexpr const char *kGithubApiHost = "api.github.com";
-constexpr const char *kGithubReleasesPath = "/repos/TrigglowStudios/trigglow-dynamic-delay/releases/latest";
-
-// Parses "X.Y.Z" (leading 'v' already stripped by the caller) into up to 3
-// numeric components; a missing or non-numeric component reads as 0 --
-// lenient on purpose, a malformed tag should just compare as "not newer"
-// rather than throw/crash this background thread.
-std::array<int, 3> ParseVersion(const std::string &version)
-{
-	std::array<int, 3> parts{0, 0, 0};
-	size_t start = 0;
-	for (int i = 0; i < 3 && start <= version.size(); ++i) {
-		size_t dot = version.find('.', start);
-		std::string piece = version.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
-		parts[static_cast<size_t>(i)] = std::atoi(piece.c_str());
-		if (dot == std::string::npos)
-			break;
-		start = dot + 1;
-	}
-	return parts;
-}
-
-// std::array<int, 3>'s operator< is already lexicographic (major, then
-// minor, then patch), which is exactly semver ordering for this plugin's
-// plain X.Y.Z tags (no pre-release/build-metadata suffixes to worry about).
-bool IsNewer(const std::string &latest, const std::string &current)
-{
-	return ParseVersion(latest) > ParseVersion(current);
-}
-
 } // namespace
 
 UpdateCheckResult CheckForUpdate(const std::string &currentVersion, const tasks::CancelToken *cancel)
@@ -72,13 +42,31 @@ UpdateCheckResult CheckForUpdate(const std::string &currentVersion, const tasks:
 	// otherwise): the plugin's own. No token, no cookies, redirects not
 	// followed (win-http.hpp).
 	http::Request request;
-	request.host = kGithubApiHost;
-	request.path = kGithubReleasesPath;
+	request.host = release::kApiHost;
+	request.path = release::kLatestReleaseApiPath;
 	request.userAgent = api::UserAgent(currentVersion);
 	request.headers.push_back({"Accept", "application/vnd.github+json"});
+	request.headers.push_back({"X-GitHub-Api-Version", "2022-11-28"});
 	request.maxResponseBytes = 1024 * 1024; // The release notes travel along.
 	request.cancel = cancel;
+#ifdef TRIGGLOW_TEST_UPDATE_SOURCE
+	// Local test builds only: TRIGGLOW_TEST_UPDATE_DIR=<folder> answers with
+	// <folder>/latest.json (GitHub's format) instead of asking GitHub
+	// (update-installer.cpp reads the installer from there too).
+	http::Response response;
+	if (const char *dir = std::getenv("TRIGGLOW_TEST_UPDATE_DIR"); dir && *dir) {
+		TRIGGLOW_LOG_WARN(kComponent,
+				  "TEST BUILD: update check reads latest.json from TRIGGLOW_TEST_UPDATE_DIR");
+		std::ifstream file(std::filesystem::u8path(dir) / "latest.json", std::ios::binary);
+		response.body.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+		response.error = file ? http::Error::None : http::Error::Connect;
+		response.status = 200;
+	} else {
+		response = http::Send(request);
+	}
+#else
 	const http::Response response = http::Send(request);
+#endif
 	if (response.error == http::Error::Cancelled)
 		return result; // The dock or OBS is closing.
 	if (!response.Ok() || response.status != 200) {
@@ -87,43 +75,21 @@ UpdateCheckResult CheckForUpdate(const std::string &currentVersion, const tasks:
 		return result;
 	}
 
-	obs_data_t *data = obs_data_create_from_json(response.body.c_str());
-	if (!data) {
-		TRIGGLOW_LOG_WARN(kComponent, "update check: invalid JSON from GitHub");
+	const std::optional<release::LatestRelease> latest = release::ParseLatestRelease(response.body);
+	if (!latest) {
+		TRIGGLOW_LOG_WARN(kComponent, "update check: unexpected answer from GitHub (no plain X.Y.Z release)");
 		return result;
 	}
-
-	const char *tagName = obs_data_get_string(data, "tag_name");
-	const char *htmlUrl = obs_data_get_string(data, "html_url");
-	if (!tagName || !*tagName) {
-		TRIGGLOW_LOG_WARN(kComponent, "update check: response missing tag_name");
-		obs_data_release(data);
-		return result;
-	}
-
-	std::string latest = tagName;
-	if (!latest.empty() && (latest.front() == 'v' || latest.front() == 'V'))
-		latest.erase(0, 1);
 
 	result.checked = true;
-	result.latestVersion = latest;
-	// Only this repo's release pages are ever opened; anything else in the
-	// response falls back to the fixed latest-release page.
-	if (htmlUrl && IsOwnReleasePageUrl(htmlUrl)) {
-		result.releaseUrl = htmlUrl;
-	} else {
-		if (htmlUrl && *htmlUrl)
-			TRIGGLOW_LOG_WARN(kComponent,
-					  "update check: html_url is not one of this repo's release pages -- "
-					  "linking the latest-release page instead");
-		result.releaseUrl = kOwnLatestReleasePage;
-	}
-	result.updateAvailable = IsNewer(latest, currentVersion);
+	result.latestVersion = latest->version;
+	result.updateAvailable = api::CompareVersions(latest->version, api::ClientVersion(currentVersion)) > 0;
+	result.windowsInstaller = latest->windowsInstaller;
 
-	obs_data_release(data);
-
-	TRIGGLOW_LOG_INFO(kComponent, "update check: running v%s, latest published is v%s (%s)", currentVersion.c_str(),
-			  latest.c_str(), result.updateAvailable ? "update available" : "up to date");
+	TRIGGLOW_LOG_INFO(
+		kComponent, "update check: running v%s, latest published is v%s (%s%s)", currentVersion.c_str(),
+		latest->version.c_str(), result.updateAvailable ? "update available" : "up to date",
+		result.updateAvailable && !result.windowsInstaller ? ", no verifiable Windows installer" : "");
 
 	return result;
 }

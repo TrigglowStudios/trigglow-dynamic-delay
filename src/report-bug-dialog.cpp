@@ -498,7 +498,7 @@ QWidget *ReportBugDialog::BuildFormPage()
 	connect(previewButton_, &QPushButton::clicked, this, [this] { ShowLogPreview(); });
 	connect(saveLogButton_, &QPushButton::clicked, this, [this] { SaveLog(); });
 	connect(openWebButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kPublicSupport); });
-	connect(updateButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kLatestRelease); });
+	connect(updateButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kProduct); });
 	connect(nameEdit_, &QLineEdit::textChanged, this,
 		[this](const QString &text) { TrackEmpty(nameEdit_, text.isEmpty()); });
 	connect(emailEdit_, &QLineEdit::textChanged, this,
