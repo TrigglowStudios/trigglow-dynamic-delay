@@ -26,7 +26,7 @@ on a live stream yet (alpha).
 
 ## 1. Download
 
-Get `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` from the
+Get `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe` from the
 [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). Prefer to
 install by hand instead? The `.zip` in the same release contains just the plugin files — see
 "Installing the plugin" in `README.md`.
@@ -160,9 +160,9 @@ The Flatpak OBS isn't supported: it runs plugins inside its own runtime and keep
 Install, with OBS closed:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 The packages put the plugin in OBS 33's system location,

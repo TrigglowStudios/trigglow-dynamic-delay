@@ -8,7 +8,7 @@ Native OBS Studio plugin that delays what your viewers see by a configurable num
 everything lives inside the OBS process, and your stream goes straight from your computer to your
 platform.
 
-**Status: 1.0.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
+**Status: 1.1.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
 but haven't been run on a live stream yet.**
 
 ## What the delay applies to
@@ -126,6 +126,7 @@ v0.7.1 install locations but not tested live yet. The minimum is set in one plac
 
 | Plugin | Minimum OBS | Tested up to | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.1.0 | 31.1.0 | 33.0.1 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 1.0.0 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.2 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
@@ -272,7 +273,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # Ubuntu 24.04 packages
 
 ## Installing the plugin
 
-**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe`
+**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe`
 from the [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)
 and run it — it installs into OBS's plugin folder for all users and moves an install of v0.7.0 or
 earlier out of OBS's own folder. It isn't code-
@@ -280,7 +281,7 @@ signed yet, so Windows SmartScreen will warn you before letting it run. **Full g
 with screenshots for every step, including the SmartScreen warning: `docs/INSTALL_GUIDE.md`.**
 Install it before you go live, not mid-stream — it needs OBS closed to overwrite its files.
 
-**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb`
+**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb`
 (Debian, Ubuntu, Mint, Pop!_OS: `sudo apt install ./<file>.deb`), `.rpm` (Fedora, openSUSE:
 `sudo dnf install ./<file>.rpm`) or `.pkg.tar.zst` (Arch, Manjaro, EndeavourOS:
 `sudo pacman -U <file>.pkg.tar.zst`), which pull in what they need. Any other distro: the `.tar.xz`

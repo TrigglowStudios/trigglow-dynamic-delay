@@ -28,7 +28,7 @@ stream y el modo escena, y aún no se ha usado en un directo (alpha).
 
 ## 1. Descarga
 
-Consigue `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` desde la
+Consigue `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe` desde la
 [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). ¿Prefieres
 instalarlo a mano? El `.zip` de esa misma release solo trae los archivos del plugin — ver
 "Instalar el plugin" en `README-es.md`.
@@ -167,9 +167,9 @@ otro sitio.
 Instalación, con OBS cerrado:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 Los paquetes dejan el plugin en la ubicación del sistema de OBS 33,
