@@ -8,7 +8,7 @@ Native OBS Studio plugin that delays what your viewers see by a configurable num
 everything lives inside the OBS process, and your stream goes straight from your computer to your
 platform.
 
-**Status: 1.0.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
+**Status: 1.1.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
 but haven't been run on a live stream yet.**
 
 ## What the delay applies to
@@ -27,7 +27,7 @@ below).
 Details: `docs/SPEC.md`.
 
 **Only the stream (advanced: "Apply the delay only to the stream (recording and preview stay
-live)", Windows).** Stream mode, new in 1.0.0: the plugin holds the stream OBS has already encoded
+live)", Windows, macOS and Linux).** Stream mode, new in 1.0.0: the plugin holds the stream OBS has already encoded
 and sends it to your platform later. Nothing is decoded or encoded again, so it costs almost no
 CPU, and you choose where the held seconds wait: in RAM (the default on an SSD, nothing written to
 disk) or in an encrypted temp file on your disk (the default on a hard drive, about 11-16 MB of RAM at
@@ -83,7 +83,7 @@ Only the stream (stream mode, advanced)
   "only the stream" is chosen, a stream is about to start and it's eligible (OBS's `rtmp_output`, RTMP or RTMPS, not Enhanced
   Broadcasting), it reads your service's server and key, starts the relay, and points **that
   output** at the relay with a private service. Your saved stream settings are never changed.
-- **`StreamRelay`** (`src/stream-relay.*`, FFmpeg's avformat, Windows only) listens on
+- **`StreamRelay`** (`src/stream-relay.*`, FFmpeg's avformat) listens on
   `127.0.0.1` only, stores the FLV packets as they arrive without decoding them, and runs the
   sender to your OBS service, with its own connection, retries and state.
 - **`PacketHistory` / `SinkScheduler`** (`src/packet-delay-core.*`, pure and unit-tested) decide
@@ -126,6 +126,7 @@ v0.7.1 install locations but not tested live yet. The minimum is set in one plac
 
 | Plugin | Minimum OBS | Tested up to | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.1.0 | 31.1.0 | 33.0.1 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 1.0.0 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.2 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
@@ -214,7 +215,7 @@ interval of 2 s is recommended (Settings > Output): the delay moves in steps of 
   without saving them anywhere else, and no Trigglow server is in the path. The stream's older
   seconds wait on your computer in an encrypted temp file (its key exists only in OBS's memory),
   deleted when the stream ends.
-- **Trigi** receives what you type and, only if you tick it, a small set of OBS technical numbers
+- **Trigi** receives what you type and, when left ticked (on by default), a small set of OBS technical numbers
   and states (never names, paths, URLs or keys), shown before you send it. **Your OBS log is never
   sent to the AI**; it's attached to a ticket only if you tick its box, which you can do once
   you've seen it in **See what is sent**. Your Windows user name, URLs, keys, emails and IPs are
@@ -272,7 +273,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # Ubuntu 24.04 packages
 
 ## Installing the plugin
 
-**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe`
+**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe`
 from the [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)
 and run it — it installs into OBS's plugin folder for all users and moves an install of v0.7.0 or
 earlier out of OBS's own folder. It isn't code-
@@ -280,7 +281,7 @@ signed yet, so Windows SmartScreen will warn you before letting it run. **Full g
 with screenshots for every step, including the SmartScreen warning: `docs/INSTALL_GUIDE.md`.**
 Install it before you go live, not mid-stream — it needs OBS closed to overwrite its files.
 
-**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb`
+**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb`
 (Debian, Ubuntu, Mint, Pop!_OS: `sudo apt install ./<file>.deb`), `.rpm` (Fedora, openSUSE:
 `sudo dnf install ./<file>.rpm`) or `.pkg.tar.zst` (Arch, Manjaro, EndeavourOS:
 `sudo pacman -U <file>.pkg.tar.zst`), which pull in what they need. Any other distro: the `.tar.xz`
@@ -353,7 +354,7 @@ the scene **Trigglow Delay Loading (auto)**. You can move or resize the badge in
 where you put it; don't rename or delete the others. Only the stream adds nothing to your scene
 collection (its badge is a private source on an OBS output channel).
 
-### Only the stream (advanced; Windows)
+### Only the stream (advanced; every platform)
 
 Tick **Apply the delay only to the stream (recording and preview stay live)** in **Options →
 Advanced**. It is locked while a delay is on ("Turn the delay off to change it."), and ticked while
@@ -430,8 +431,8 @@ Requests go to the mode selected in the dock (`SetDelayedScene` always to all of
 Two ways:
 
 - **Trigglow's Stream Deck plugin** talks to OBS over obs-websocket (the vendor above) and shows the
-  delay's state on its keys. Its Dynamic Delay keys (toggle, back to live, presets, +/-) are being
-  added to that plugin; see `docs/STREAM_DECK.md`.
+  delay's state on its keys. Its Dynamic Delay keys (toggle, back to live, set delay, +/-) ship in
+  v1.9.0+ of that plugin; see `docs/STREAM_DECK.md`.
 - **Any Stream Deck, no plugin:** add the **"System" → "Hotkey"** action and send the key
   combination you bound to one of the hotkeys above. OBS needs to be running and listening for the
   global shortcut (with some setups, focused).
@@ -449,7 +450,7 @@ src/
   stream-delay-controller.{hpp,cpp} → v1.0.0 stream mode, OBS side: eligibility, pointing the
                                      stream output at the relay, delay on/off/seconds, dump,
                                      presets, scene rules, the badge, the settings checks
-  stream-relay.{hpp,cpp}           → the relay (FFmpeg avformat, Windows): RTMP listener on
+  stream-relay.{hpp,cpp}           → the relay (FFmpeg avformat): RTMP listener on
                                      127.0.0.1, the sender to your OBS service, retries, drain
   packet-delay-core.{hpp,cpp}      → pure: PacketHistory and SinkScheduler (splices, timestamp
                                      rewrite, trimming, dump floor), unit-tested
@@ -631,7 +632,7 @@ redistribution next to a GPL-2.0 binary):
 | **Figtree** (SemiBold, Bold), subset | `data/fonts/Figtree-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Figtree.txt` |
 | **Geist Mono** (Medium), subset | `data/fonts/GeistMono-Medium.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-GeistMono.txt` |
 | Interface icons (Lucide paths, as in the Trigglow web app) | compiled in from `src/resources/icons/` | ISC (portions MIT, Feather), `data/licenses/LICENSE-lucide.txt` |
-| **FFmpeg** libraries (avcodec, avutil, swresample, and avformat for stream mode), BtbN LGPL build pinned in `buildspec.json`, Windows only | DLLs next to the plugin's own (`bin/64bit` in the package), unmodified | LGPL 3.0 or later, with MIT/BSD/Apache components (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, with the build's tag and its source |
+| **FFmpeg** libraries (avcodec, avutil, swresample, and avformat for stream mode): BtbN LGPL build on Windows, static LGPL build from `ffmpeg-source` (`n9.0.2`) on Linux and macOS, both pinned in `buildspec.json` | Windows: DLLs next to the plugin's own (`bin/64bit` in the package), unmodified; Linux and macOS: linked into the plugin binary | Windows: LGPL 3.0 or later (with MIT/BSD/Apache components: libvpl, AMF, ffnvcodec); Linux and macOS: LGPL 2.1 or later; `data/licenses/LICENSE-ffmpeg.txt`, with the build's tag and its source |
 
 The fonts are static instances subset from the upstream variable fonts in
 [google/fonts](https://github.com/google/fonts) (`ofl/archivo`, `ofl/geistmono`); `tools/fonts/`
