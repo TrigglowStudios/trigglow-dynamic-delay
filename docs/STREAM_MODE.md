@@ -241,7 +241,10 @@ raising the delay stops each destination at the keyframe at or before what it ha
 clip (looped, timestamps continuing) until that keyframe is due at the new delay, and goes on from
 it, so nothing is skipped and at most a keyframe interval is seen again; a stream that starts with
 less history than the delay plays it from the start. Each switch between the clip and the stream
-sends that source's codec header (FLV sequence header) first. The dock lists the destination as
+puts that source's SPS and PPS in band in front of its first keyframe (not a new FLV sequence
+header: MediaMTX, behind Trigglow Multistream, rejects a second one in its first 2 s and ignores
+it later). Each destination's socket gets an 8 MB send buffer: FFmpeg's fixed 64 KB capped one
+connection at about 17 Mbps, which Enhanced Broadcasting's tracks together exceed. The dock lists the destination as
 "loading" meanwhile.
 
 ## What stays live

@@ -423,6 +423,41 @@ std::vector<uint8_t> AvccHeader(const std::vector<uint8_t> &annexB)
 	return out;
 }
 
+// The SPS and PPS of an avcC record as length-prefixed NAL units (4-byte
+// lengths), to put in front of a keyframe; empty when it isn't one.
+std::vector<uint8_t> AvccParamNals(const uint8_t *avcc, size_t size)
+{
+	std::vector<uint8_t> out;
+	if (!avcc || size < 7 || avcc[0] != 1)
+		return out;
+	size_t at = 5;
+	auto take = [&](int count) {
+		for (int i = 0; i < count; ++i) {
+			if (at + 2 > size)
+				return false;
+			const size_t len = (static_cast<size_t>(avcc[at]) << 8) | avcc[at + 1];
+			at += 2;
+			if (at + len > size)
+				return false;
+			out.push_back(static_cast<uint8_t>(len >> 24));
+			out.push_back(static_cast<uint8_t>(len >> 16));
+			out.push_back(static_cast<uint8_t>(len >> 8));
+			out.push_back(static_cast<uint8_t>(len));
+			out.insert(out.end(), avcc + at, avcc + at + len);
+			at += len;
+		}
+		return true;
+	};
+	if (!take(avcc[5] & 0x1F) || at >= size) {
+		out.clear();
+		return out;
+	}
+	const int pps = avcc[at++];
+	if (!take(pps))
+		out.clear();
+	return out;
+}
+
 // Silence in AAC for an audio stream like `par`: one encoded frame repeated
 // (silence encodes the same every frame), enough of them that the loop is a
 // whole number of milliseconds. False when FFmpeg's AAC encoder can't.
@@ -810,6 +845,11 @@ struct StreamRelay::Impl {
 		if ((videoTracks > 1 && sink.dest.primary) || enhancedCodec)
 			av_dict_set(&io, "rtmp_enhanced_codecs", "hvc1,av01,avc1", 0);
 		av_dict_set(&io, "rw_timeout", "15000000", 0);
+		// A fixed 64 KB socket buffer caps one TCP connection at about
+		// 64 KB / RTT (17 Mbps at 30 ms): Enhanced Broadcasting's tracks
+		// together fell behind on a real uplink. OBS's own output grows its
+		// buffer with Windows' ideal send backlog; 8 MB is plenty here.
+		av_dict_set(&io, "send_buffer_size", "8388608", 0);
 		av_dict_set(&io, "tcp_nodelay", "1", 0);
 		ret = avio_open2(&oc->pb, server.c_str(), AVIO_FLAG_WRITE, &oc->interrupt_callback, &io);
 		av_dict_free(&io);
@@ -939,8 +979,12 @@ struct StreamRelay::Impl {
 						continue;
 					g.recordBytes = o.packet->recordBytes;
 				}
-				if (o.newSource) {
-					// The codec header of what this stream sends from now on.
+				if (o.newSource && o.packet->kind == MediaKind::Video && o.packet->keyframe) {
+					// The source changed (stream <-> loading clip): its SPS and
+					// PPS go in front of this keyframe, in band. Not a new FLV
+					// sequence header: MediaMTX (Trigglow Multistream) rejects a
+					// second one in its first 2 s and ignores it after, and
+					// every decoder takes in-band parameters.
 					const std::vector<uint8_t> *header = nullptr;
 					std::vector<uint8_t> streamHeader;
 					if (o.filler && loading) {
@@ -956,9 +1000,11 @@ struct StreamRelay::Impl {
 						header = &streamHeader;
 					}
 					if (header && !header->empty()) {
+						const std::vector<uint8_t> nals =
+							AvccParamNals(header->data(), header->size());
 						g.headerAt = scratch.size();
-						g.headerBytes = header->size();
-						scratch.insert(scratch.end(), header->begin(), header->end());
+						g.headerBytes = nals.size();
+						scratch.insert(scratch.end(), nals.begin(), nals.end());
 					}
 				}
 				out.push_back(g);
@@ -1000,11 +1046,13 @@ struct StreamRelay::Impl {
 					continue;
 				}
 				if (o.headerBytes > 0) {
-					// FFmpeg's FLV muxer sends a new sequence header when it differs.
-					uint8_t *dst =
-						av_packet_new_side_data(pk, AV_PKT_DATA_NEW_EXTRADATA, o.headerBytes);
-					if (dst)
-						std::memcpy(dst, scratch.data() + o.headerAt, o.headerBytes);
+					// The source's SPS/PPS in front of the keyframe's NAL units.
+					const int before = pk->size;
+					if (av_grow_packet(pk, static_cast<int>(o.headerBytes)) >= 0) {
+						std::memmove(pk->data + o.headerBytes, pk->data,
+							     static_cast<size_t>(before));
+						std::memcpy(pk->data, scratch.data() + o.headerAt, o.headerBytes);
+					}
 				}
 				const AVRational tb = oc->streams[target]->time_base;
 				pk->time_base = streams[o.stream].timeBase;

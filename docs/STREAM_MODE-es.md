@@ -260,8 +260,11 @@ subir el delay, cada destino se para en el keyframe en o antes de lo que había 
 el clip (en bucle, con los timestamps continuando) hasta que ese keyframe toca con el nuevo delay y
 sigue desde él, así que no se salta nada y como mucho se vuelve a ver un intervalo de keyframes;
 un directo que empieza con menos historial que el delay lo reproduce desde el principio. Cada
-cambio entre el clip y el directo envía antes la cabecera de códec de esa fuente (sequence header
-de FLV). Mientras tanto, el dock muestra el destino como "cargando".
+cambio entre el clip y el directo pone el SPS y el PPS de esa fuente dentro de su primer keyframe
+(no un sequence header de FLV nuevo: MediaMTX, detrás de Trigglow Multistream, rechaza un segundo
+en sus primeros 2 s y lo ignora después). Cada destino usa un búfer de envío de 8 MB: el fijo de
+64 KB de FFmpeg limitaba una conexión a unos 17 Mbps, que las pistas de Enhanced Broadcasting juntas
+superan. Mientras tanto, el dock muestra el destino como "cargando".
 
 ## Lo que sigue en directo
 
