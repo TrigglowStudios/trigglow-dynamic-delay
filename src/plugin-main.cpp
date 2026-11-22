@@ -152,6 +152,12 @@ void LoadBrandFonts()
 	const QString dir = rawDir ? QString::fromUtf8(rawDir) : QString();
 	bfree(rawDir);
 	const trigglow::ui::BrandFontsReport report = trigglow::ui::LoadBrandFonts(dir);
+	// v1.1.0: Hindi needs a font that has its script (ui-theme.hpp).
+	const char *uiLocale = obs_get_locale();
+	const QString scriptFont = trigglow::ui::UseScriptFontFor(QString::fromUtf8(uiLocale ? uiLocale : ""));
+	if (!scriptFont.isEmpty())
+		TRIGGLOW_LOG_INFO(kComponent, "the panel uses %s for this language's script",
+				  scriptFont.toUtf8().constData());
 	// The folder relative to the plugin, never its absolute path: OBS's log is
 	// attached to support tickets, and a portable OBS lives under the user's
 	// profile folder.

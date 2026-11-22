@@ -125,8 +125,12 @@ RoleSpec SpecFor(FontRole role)
 	return {RoleSpec::Obs, 0.0, 7.5, 600, false, 100.0};
 }
 
+QString g_scriptFamily; // UseScriptFontFor().
+
 QString RoleFamily(const RoleSpec &spec)
 {
+	if (!g_scriptFamily.isEmpty())
+		return g_scriptFamily;
 	switch (spec.family) {
 	case RoleSpec::Display:
 		return g_fonts.display;
@@ -646,6 +650,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 			    .arg(line));
 	}
 	add(QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 2px; }").arg(C(t.progressChunk)));
+	// v1.1.0: with a script font (UseScriptFontFor) the text that keeps OBS's
+	// own font gets it too, or that script's marks are cut there.
+	if (!g_scriptFamily.isEmpty())
+		s = QStringLiteral("QWidget { font-family: \"%1\"; } ").arg(g_scriptFamily) + s;
 	return s;
 }
 
@@ -705,6 +713,22 @@ BrandFontsReport LoadBrandFonts(const QString &directory)
 const BrandFonts &Fonts()
 {
 	return g_fonts;
+}
+
+QString UseScriptFontFor(const QString &obsLocale)
+{
+	g_scriptFamily.clear();
+	if (!obsLocale.startsWith(QStringLiteral("hi"), Qt::CaseInsensitive))
+		return {};
+	// Windows, macOS, Linux.
+	for (const char *name : {"Nirmala UI", "Kohinoor Devanagari", "Noto Sans Devanagari", "Lohit Devanagari"}) {
+		const QString family = QString::fromLatin1(name);
+		if (QFontDatabase::hasFamily(family)) {
+			g_scriptFamily = family;
+			break;
+		}
+	}
+	return g_scriptFamily;
 }
 
 double BaseFontPointSize(QWidget *context)
