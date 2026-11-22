@@ -69,19 +69,22 @@ It's a standard next-next-next wizard:
 
    ![Language selector](images/installer-1-language.png)
 
-2. Welcome screen — confirms the version being installed (shows 0.2.0 and Inno Setup's generic
-   styling in this screenshot; as of v0.3.1 you'll see the Trigglow icon and banner instead, plus
-   the current version number, but the same layout and buttons):
+2. Welcome screen — confirms the version being installed:
 
-   ![Welcome screen, version 0.2.0](images/installer-2-welcome.png)
+   ![Welcome screen, version 1.1.0](images/installer-2-welcome.png)
 
 3. There is no folder to choose since v0.7.1: the plugin always goes to OBS's plugin folder,
    `C:\ProgramData\obs-studio\plugins\obs-trigglow-dynamic-delay` (see "Where the files go on
    Windows" below). The installer finds OBS through the registry key the official OBS installer
    writes and checks that it's OBS 31.1.0 or newer; with an older OBS it stops and asks you to
-   update OBS first.
+   update OBS first. While it does, it shows "Preparing to install":
 
-4. If OBS is still running, the installer asks you to close it (File → Exit) and click **Retry**.
+   ![Preparing to install](images/installer-3-destination.png)
+
+4. If OBS is still running, the installer asks you to close it (File → Exit) and click **Retry**
+   (right after the language, before the welcome screen):
+
+   ![OBS Studio is open: close it and click Retry](images/installer-4-close-obs.png)
 
 5. Installing:
 

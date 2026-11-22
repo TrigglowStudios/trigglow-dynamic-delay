@@ -73,19 +73,23 @@ Es un asistente estándar de siguiente-siguiente-siguiente:
 
    ![Selector de idioma](images/installer-1-language.png)
 
-2. Pantalla de bienvenida — confirma la versión que se va a instalar (esta captura muestra la
-   0.2.0 y el estilo genérico de Inno Setup; desde v0.3.1 verás el icono y el banner de Trigglow en
-   su lugar, además de la versión actual, pero con la misma disposición y botones):
+2. Pantalla de bienvenida — confirma la versión que se va a instalar:
 
-   ![Pantalla de bienvenida, versión 0.2.0](images/installer-2-welcome.png)
+   ![Pantalla de bienvenida, versión 1.1.0](images/installer-2-welcome.png)
 
 3. Desde la v0.7.1 no hay carpeta que elegir: el plugin va siempre a la carpeta de plugins de OBS,
    `C:\ProgramData\obs-studio\plugins\obs-trigglow-dynamic-delay` (ver "Dónde quedan los
    archivos en Windows" más abajo). El instalador encuentra OBS por la clave del registro que
    escribe el instalador oficial de OBS y comprueba que sea OBS 31.1.0 o posterior; con un OBS más
-   antiguo se detiene y te pide actualizar OBS antes.
+   antiguo se detiene y te pide actualizar OBS antes. Mientras lo hace muestra "Preparándose para
+   instalar":
 
-4. Si OBS sigue abierto, el instalador te pide cerrarlo (Archivo → Salir) y pulsar **Reintentar**.
+   ![Preparándose para instalar](images/installer-3-destination.png)
+
+4. Si OBS sigue abierto, el instalador te pide cerrarlo (Archivo → Salir) y pulsar **Reintentar**
+   (justo después del idioma, antes de la pantalla de bienvenida):
+
+   ![OBS Studio está abierto: ciérralo y pulsa Reintentar](images/installer-4-close-obs.png)
 
 5. Instalando:
 
