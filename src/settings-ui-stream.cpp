@@ -938,7 +938,9 @@ void TrigglowDelayDock::RefreshWarnings(const StreamDelayStatus &status)
 		keyintWarned = keyintWarned || name.rfind("keyint", 0) == 0;
 		const std::string key = "Stream.Warn." + name;
 		QString text = T(key.c_str());
-		if (colon != std::string::npos)
+		// Only texts with a %1 take the value ("other_vertical" names no count:
+		// QString::arg() on a text without one logs a warning on every refresh).
+		if (colon != std::string::npos && text.contains(QStringLiteral("%1")))
 			text = text.arg(QString::fromStdString(w.substr(colon + 1)));
 		texts << text;
 	}
