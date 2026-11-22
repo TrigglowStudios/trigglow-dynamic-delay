@@ -374,6 +374,18 @@ MeResult CheckSession(const api::Client &client, TokenStore &store, std::time_t 
 	if (r.Ok() && r.body && r.body->IsObject()) {
 		result.status = MeStatus::Valid;
 		result.displayName = r.body->GetString("displayName").value_or("");
+		if (const json::Value *account = r.body->Find("account"); account && account->IsObject()) {
+			if (const json::Value *plan = account->Find("plan"); plan && plan->IsObject()) {
+				result.account.known = true;
+				result.account.planId = plan->GetString("id").value_or("");
+				result.account.planName = plan->GetString("name").value_or("");
+			}
+			if (const json::Value *features = account->Find("features");
+			    features && features->IsObject()) {
+				result.account.known = true;
+				result.account.hideBadge = features->GetBool("hideBadge").value_or(false);
+			}
+		}
 		if (const json::Value *trigi = r.body->Find("trigi"); trigi && trigi->IsObject()) {
 			result.trigi.known = true;
 			result.trigi.available = trigi->GetBool("available").value_or(false);

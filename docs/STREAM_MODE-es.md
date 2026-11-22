@@ -240,7 +240,34 @@ PNG que en el modo escena, hasta 600 s) se dibuja en el canal de salida 61 de li
 Programa de OBS, después de la escena. Los espectadores la reciben con la imagen retrasada. Como está
 en el Programa, la grabación (y todo lo que tome el Programa) también la muestra mientras el delay
 está activo. Activarla o no ("Mostrar la insignia de delay a los espectadores") y la esquina están en
-las Opciones del dock, un solo control para los dos motores, y se guardan.
+las Opciones del dock, un solo control para los dos motores, y se guardan. Desde la v1.1.0 la
+insignia forma parte del plan gratuito: en Free la casilla queda bloqueada y la insignia siempre se
+muestra (`SetBadgeLocked()`, según el plan de la cuenta; `docs/ACCOUNT_GATE-es.md`, "El plan y la
+insignia"); Starter y Pro pueden desmarcarla.
+
+## Salidas de stream de otros plugins (v1.1.0)
+
+El modo stream retiene **la salida de stream propia de OBS** y nada más. Los plugins de multistream
+(Aitum Multistream, Multiple RTMP Outputs) y Aitum Vertical arrancan salidas propias, cada una con
+su propio servicio `rtmp_custom`, y se conectan ellas mismas a su plataforma: crean la salida, le
+ponen el servicio y la arrancan en una sola llamada, y la señal "starting" de libobs solo salta
+después de `obs_output_actual_start()`, así que no hay ningún momento en que el relay pueda
+quedarse con su destino antes de que conecten. Esas salidas, por tanto, salen **en directo**,
+mientras el stream propio de OBS va con delay. Lo que hace el plugin:
+
+- `StreamDelayController::RefreshOtherOutputs()` (una vez por segundo, desde `Tick()`) lista las
+  salidas activas cuyo tipo envía un stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
+  `ftl_output`; `src/other-outputs.*`), saltándose la propia de OBS, y distingue los plugins por
+  los nombres que dan a sus salidas: `aitum_multi_output_<nombre>` (Aitum Multistream), el literal
+  `multi-output` (Multiple RTMP Outputs), `vertical_canvas...` (Aitum Vertical); cualquier otra es
+  "otro plugin". Con "solo a la emisión", los avisos del dock las listan mientras funcionan
+  (`Stream.Warn.other_*`, con el recuento), cada uno diciendo que se desmarque la opción para
+  retrasar todo OBS.
+- Con todo OBS (modo escena) esas salidas codifican el programa retrasado igual que la propia de
+  OBS, así que van con delay, y el lienzo vertical recibe un espejo del delay en la escena que
+  muestra (`docs/SPEC.md` §3.13). La (i) junto a **Avanzado** en el dock dice qué cubre cada modo.
+- Un servicio que recibe un stream RTMP y lo reparte (Restream, Castr y similares) es solo un
+  destino de la salida propia de OBS: funciona con los dos modos.
 
 ## Comprobación de ajustes
 
@@ -313,6 +340,9 @@ compilación completa del plugin en Windows. Aún sin probar en un OBS real con 
   directo no puede usarlo; a todo OBS (lo predeterminado) funciona con ellos.
 - El delay por escena solo existe con "solo a la emisión": a todo OBS sigue retrasando la única
   escena en directo elegida en el dock.
+- Las salidas que arrancan otros plugins (Aitum Multistream, Multiple RTMP Outputs, Aitum
+  Vertical): salen en directo, y el dock lo dice (ver "Salidas de stream de otros plugins"); a todo
+  OBS las retrasa.
 
 ## Estado de la verificación
 

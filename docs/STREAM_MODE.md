@@ -221,7 +221,32 @@ as scene mode, up to 600 s) is drawn on libobs output channel 61, over OBS's pro
 scene. Viewers get it with the delayed picture. Because it is on the program, the recording (and
 anything else that takes the program) shows it too while the delay is on. On/off ("Show the delay
 badge to viewers") and the corner are in the dock's Options, one control for both engines, and
-saved.
+saved. Since v1.1.0 the badge is part of the free plan: on Free the box is locked and the badge
+always shows (`SetBadgeLocked()`, from the account's plan; `docs/ACCOUNT_GATE.md`, "The plan and
+the badge"); Starter and Pro can untick it.
+
+## Other plugins' stream outputs (v1.1.0)
+
+Stream mode holds **OBS's own stream output** and nothing else. Multistream plugins (Aitum
+Multistream, Multiple RTMP Outputs) and Aitum Vertical start outputs of their own, each with its
+own `rtmp_custom` service, and connect to their platform themselves: they create the output, set
+its service and start it in one call, and libobs' "starting" signal only fires after
+`obs_output_actual_start()`, so there is no moment at which the relay could take their
+destination before they connect. Those outputs therefore go out **live**, while OBS's own stream is
+delayed. What the plugin does about it:
+
+- `StreamDelayController::RefreshOtherOutputs()` (once a second, from `Tick()`) lists the active
+  outputs whose type sends a stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
+  `ftl_output`; `src/other-outputs.*`), skipping OBS's own, and tells the plugins apart by the
+  names they give their outputs: `aitum_multi_output_<name>` (Aitum Multistream), the literal
+  `multi-output` (Multiple RTMP Outputs), `vertical_canvas...` (Aitum Vertical); anything else is
+  "another plugin". With "only the stream" the dock's warnings list them while they run
+  (`Stream.Warn.other_*`, with the count), each saying to untick the option to delay all of OBS.
+- With all of OBS (scene mode) those outputs encode the delayed program like OBS's own, so they are
+  delayed, and the vertical canvas gets a mirror of the delay on the scene it shows (`docs/SPEC.md`
+  §3.13). The (i) next to **Advanced** in the dock says which mode covers what.
+- A service that takes one RTMP stream and fans it out (Restream, Castr and the like) is just a
+  destination for OBS's own output: it works with both modes.
 
 ## Settings checks
 
@@ -294,6 +319,8 @@ build on Windows. Not yet tested against a real OBS with real platforms.
   can't use it; all of OBS (the default) works with them.
 - Delay by scene only with "only the stream": all of OBS keeps delaying the one live scene chosen
   in the dock.
+- Outputs other plugins start (Aitum Multistream, Multiple RTMP Outputs, Aitum Vertical): they go
+  out live, and the dock says so (see "Other plugins' stream outputs"); all of OBS delays them.
 
 ## Verification status
 

@@ -57,6 +57,22 @@ no: Enhanced Broadcasting, los servicios SRT, RIST y WHIP, ni macOS y Linux (su 
 tiene la parte que necesita el relay). En esos casos el dock dice por qué: desmarca "Aplicar el
 delay solo a la emisión" para retrasar todo OBS.
 
+**Hago multistream con Aitum Multistream o Multiple RTMP Outputs. ¿Qué modo retrasa todas las plataformas?**
+A todo OBS, lo predeterminado. Esos plugins codifican lo que muestra OBS, así que todas las salidas
+que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", solo el
+stream propio de OBS pasa por el delay: las salidas que arrancan esos plugins salen en directo, y el
+dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
+delay..."). Los servicios que reciben un stream y lo reenvían (Restream y similares) funcionan con
+los dos modos, porque OBS solo les manda un stream. La (i) junto a Avanzado en el dock lo resume.
+
+**¿Aitum Vertical recibe el delay?**
+A todo OBS, sí, desde la v1.1.0: la escena que muestra el lienzo vertical se retrasa los mismos
+segundos, se llame como se llame (la 1.0 solo retrasaba una escena vertical con el mismo nombre que
+una de tus escenas con delay). El dock avisa de que el delay usa entonces el doble de recursos,
+porque ese lienzo mantiene un búfer propio. Mientras se llena ese búfer, y cada vez que el lienzo
+vertical cambia de escena, se ve en negro durante el delay. Con "solo a la emisión", el directo
+vertical sale en directo y el dock lo dice.
+
 **¿Se reconecta el directo al activar, quitar, subir o bajar el delay?**
 No. El relay mantiene una sola conexión con tu plataforma y empalma: activar el delay (o subirlo)
 salta atrás a un keyframe anterior, así que los espectadores vuelven a ver los últimos segundos,
@@ -321,7 +337,10 @@ versión crea su propio juego "(no tocar)" junto al "(auto)": borra el que no us
 Una sola imagen que pinta el propio plugin: desde la v1.0.0, una placa redondeada con el logo de
 Dynamic Delay, "DELAY" y tus segundos, y "Dynamic Delay by Trigglow" debajo, igual en todos los
 idiomas. Solo se ve con el delay activo. **Mostrar la insignia de delay a los espectadores** y
-**Posición de la insignia** (dock: Opciones) valen para los dos modos. A todo OBS es la fuente
+**Posición de la insignia** (dock: Opciones) valen para los dos modos. Desde la v1.1.0 la insignia
+forma parte del plan gratuito: en Free la primera casilla queda bloqueada (los espectadores siempre
+ven la insignia; la esquina y "Mostrar los segundos en la insignia" siguen siendo tuyos) y **Ver
+planes** abre trigglow.com/pricing; las cuentas Starter y Pro pueden desmarcarla. A todo OBS es la fuente
 **Trigglow Delay Badge (auto)**, y puedes moverla y escalarla en OBS (se queda donde la pongas).
 Solo a la emisión se pinta sobre el programa de OBS en su propio canal de salida (hasta 600 s) y no
 se puede mover a mano.

@@ -70,6 +70,8 @@ inline constexpr const char *kProduct = "https://www.trigglow.com/dynamic-delay"
 // v1.1.0: the plugin's changelog on trigglow.com ("What's new" in the update
 // window): kChangelog + "?product=dynamic-delay#v<version>".
 inline constexpr const char *kChangelog = "https://www.trigglow.com/changelog";
+// v1.1.0: "See plans" under the locked badge box (the badge hides with Starter or Pro).
+inline constexpr const char *kPricing = "https://www.trigglow.com/pricing";
 inline constexpr const char *kRepo = "https://github.com/TrigglowStudios/trigglow-dynamic-delay/";
 inline constexpr const char *kLatestRelease =
 	"https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest";

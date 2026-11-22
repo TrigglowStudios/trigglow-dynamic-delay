@@ -26,6 +26,26 @@
   está activo, sus segundos y adónde va el directo, y puede activarlo o quitarlo, cambiar los segundos
   o borrar lo que aún no se ha emitido. Se aplica en unos segundos, como un atajo.
 - Un directo a Trigglow Multistream aparece como "Trigglow Multistream" en el dock.
+- **La insignia de delay forma parte del plan gratuito.** En Free, los espectadores siempre ven la
+  insignia "Delay 30 s" mientras el delay está activo: sigues eligiendo su esquina y si muestra los
+  segundos, pero "Mostrar la insignia de delay a los espectadores" queda bloqueada, con una línea
+  que explica por qué y un botón **Ver planes**. Las cuentas Starter y Pro pueden desmarcarla como
+  antes. El dock muestra tu plan junto a tu nombre ("Conectado como X · Plan Starter"). El plugin lo
+  pregunta a trigglow.com en cada arranque de OBS y guarda la última respuesta para un arranque sin
+  conexión; un archivo de ajustes de una versión anterior no bloquea nada hasta que el servidor
+  haya contestado una vez.
+- **Multistream y vertical, revisados.** Con el delay en todo OBS (lo predeterminado), todas las
+  salidas de tu lienzo principal también van con delay: Aitum Multistream, Multiple RTMP Outputs y
+  cualquier cosa que codifique lo que muestra OBS. Un lienzo de Aitum Vertical ahora recibe el delay
+  en **la escena que muestra, se llame como se llame**: la 1.0 solo retrasaba una escena vertical
+  con el mismo nombre que una de tus escenas con delay, así que la mayoría de directos verticales
+  salían en directo con el sonido retrasado. Una escena a la que el lienzo vertical cambie con el
+  delay activo también lo recibe (negro durante el delay mientras se llena su búfer, como antes).
+  Con "Aplicar el delay solo a la emisión", solo el stream propio de OBS pasa por el delay: las
+  salidas que arrancan esos plugins salen en directo, y el panel ahora lo dice mientras funcionan,
+  con el nombre del plugin y cuántas salidas ("Aitum Multistream está enviando 2 salidas en directo,
+  sin el delay..."). Una (i) junto a **Avanzado** lo resume. Los servicios que reciben un stream y lo
+  reenvían (Restream y similares) funcionan con los dos.
 
 ## v1.0.0 — 2026-11-11
 

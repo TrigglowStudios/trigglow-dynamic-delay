@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "stream-delay-controller.hpp"
+#include "other-outputs.hpp"
 
 #include <QTimer>
 
@@ -205,7 +206,20 @@ void StreamDelayController::ApplySceneRule()
 
 void StreamDelayController::SetShowOverlay(bool show)
 {
-	showOverlay_ = show;
+	showOverlay_ = show || badgeLocked_;
+	UpdateOverlay();
+	Notify();
+}
+
+void StreamDelayController::SetBadgeLocked(bool locked)
+{
+	if (badgeLocked_ == locked)
+		return;
+	badgeLocked_ = locked;
+	if (locked && !showOverlay_) {
+		showOverlay_ = true;
+		TRIGGLOW_LOG_INFO(kComponent, "the delay badge is back on: this plan can't hide it");
+	}
 	UpdateOverlay();
 	Notify();
 }
@@ -458,7 +472,12 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 		status.lastEvent = lastEvent_;
 	}
 	status.warnings = warnings_;
+	// Other plugins' live stream outputs, after the settings checks: only
+	// with "only the stream", where they go out without the delay.
+	if (applyTo_ == ApplyTo::Stream)
+		status.warnings.insert(status.warnings.end(), otherOutputs_.begin(), otherOutputs_.end());
 	status.showOverlay = showOverlay_;
+	status.badgeLocked = badgeLocked_;
 	status.overlayCorner = overlayCorner_;
 	status.ruleScene = ruleScene_;
 	if (dumpRestoreAtNs_ > 0) {
@@ -708,8 +727,50 @@ void StreamDelayController::VerifyOutputUsesRelay()
 	Notify();
 }
 
+// The stream outputs other plugins run (other-outputs.hpp), by name. One
+// listing under libobs' outputs mutex, lock-free reads only (see
+// ObsFrontendBridge::ListActiveVideoEncoders for why that is safe); OBS's own
+// stream output -- the one the relay holds -- is skipped. Listed in both
+// modes so switching to "only the stream" shows them at once; the status only
+// carries them in that mode.
+void StreamDelayController::RefreshOtherOutputs()
+{
+	struct Ctx {
+		obs_output_t *skip;
+		std::vector<outputs::OtherOutput> found;
+	} ctx{obs_frontend_get_streaming_output(), {}};
+	obs_enum_outputs(
+		[](void *param, obs_output_t *output) -> bool {
+			auto *c = static_cast<Ctx *>(param);
+			if (output == c->skip || !obs_output_active(output))
+				return true;
+			const char *id = obs_output_get_id(output);
+			if (!id || !outputs::IsStreamOutputType(id))
+				return true;
+			const char *name = obs_output_get_name(output);
+			outputs::OtherOutput other;
+			other.name = name ? name : "";
+			other.plugin = outputs::ClassifyOutputName(other.name);
+			c->found.push_back(std::move(other));
+			return true;
+		},
+		&ctx);
+	obs_output_release(ctx.skip);
+	std::vector<std::string> summary = outputs::SummarizeOtherOutputs(ctx.found);
+	if (summary == otherOutputs_)
+		return;
+	for (const std::string &w : summary)
+		TRIGGLOW_LOG_INFO(kComponent, "another plugin's stream output is live (%s): %s", w.c_str(),
+				  applyTo_ == ApplyTo::Stream ? "it goes out without the delay"
+							      : "all of OBS delays it");
+	otherOutputs_ = std::move(summary);
+	Notify();
+}
+
 void StreamDelayController::Tick()
 {
+	if ((++ticks_ % 2) == 0)
+		RefreshOtherOutputs();
 	if (draining_ && relay_.Finished()) {
 		relay_.Stop();
 		draining_ = false;

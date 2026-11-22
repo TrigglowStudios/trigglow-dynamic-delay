@@ -467,6 +467,13 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 	// Both modes' badge. Missing (settings from before the choice): the seconds show.
 	if (obs_data_has_user_value(data, "overlay_show_seconds"))
 		controller.SetOverlayShowSeconds(obs_data_get_bool(data, "overlay_show_seconds"));
+	// v1.1.0: what trigglow.com said last about hiding the badge (Starter and
+	// Pro can; Free can't), for a start without a connection. Missing (a file
+	// from before the plan contract): not locked until the server answers, so
+	// nobody's choice is overwritten by a guess. AuthManager is seeded from it
+	// (obs_module_load) and the dock applies the live answer to both modes.
+	if (obs_data_has_user_value(data, "badge_hide_allowed"))
+		controller.SetBadgeLocked(!obs_data_get_bool(data, "badge_hide_allowed"));
 	for (int i = 0; i < 3; ++i) {
 		const std::string key = "preset" + std::to_string(i + 1);
 		if (obs_data_has_user_value(data, key.c_str()))
@@ -515,6 +522,7 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
 	obs_data_set_bool(data, "overlay_show_seconds", controller.OverlayShowSeconds());
+	obs_data_set_bool(data, "badge_hide_allowed", !controller.BadgeLocked());
 	for (int i = 0; i < 3; ++i)
 		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
 	obs_data_array_t *rules = obs_data_array_create();
@@ -880,6 +888,9 @@ bool obs_module_load(void)
 	g_state->streamController->SetOverlayImageProvider(
 		[files = g_state->badgeFiles.get()](uint32_t seconds) { return BadgeImagePath(*files, seconds); });
 	LoadStreamSettings(*g_state->streamController);
+	// The last server answer about the badge (see LoadStreamSettings): what
+	// AuthManager::HideBadgeAllowed() says until /auth/plugin/me answers.
+	g_state->authManager->SeedHideBadge(!g_state->streamController->BadgeLocked());
 	g_state->streamController->Init();
 	AlignSharedSettings(*g_state->bufferController, *g_state->streamController);
 	g_state->sceneTarget =

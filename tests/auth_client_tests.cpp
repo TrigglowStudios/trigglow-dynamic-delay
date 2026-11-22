@@ -350,12 +350,17 @@ void TestCheckSession()
 	{
 		Fixture f;
 		f.SignIn("tgp_a");
-		f.transport.Push(Json(200, R"({"displayName":"Streamer","account":{"status":"active"},
+		f.transport.Push(Json(200, R"({"displayName":"Streamer","account":{"status":"active",
+			"plan":{"id":"starter","name":"Starter"},"features":{"hideBadge":true}},
 			"session":{"expiresAt":"2999-03-01T00:00:00Z","renewAfter":"2999-02-15T00:00:00Z"},
 			"trigi":{"available":true,"minVersion":"0.6.0","diagnosticsVersions":[1]}})"));
 		const auth::MeResult r = auth::CheckSession(f.client, f.store, 1000);
 		CHECK(r.status == auth::MeStatus::Valid);
 		CHECK_STR(r.displayName, "Streamer");
+		// v1.1.0: the plan and whether the delay badge may be hidden.
+		CHECK(r.account.known && r.account.hideBadge);
+		CHECK_STR(r.account.planId, "starter");
+		CHECK_STR(r.account.planName, "Starter");
 		CHECK(r.trigi.known && r.trigi.available && r.trigi.AcceptsDiagnostics(1) &&
 		      !r.trigi.AcceptsDiagnostics(2));
 		CHECK(r.trigi.Usable("0.6.0") && r.trigi.Usable("0.6.1") && !r.trigi.Usable("0.5.9"));
@@ -373,6 +378,8 @@ void TestCheckSession()
 			return Json(200, R"({"displayName":"S","trigi":{"available":false}})");
 		};
 		const auth::MeResult r = auth::CheckSession(f.client, f.store, 1000);
+		// An API without the plan contract: nothing known, the badge stays locked.
+		CHECK(!r.account.known && !r.account.hideBadge && r.account.planId.empty());
 		CHECK(r.status == auth::MeStatus::Valid && r.events.tokenRenewed);
 		CHECK(f.transport.Count() == 2);
 		CHECK_STR(f.transport.Requests()[0].path, "/auth/plugin/me");

@@ -100,6 +100,9 @@ struct StreamDelayStatus {
 	// "Stream.Warn." with an optional ":<value>" (e.g. "keyint_long:8").
 	std::vector<std::string> warnings;
 	bool showOverlay = true;
+	// v1.1.0: the badge can't be switched off (Free plan, or signed out):
+	// showOverlay is then always true and the dock's box is locked.
+	bool badgeLocked = false;
 	uint32_t overlayCorner = 1;
 	// Seconds until the delay comes back after a Dump (0: no dump pending).
 	uint32_t dumpRestoreIn = 0;
@@ -165,6 +168,13 @@ public:
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
 	bool ShowOverlay() const { return showOverlay_; }
+	// v1.1.0: the badge is part of the free plan. Locked (Free, or no
+	// sign-in), SetShowOverlay(false) is ignored and the badge stays on; the
+	// corner and the seconds stay the streamer's choice. Set from the dock
+	// out of AuthManager::HideBadgeAllowed(); the last server answer is kept
+	// in the settings file (plugin-main.cpp) for a start without a connection.
+	void SetBadgeLocked(bool locked);
+	bool BadgeLocked() const { return badgeLocked_; }
 	void SetOverlayCorner(uint32_t corner);
 	uint32_t OverlayCorner() const { return overlayCorner_; }
 	// True: the badge says "DELAY 30 s". False: only the Dynamic Delay mark
@@ -229,6 +239,11 @@ private:
 	void UpdateOverlay();
 	void ClearOverlay();
 	void CheckObsSettings(obs_output_t *output);
+	// v1.1.0: other plugins' stream outputs (Aitum Multistream, Multiple RTMP
+	// outputs, Aitum Vertical...) go to their platform themselves, live: with
+	// "only the stream" the dock names them while they run (other-outputs.hpp).
+	// Once a second from Tick(); notifies when the list changes.
+	void RefreshOtherOutputs();
 	void SwapFrontendService();
 	void RestoreFrontendService();
 	void VerifyOutputUsesRelay();
@@ -242,6 +257,7 @@ private:
 	int64_t dumpRestoreAtNs_ = 0; // Monotonic; 0 = no dump pending.
 
 	bool showOverlay_ = true;
+	bool badgeLocked_ = false;
 	uint32_t overlayCorner_ = 1;
 	bool overlayShowSeconds_ = true;
 	std::function<std::string(uint32_t)> overlayImage_;
@@ -250,6 +266,9 @@ private:
 	uint32_t overlaySeconds_ = 0;
 	bool overlayShown_ = false;
 	std::vector<std::string> warnings_;
+	// "other_<plugin>:<count>" per plugin with a live stream output of its own (RefreshOtherOutputs).
+	std::vector<std::string> otherOutputs_;
+	unsigned ticks_ = 0;
 
 	relay::StreamRelay relay_;
 	obs_service_t *loopbackService_ = nullptr;

@@ -388,6 +388,8 @@ else()
       src/multistream-link.hpp
       src/multistream-service.cpp
       src/multistream-service.hpp
+      src/other-outputs.cpp
+      src/other-outputs.hpp
       src/delay-router.hpp
       src/delay-targets.cpp
       src/delay-targets.hpp
