@@ -46,14 +46,16 @@ loading scene. With it:
 - When you stop streaming, the seconds viewers haven't seen are still sent (optional).
 
 It needs OBS's own RTMP or RTMPS output and works with any service on it (Twitch, YouTube, Kick,
-TikTok, custom servers). With Enhanced Broadcasting, SRT, RIST or WHIP the dock says that stream
-can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
+TikTok, custom servers), Enhanced Broadcasting included. With SRT, RIST or WHIP the dock says
+that stream can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
 
 Multistream: with all of OBS, outputs other plugins start (Aitum Multistream, Multiple RTMP
 Outputs) and an Aitum Vertical canvas are delayed too; with only the stream, Aitum Vertical's stream
 is delayed too and the multistream plugins' outputs go out live, as the dock says (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
 
-Both have the delay badge for viewers (always shown on the Free plan; Starter and Pro can hide it),
+Both show viewers a loading scene while the delay builds up (Trigglow's video on the Free plan;
+Starter and Pro can pick their own) and have the delay badge (always shown on the Free plan;
+Starter and Pro can hide it),
 three presets, hotkeys, obs-websocket and the Stream Deck.
 
 ## How it works
@@ -192,7 +194,7 @@ your browser; the plugin stays 100% free), in both modes. Since 1.0.0 sign-in wo
 Linux too (over the system's libcurl); before, it was Windows only. See `docs/ACCOUNT_GATE.md`.
 
 **For only the stream (stream mode):** Windows, macOS or Linux (alpha on macOS and Linux), OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
-RTMP service or a custom rtmp:// or rtmps:// server), Enhanced Broadcasting off. A keyframe
+RTMP service or a custom rtmp:// or rtmps:// server), with or without Enhanced Broadcasting. A keyframe
 interval of 2 s is recommended (Settings > Output): the delay moves in steps of it.
 
 ## Network use and privacy
@@ -376,8 +378,8 @@ estimate go away, and the stream's own parts show: where it sends, **Dump**, **S
 The dock shows the state ("Delay off", "Armed", "Delay on: viewers see the stream 30 s late",
 "Sending the rest"...), where it sends and the connection's state, the RAM and disk used and the
 bitrate, and the OBS settings worth changing. The delay moves in steps of your keyframe interval:
-set it to 2 s in `Settings → Output`. If a stream can't use it (Enhanced Broadcasting, SRT,
-WHIP...), the dock says why: untick the option to delay all of OBS.
+set it to 2 s in `Settings → Output`. If a stream can't use it (SRT, RIST, WHIP...), the dock
+says why: untick the option to delay all of OBS.
 
 ### Hotkeys
 

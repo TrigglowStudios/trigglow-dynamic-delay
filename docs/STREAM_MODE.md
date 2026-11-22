@@ -132,8 +132,17 @@ wherever it is. Stream mode keeps it on disk, encrypted, and in RAM only what is
 
 1. On `OBS_FRONTEND_EVENT_STREAMING_STARTING` (after OBS created the stream output, before it
    starts), with "only the stream" chosen, `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
-   RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
-   `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
+   RTMP or RTMPS. It reads the server and key with `obs_service_get_connect_info()` (the resolved
+   ingest, "auto" included). With Enhanced Broadcasting (v1.1.0) OBS streams through its own
+   multitrack output ("rtmp multitrack video"), which already has a private service with the
+   ingest the platform gave it by then: that service is the destination, and the output gets a
+   fresh loopback service each stream (libobs keeps the previous one "active" past that output's
+   teardown, and the swap is checked right away). The relay takes every video track (one per
+   quality and canvas, GOP-aligned) and the audio: the history splices and trims at the keyframes
+   of the first video track and starts at the first keyframe of that frame on any track, and the
+   scheduler keeps each track's timestamps and waits for each track's own keyframe after a splice
+   (`packet-delay-core.hpp`). The streamer's own service gets every track, as Enhanced RTMP;
+   Multistream channels get the first video track, as a regular stream.
 2. It starts `StreamRelay` (FFmpeg avformat): a listener on `127.0.0.1:<free port>` and one
    sender to the streamer's own service. Dynamic Delay doesn't multistream: `StreamRelay::Start()`
    takes a list of destinations, but the controller only ever passes that one.
@@ -212,6 +221,28 @@ more the delay turns off, so the next stream starts without it unless it's turne
 Rules map a scene to "delay on (with its seconds)" or "delay off", applied on
 `OBS_FRONTEND_EVENT_SCENE_CHANGED` and when a stream starts. Three presets (default 10/30/60 s) set
 the seconds and turn the delay on, each with a hotkey and `ApplyPreset {index}` over obs-websocket.
+
+## The loading screen (v1.1.0)
+
+Stream mode delays packets OBS has already encoded, so what viewers see while the delay builds up
+can't come out of OBS's stream. Until v1.1.0 raising the delay replayed the last seconds, and a
+stream that started with the delay on sent nothing until it was old enough. Now, once a stream
+reaches the relay, `LoadingClipMaker` (`src/loading-clip.*`) makes an 8 s clip of the loading
+scene (Trigglow's "adding delay" video, or the scene a Starter or Pro streamer chose in the dock,
+the same one all of OBS uses): for each video encoder of OBS's stream output, a private canvas at
+that encoder's size and frame rate shows the scene fitted inside (a vertical track gets it
+letterboxed), and a copy of the encoder (same id and settings) encodes it into a capture output.
+Everything is released once the clip is captured; the clip is kept for the next streams while the
+scene and the encoders stay the same. H.264 only (with HEVC or AV1 raising replays, as before).
+
+The relay (`SetLoadingClip`) turns it into Annex B to FLV packets with their own avcC header and
+adds AAC silence for each audio track. The scheduler (`SinkScheduler::SetFiller`) then plays it:
+raising the delay stops each destination at the keyframe at or before what it had sent, plays the
+clip (looped, timestamps continuing) until that keyframe is due at the new delay, and goes on from
+it, so nothing is skipped and at most a keyframe interval is seen again; a stream that starts with
+less history than the delay plays it from the start. Each switch between the clip and the stream
+sends that source's codec header (FLV sequence header) first. The dock lists the destination as
+"loading" meanwhile.
 
 ## What stays live
 
@@ -337,8 +368,8 @@ build on Windows. Not yet tested against a real OBS with real platforms.
 
 ## Not covered yet
 
-- Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: the dock says the stream
-  can't use it; all of OBS (the default) works with them.
+- SRT, RIST and WHIP services: the dock says the stream can't use it; all of OBS (the default)
+  works with them. Enhanced Broadcasting is covered since v1.1.0.
 - Delay by scene only with "only the stream": all of OBS keeps delaying the one live scene chosen
   in the dock.
 - Outputs multistream plugins start (Aitum Multistream, Multiple RTMP Outputs): they go out live,

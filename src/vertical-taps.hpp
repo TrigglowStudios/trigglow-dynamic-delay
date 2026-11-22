@@ -100,8 +100,10 @@ public:
 	std::vector<relay::SinkStatus> Sinks() const;
 
 	// The badge on the Aitum Vertical canvas: `imagePath` (overlay-badge.hpp)
-	// in `corner` while `visible` and an output goes through a relay.
-	void SetBadge(bool visible, const std::string &imagePath, uint32_t corner);
+	// in `corner` while `visible` and an output goes through a relay, or
+	// `canvasDelayed` (Enhanced Broadcasting sends that canvas as tracks of
+	// OBS's own stream, which the main relay holds).
+	void SetBadge(bool visible, const std::string &imagePath, uint32_t corner, bool canvasDelayed = false);
 
 private:
 	struct Tap;

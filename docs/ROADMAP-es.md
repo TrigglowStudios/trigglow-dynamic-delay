@@ -232,7 +232,7 @@ la CI, pero aún no se han usado en un directo).
   OBS parado a mitad de delay, mirando el reproductor de la plataforma. Por ahora tiene tests
   unitarios, pruebas con el arnés local del relay y pruebas en un OBS 33 real en Windows contra un
   servidor RTMP local (`docs/STREAM_MODE-es.md`, "Estado de la verificación").
-- **Enhanced Broadcasting, SRT, RIST y WHIP en el modo stream.** Hoy esos directos pasan al modo
+- **SRT, RIST y WHIP en el modo stream** (Enhanced Broadcasting está hecho en la v1.1.0). Hoy esos directos pasan al modo
 - **Modo escena siguiendo los cambios de escena: un único ring compartido por todas las escenas**
   (evaluado el 2026-11-11, `docs/SPEC.md` §3.9). Un filtro de delay en cada escena de primer nivel,
   solo la escena del Programa (y las fuentes de una transición en curso) capturando en un único ring

@@ -788,6 +788,7 @@ QFrame *TrigglowDelayDock::BuildDelayCard()
 		});
 		return button;
 	};
+	delayCardLayout_ = layout;
 	lessButton_ = makeStep(QStringLiteral("-5"), "Dock.Delay.Less", -5);
 	moreButton_ = makeStep(QStringLiteral("+5"), "Dock.Delay.More", 5);
 	layout->addLayout(row);
@@ -912,7 +913,11 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 	layout->addWidget(switchBlock_);
 
 	layout->addSpacing(7);
-	loadingSceneCombo_ = new SceneComboBox(card);
+	loadingBlock_ = new QWidget(card);
+	auto *loadingLayout = new QVBoxLayout(loadingBlock_);
+	loadingLayout->setContentsMargins(0, 0, 0, 0);
+	loadingLayout->setSpacing(layout->spacing());
+	loadingSceneCombo_ = new SceneComboBox(loadingBlock_);
 	loadingSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
 	loadingSceneCombo_->setMinimumContentsLength(8);
 	loadingSceneCombo_->setToolTip(T("Dock.Scene.Loading.Tooltip"));
@@ -926,15 +931,33 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 		// when a narrow dock (240 px) leaves no room between them.
 		auto *row = new QHBoxLayout();
 		row->setSpacing(8);
-		row->addWidget(MakeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_, card), 0, Qt::AlignBottom);
+		row->addWidget(MakeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_, loadingBlock_), 0,
+			       Qt::AlignBottom);
 		row->addStretch(1);
-		auto *optional = new QLabel(T("Dock.Optional"), card);
+		auto *optional = new QLabel(T("Dock.Optional"), loadingBlock_);
 		SetRole(optional, "hint", ui::FontRole::Hint);
 		row->addWidget(optional, 0, Qt::AlignBottom);
-		layout->addLayout(row);
+		loadingLayout->addLayout(row);
 	}
-	layout->addWidget(loadingSceneCombo_);
+	loadingLayout->addWidget(loadingSceneCombo_);
 	AddFieldLock(loadingSceneCombo_);
+	// v1.1.0: choosing the loading scene is for Starter and Pro; on Free
+	// viewers see Trigglow's video, and this line and "See plans" say so.
+	loadingLockRow_ = MakeNoteRow(loadingBlock_, loadingLockIcon_, T("Dock.Scene.Loading.Locked"));
+	loadingLayout->addWidget(loadingLockRow_);
+	loadingPlansButton_ = new QPushButton(T("Dock.Overlay.SeePlans"), loadingBlock_);
+	loadingPlansButton_->setProperty("tgVariant", QStringLiteral("secondary"));
+	loadingPlansButton_->setFocusPolicy(Qt::TabFocus);
+	loadingPlansButton_->setCursor(Qt::PointingHandCursor);
+	loadingPlansButton_->setToolTip(T("Dock.Overlay.SeePlans.Tooltip"));
+	loadingPlansButton_->setIconSize(kButtonIconBox);
+	loadingPlansButton_->setLayoutDirection(Qt::RightToLeft);
+	SetRole(loadingPlansButton_, "button", ui::FontRole::Button);
+	loadingPlansButton_->setVisible(false);
+	loadingLayout->addWidget(loadingPlansButton_, 0, Qt::AlignLeft);
+	connect(loadingPlansButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kPricing); });
+	layout->addWidget(loadingBlock_);
+	scenesCardLayout_ = layout;
 	RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
 
 	// While the delay runs (Filling, Active) the scenes and the quality are
@@ -1645,8 +1668,10 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(healthIcon_, ui::IconId::Sliders, QStringLiteral("warning"), kInlineIconSize);
 	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(overlayLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(loadingLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(multistreamInfo_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetButtonIcon(plansButton_, ui::IconId::ExternalLink, ui::ToQColor(t.text), Qt::AlignRight);
+	SetButtonIcon(loadingPlansButton_, ui::IconId::ExternalLink, ui::ToQColor(t.text), Qt::AlignRight);
 	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
 	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
 	SetIcon(multiNoteIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
@@ -1839,6 +1864,27 @@ void TrigglowDelayDock::ApplyModeVisibility(bool streamOnly)
 	// Delay by scene, the delay buffer and sending the rest.
 	scenesCard_->setVisible(!streamOnly);
 	qualityBlock_->setVisible(!streamOnly);
+	// The loading scene goes where it shows (both modes use it).
+	QVBoxLayout *loadingHome = streamOnly ? delayCardLayout_ : scenesCardLayout_;
+	if (loadingBlock_ && loadingHome && loadingHome->indexOf(loadingBlock_) < 0) {
+		if (QLayout *from = loadingBlock_->parentWidget() ? loadingBlock_->parentWidget()->layout() : nullptr)
+			from->removeWidget(loadingBlock_);
+		if (scenesCardLayout_)
+			scenesCardLayout_->removeWidget(loadingBlock_);
+		if (delayCardLayout_)
+			delayCardLayout_->removeWidget(loadingBlock_);
+		// In the delay card it sits under the presets, 7 px apart like the
+		// scenes card's own spacing.
+		if (QLayout *own = loadingBlock_->layout())
+			own->setContentsMargins(0, 0, 0, 0);
+		if (streamOnly) {
+			delayCardLayout_->addWidget(loadingBlock_);
+		} else {
+			const int at = scenesCardLayout_->indexOf(delayLockedRow_);
+			scenesCardLayout_->insertWidget(at >= 0 ? at - 1 : scenesCardLayout_->count(), loadingBlock_);
+		}
+		loadingBlock_->setVisible(true);
+	}
 	bufferBlock_->setVisible(streamOnly);
 	drainRow_->setVisible(streamOnly);
 	multiBlock_->setVisible(streamOnly);
@@ -1975,14 +2021,21 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 	// lock inside each (ui-theme.cpp, tgLocked), and the line under the
 	// pickers says how to unlock them -- also what screen readers hear.
 	const bool busy = status.state == BufferModeState::Filling || status.state == BufferModeState::Active;
+	// v1.1.0: on Free the loading scene is Trigglow's (its own lock line).
+	const bool loadingLocked = status.loadingLocked;
 	liveSceneCombo_->setEnabled(!busy);
-	loadingSceneCombo_->setEnabled(!busy);
+	loadingSceneCombo_->setEnabled(!busy && !loadingLocked);
 	minResolutionCombo_->setEnabled(!busy);
 	for (const auto &[field, lock] : fieldLocks_) {
-		ui::SetStyleProperty(field, "tgLocked", busy ? QStringLiteral("true") : QStringLiteral("false"));
-		lock->setVisible(busy);
-		field->setAccessibleDescription(busy ? T("Dock.Delay.Locked") : QString());
+		const bool locked = busy || (field == loadingSceneCombo_ && loadingLocked);
+		ui::SetStyleProperty(field, "tgLocked", locked ? QStringLiteral("true") : QStringLiteral("false"));
+		lock->setVisible(locked);
+		field->setAccessibleDescription(busy     ? T("Dock.Delay.Locked")
+						: locked ? T("Dock.Scene.Loading.Locked")
+							 : QString());
 	}
+	loadingLockRow_->setVisible(loadingLocked);
+	loadingPlansButton_->setVisible(loadingLocked && authManager_.IsLoggedIn());
 	delayLockedRow_->setVisible(busy);
 	sceneSwitchRow_->setVisible(busy);
 
@@ -2001,7 +2054,7 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 
 	const QSignalBlocker blockLoading(loadingSceneCombo_);
 	const int loadingIndex =
-		status.loadingSceneName.empty()
+		status.loadingSceneName.empty() || loadingLocked
 			? 0
 			: loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
 	loadingSceneCombo_->setCurrentIndex(loadingIndex >= 0 ? loadingIndex : 0);
@@ -2221,6 +2274,7 @@ void TrigglowDelayDock::RefreshAccountUi()
 	const bool badgeLocked = !authManager_.HideBadgeAllowed();
 	bufferController_.SetBadgeLocked(badgeLocked);
 	streamController_.SetBadgeLocked(badgeLocked);
+	bufferController_.SetLoadingLocked(!authManager_.CustomLoadingAllowed());
 	ui::IconId icon = ui::IconId::Lock;
 	QString iconTone = QStringLiteral("muted");
 	QString text;
@@ -2250,7 +2304,8 @@ void TrigglowDelayDock::RefreshAccountUi()
 		// The plan after the name ("Starter plan"), once the server said it.
 		const QString plan = QString::fromStdString(authManager_.Account().planName);
 		if (!plan.isEmpty())
-			text += QStringLiteral(" · ") + T("Dock.Account.Plan").toHtmlEscaped().arg(plan.toHtmlEscaped());
+			text += QStringLiteral(" · ") +
+				T("Dock.Account.Plan").toHtmlEscaped().arg(plan.toHtmlEscaped());
 		inlineText = T("Dock.Account.SignOut");
 	} else if (authManager_.IsLoggingIn()) {
 		inlineText = T("Dock.Account.Cancel");

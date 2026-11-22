@@ -51,6 +51,20 @@
   otros destinos. La primera vez que arranca en una sesión de OBS sale directo una fracción de
   segundo y el plugin lo reinicia a través del delay. Usa una clave de emisión propia para el
   vertical: Restream y la mayoría de plataformas aceptan un solo emisor por clave.
+- **La pantalla de carga con "solo a la emisión".** Mientras se acumula el delay, tu audiencia ve
+  ahora la escena de carga, como a todo OBS, en lugar de volver a ver los últimos segundos (al
+  subirlo en directo) o no ver nada (cuando el directo empieza con el delay activo). El plugin
+  prepara un clip corto con tu propio encoder al empezar cada directo (unos segundos de codificación
+  extra, una vez) y el dock muestra "Pantalla de carga" en el destino mientras tanto. Funciona
+  también con Enhanced Broadcasting (las pistas verticales la reciben encajada). Directos H.264.
+- **Elegir la escena de carga es para Starter y Pro.** En Free, tu audiencia ve el vídeo "poniendo
+  delay" de Trigglow en los dos modos; el selector se bloquea con una línea que explica por qué y un
+  botón **Ver planes**. La escena que tenías elegida se guarda y vuelve si mejoras de plan.
+- **Enhanced Broadcasting funciona con "solo a la emisión".** Todas las pistas que envía (cada
+  calidad y el lienzo vertical si lo envías) pasan juntas por el delay, sincronizadas, con Borrar,
+  la insignia y los últimos segundos enviados al parar. Tus canales de Multistream reciben la
+  pista principal como un stream normal. No hay que cambiar nada: activar o no Enhanced
+  Broadcasting es cosa tuya.
 - **El delay está desactivado por defecto con "solo a la emisión".** Ya no se activa solo: las
   reglas de Delay por escena solo actúan en directo (cambiar de escena en OBS antes de empezar no
   lo arma), una regla nueva no hace nada hasta que eliges qué hace, y al terminar un directo el

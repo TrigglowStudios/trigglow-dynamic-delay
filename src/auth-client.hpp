@@ -225,8 +225,11 @@ struct TrigiInfo {
 struct AccountFeatures {
 	bool known = false;     // The server said something about the plan.
 	bool hideBadge = false; // The plan can hide the delay badge.
-	std::string planId;     // "free", "starter", "plus"... (log-safe: [a-z0-9_-]).
-	std::string planName;   // Shown in the dock next to the name ("Starter").
+	// The plan can choose its own loading scene (features.customLoading; an
+	// older server that doesn't say: the same as hideBadge, same plans).
+	bool customLoading = false;
+	std::string planId;   // "free", "starter", "plus"... (log-safe: [a-z0-9_-]).
+	std::string planName; // Shown in the dock next to the name ("Starter").
 };
 
 enum class MeStatus : unsigned char {

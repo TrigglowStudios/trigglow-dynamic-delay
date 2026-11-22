@@ -64,6 +64,26 @@ struct SinkStatus {
 	double behindSeconds = 0.0; // Content age of what this destination is sending now.
 	int reconnects = 0;
 	int resyncs = 0; // Times it fell behind and jumped to the delay again.
+	// v1.1.0: the loading clip is what it sends now (the delay is building up).
+	bool loading = false;
+};
+
+// v1.1.0 loading screen: the loading scene encoded like one of OBS's video
+// streams (same encoder, settings and size), as OBS's encoders give it: H.264
+// in Annex B, the header from obs_encoder_get_extra_data(). Frames start at a
+// keyframe, timestamps from 0, and loop every loopMs.
+struct LoadingVideoTrack {
+	uint32_t width = 0;
+	uint32_t height = 0;
+	std::vector<uint8_t> header;
+	struct Frame {
+		std::vector<uint8_t> data;
+		int64_t dtsMs = 0;
+		int64_t ptsMs = 0;
+		bool keyframe = false;
+	};
+	std::vector<Frame> frames;
+	int64_t loopMs = 0;
 };
 
 struct RelayStatus {
@@ -145,6 +165,18 @@ public:
 	bool Finished() const;
 
 	RelayStatus GetStatus() const;
+
+	// v1.1.0 loading screen: the size of each video stream OBS sends, in
+	// order (empty until its stream reached the relay), and whether they are
+	// all H.264 (the only codec the loading clip is made for).
+	std::vector<std::pair<uint32_t, uint32_t>> VideoSizes(bool &allH264) const;
+	// One track per video stream, in that order; the relay adds silence for
+	// the audio. From then on raising the delay shows the clip to viewers
+	// while it builds up (packet-delay-core.hpp SinkScheduler::SetFiller).
+	// False, with why, when it can't stand in for this stream.
+	bool SetLoadingClip(std::vector<LoadingVideoTrack> tracks, std::string &why);
+	bool HasLoadingClip() const;
+
 	// Raised from the relay's threads for things the streamer should see
 	// (a destination failed, reconnected...). Set before Start().
 	void SetEventCallback(EventCallback callback);

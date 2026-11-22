@@ -380,10 +380,11 @@ MeResult CheckSession(const api::Client &client, TokenStore &store, std::time_t 
 				result.account.planId = plan->GetString("id").value_or("");
 				result.account.planName = plan->GetString("name").value_or("");
 			}
-			if (const json::Value *features = account->Find("features");
-			    features && features->IsObject()) {
+			if (const json::Value *features = account->Find("features"); features && features->IsObject()) {
 				result.account.known = true;
 				result.account.hideBadge = features->GetBool("hideBadge").value_or(false);
+				result.account.customLoading =
+					features->GetBool("customLoading").value_or(result.account.hideBadge);
 			}
 		}
 		if (const json::Value *trigi = r.body->Find("trigi"); trigi && trigi->IsObject()) {

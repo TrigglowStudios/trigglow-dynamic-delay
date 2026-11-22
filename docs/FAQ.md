@@ -13,7 +13,7 @@ recording** are delayed; it works with any output and on every platform. **On, o
 (stream mode, Windows): the plugin points OBS's stream output at a relay inside OBS, on
 `127.0.0.1`, keeps the already-encoded packets and sends them to your platform after the delay. It
 costs far less RAM and CPU and delays every scene, but your recording, the Replay Buffer and OBS's
-preview stay live, and there's no loading scene. The dock's button, the hotkeys, obs-websocket and
+preview stay live; viewers see the loading scene while the delay builds up (since v1.1.0). The dock's button, the hotkeys, obs-websocket and
 the Stream Deck drive the one you chose, and only that one. The box is locked while a delay is on;
 ticked while you're live, it applies from your next stream. Details: `docs/STREAM_MODE.md`.
 
@@ -48,8 +48,9 @@ disk, deleted when the stream ends; measured at 6 Mbps, about 11-16 MB of RAM at
 
 **Which streams can use only the stream?**
 Streams that go out through OBS's own RTMP output over RTMP or RTMPS: Twitch, YouTube, Kick, TikTok
-and any custom rtmp:// or rtmps:// server, with Enhanced Broadcasting off. Not (yet): Enhanced
-Broadcasting, SRT, RIST and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
+and any custom rtmp:// or rtmps:// server, with or without Enhanced Broadcasting (since v1.1.0
+every track it sends, the vertical one included, goes through the delay). Not (yet): SRT, RIST
+and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
 part the relay needs yet). In those cases the dock says why: untick "Apply the delay only to the
 stream" to delay all of OBS.
 
@@ -338,6 +339,12 @@ is locked (viewers always see the badge; the corner and "Show the seconds on the
 and **See plans** opens trigglow.com/pricing; Starter and Pro accounts can untick it. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
 you can move and resize it in OBS (it stays where you put it). With only the stream it's drawn over
 OBS's program on its own output channel (up to 600 s) and can't be moved by hand.
+
+**What do viewers see while the delay builds up? Can I change it?**
+The loading scene, in both modes (with only the stream since v1.1.0: a short clip of it is made
+with your stream encoder when each stream starts). On Free it's Trigglow's "adding delay" video
+and the **Loading scene** picker is locked, with **See plans**; Starter and Pro accounts can pick
+any scene of theirs. A scene you had chosen is kept and comes back if you upgrade.
 
 **What triggers the `Error` state?**
 Anything that would otherwise leave the plugin in a broken but silent condition: no live scene

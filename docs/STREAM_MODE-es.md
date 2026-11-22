@@ -142,9 +142,18 @@ en RAM solo lo que está a punto de enviarse.
 
 1. Con `OBS_FRONTEND_EVENT_STREAMING_STARTING` (después de que OBS cree la salida de emisión y
    antes de que arranque), si se ha elegido "solo a la emisión", `StreamDelayController` comprueba que el directo es apto: el
-   `rtmp_output` de OBS, protocolo RTMP o RTMPS, sin Enhanced Broadcasting (multipista). Lee el
-   servidor y la clave con `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto,
-   incluido "auto").
+   `rtmp_output` de OBS, protocolo RTMP o RTMPS. Lee el servidor y la clave con
+   `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto, incluido "auto"). Con
+   Enhanced Broadcasting (v1.1.0) OBS emite por su propia salida multipista ("rtmp multitrack
+   video"), que para entonces ya tiene un servicio privado con la ingesta que le dio la plataforma:
+   ese servicio es el destino, y la salida recibe un servicio loopback nuevo en cada directo (libobs
+   deja el anterior "activo" más allá del cierre de esa salida, y el cambio se comprueba al
+   momento). El relay toma todas las pistas de vídeo (una por calidad y lienzo, con los GOP
+   alineados) y el audio: el historial empalma y recorta en los keyframes de la primera pista de
+   vídeo y empieza en el primer keyframe de ese fotograma en cualquier pista, y el programador
+   mantiene los timestamps de cada pista y espera el keyframe propio de cada una tras un empalme
+   (`packet-delay-core.hpp`). El servicio del streamer recibe todas las pistas, como Enhanced RTMP;
+   los canales de Multistream reciben la primera pista de vídeo, como un stream normal.
 2. Arranca `StreamRelay` (avformat de FFmpeg): un listener en `127.0.0.1:<puerto libre>` y un
    emisor hacia el servicio del propio streamer.
 3. Apunta **esa salida** al relay con un servicio `rtmp_custom` privado. El servicio guardado del
@@ -230,6 +239,29 @@ Las reglas asocian una escena a "activar delay (con sus segundos)" o "quitar del
 con `OBS_FRONTEND_EVENT_SCENE_CHANGED` y al empezar un directo. Tres presets (10/30/60 s por
 defecto) fijan los segundos y activan el delay, cada uno con su atajo y con `ApplyPreset {index}`
 por obs-websocket.
+
+## La pantalla de carga (v1.1.0)
+
+El modo stream retrasa paquetes que OBS ya ha codificado, así que lo que ve tu audiencia mientras
+se acumula el delay no puede salir del directo de OBS. Hasta la v1.1.0, subir el delay repetía los
+últimos segundos, y un directo que empezaba con el delay activo no enviaba nada hasta tener edad
+suficiente. Ahora, en cuanto un directo llega al relay, `LoadingClipMaker` (`src/loading-clip.*`)
+prepara un clip de 8 s de la escena de carga (el vídeo "poniendo delay" de Trigglow, o la escena que
+haya elegido en el dock un streamer Starter o Pro, la misma que usa a todo OBS): por cada encoder de
+vídeo de la salida de emisión, un lienzo privado al tamaño y frame rate de ese encoder muestra la
+escena encajada (una pista vertical la recibe con bandas) y una copia del encoder (mismo id y
+ajustes) la codifica en una salida de captura. Todo se libera en cuanto el clip está capturado; el
+clip se guarda para los siguientes directos mientras la escena y los encoders no cambien. Solo
+H.264 (con HEVC o AV1, subir el delay repite, como antes).
+
+El relay (`SetLoadingClip`) lo pasa de Annex B a paquetes FLV con su propia cabecera avcC y añade
+silencio AAC para cada pista de audio. El programador (`SinkScheduler::SetFiller`) lo reproduce: al
+subir el delay, cada destino se para en el keyframe en o antes de lo que había enviado, reproduce
+el clip (en bucle, con los timestamps continuando) hasta que ese keyframe toca con el nuevo delay y
+sigue desde él, así que no se salta nada y como mucho se vuelve a ver un intervalo de keyframes;
+un directo que empieza con menos historial que el delay lo reproduce desde el principio. Cada
+cambio entre el clip y el directo envía antes la cabecera de códec de esa fuente (sequence header
+de FLV). Mientras tanto, el dock muestra el destino como "cargando".
 
 ## Lo que sigue en directo
 
@@ -359,8 +391,8 @@ compilación completa del plugin en Windows. Aún sin probar en un OBS real con 
 
 ## Lo que aún no cubre
 
-- Enhanced Broadcasting (vídeo multipista) y los servicios SRT, RIST y WHIP: el dock dice que ese
-  directo no puede usarlo; a todo OBS (lo predeterminado) funciona con ellos.
+- Los servicios SRT, RIST y WHIP: el dock dice que ese directo no puede usarlo; a todo OBS (lo
+  predeterminado) funciona con ellos. Enhanced Broadcasting está cubierto desde la v1.1.0.
 - El delay por escena solo existe con "solo a la emisión": a todo OBS sigue retrasando la única
   escena en directo elegida en el dock.
 - Las salidas que arrancan los plugins de multistream (Aitum Multistream, Multiple RTMP Outputs):

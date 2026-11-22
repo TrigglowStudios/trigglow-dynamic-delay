@@ -392,6 +392,8 @@ else()
       src/other-outputs.hpp
       src/vertical-taps.cpp
       src/vertical-taps.hpp
+      src/loading-clip.cpp
+      src/loading-clip.hpp
       src/delay-router.hpp
       src/delay-targets.cpp
       src/delay-targets.hpp

@@ -52,6 +52,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "drive-kind.hpp"
 #include "stream-relay.hpp"
 #include "vertical-taps.hpp"
+#include "loading-clip.hpp"
 
 struct obs_service;
 typedef struct obs_service obs_service_t;
@@ -165,6 +166,9 @@ public:
 	// off). Must not block.
 	using ExtraDestinations = std::function<std::vector<relay::Destination>(const relay::Destination &primary)>;
 	void SetExtraDestinationsProvider(ExtraDestinations provider) { extraDestinations_ = std::move(provider); }
+	// v1.1.0 loading screen: the scene viewers see while the delay builds up
+	// (BufferModeController::EffectiveLoadingScene, shared by both modes).
+	void SetLoadingSceneProvider(std::function<std::string()> provider) { loadingScene_ = std::move(provider); }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -278,6 +282,9 @@ private:
 	relay::StreamRelay relay_;
 	// v1.1.0: Aitum Vertical's stream outputs through the delay too.
 	VerticalTaps verticalTaps_;
+	// This stream is Enhanced Broadcasting (OBS's multitrack output, which
+	// can carry the vertical canvas as tracks) and goes through the relay.
+	bool multitrackEngaged_ = false;
 	// Something went out through a relay at the last Tick: when that ends the
 	// delay turns off (each stream starts without it unless turned on).
 	bool wasStreaming_ = false;
@@ -296,6 +303,17 @@ private:
 	relay::DriveKind driveKind_ = relay::DriveKind::Unknown;
 	bool sendToMultistream_ = false;
 	ExtraDestinations extraDestinations_;
+	// v1.1.0 loading screen (loading-clip.hpp): made once OBS's stream
+	// reached the relay, kept for the next streams while the scene and the
+	// encoders stay the same.
+	std::function<std::string()> loadingScene_;
+	LoadingClipMaker loadingClip_;
+	bool loadingClipWanted_ = false;
+	std::string loadingClipKey_; // What the clip being made is for.
+	std::string cachedClipKey_;
+	std::vector<relay::LoadingVideoTrack> cachedClip_;
+	void StepLoadingClip();
+	std::string LoadingClipKey(const std::string &scene) const;
 	bool streamOnDisk_ = false;
 	bool engaged_ = false;
 	bool draining_ = false;

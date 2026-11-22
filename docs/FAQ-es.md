@@ -13,8 +13,8 @@ con delay, así que el directo **y tu grabación** van con delay; funciona con c
 todas las plataformas. **Marcada, solo a la emisión** (modo stream, Windows): el plugin apunta la
 salida de emisión de OBS a un relay dentro de OBS, en `127.0.0.1`, guarda los paquetes ya
 codificados y los envía a tu plataforma pasado el delay. Gasta mucha menos RAM y CPU y retrasa todas
-las escenas, pero la grabación, el Replay Buffer y la vista previa de OBS siguen en directo, y no
-hay escena de carga. El botón del dock, los atajos, obs-websocket y el Stream Deck manejan la opción
+las escenas, pero la grabación, el Replay Buffer y la vista previa de OBS siguen en directo; tu
+audiencia ve la escena de carga mientras se acumula el delay (desde la v1.1.0). El botón del dock, los atajos, obs-websocket y el Stream Deck manejan la opción
 elegida, y solo esa. La casilla se bloquea con el delay activo; si la marcas en pleno directo, se
 aplica desde tu próximo directo. Detalles: `docs/STREAM_MODE-es.md`.
 
@@ -52,8 +52,9 @@ fuente, y por eso ocupa de ~190 MB a ~2,3 GB para 30–60 s.
 
 **¿Qué directos pueden usar solo a la emisión?**
 Los que salen por la salida RTMP propia de OBS, por RTMP o RTMPS: Twitch, YouTube, Kick, TikTok y
-cualquier servidor rtmp:// o rtmps:// personalizado, con Enhanced Broadcasting desactivado. (Aún)
-no: Enhanced Broadcasting, los servicios SRT, RIST y WHIP, ni macOS y Linux (su FFmpeg todavía no
+cualquier servidor rtmp:// o rtmps:// personalizado, con o sin Enhanced Broadcasting (desde la
+v1.1.0 todas las pistas que envía, la vertical incluida, pasan por el delay). (Aún) no: los
+servicios SRT, RIST y WHIP, ni macOS y Linux (su FFmpeg todavía no
 tiene la parte que necesita el relay). En esos casos el dock dice por qué: desmarca "Aplicar el
 delay solo a la emisión" para retrasar todo OBS.
 
@@ -353,6 +354,13 @@ planes** abre trigglow.com/pricing; las cuentas Starter y Pro pueden desmarcarla
 **Trigglow Delay Badge (auto)**, y puedes moverla y escalarla en OBS (se queda donde la pongas).
 Solo a la emisión se pinta sobre el programa de OBS en su propio canal de salida (hasta 600 s) y no
 se puede mover a mano.
+
+**¿Qué ve mi audiencia mientras se acumula el delay? ¿Puedo cambiarlo?**
+La escena de carga, en los dos modos (solo a la emisión desde la v1.1.0: al empezar cada directo
+se prepara un clip corto con tu encoder de emisión). En Free es el vídeo "poniendo delay" de
+Trigglow y el selector **Escena de carga** queda bloqueado, con **Ver planes**; las cuentas Starter
+y Pro pueden elegir cualquier escena suya. La escena que tenías elegida se guarda y vuelve si
+mejoras de plan.
 
 **¿Qué provoca el estado `Error`?**
 Cualquier cosa que de otro modo dejaría al plugin en una condición rota pero silenciosa: no haber

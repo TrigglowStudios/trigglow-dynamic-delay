@@ -98,6 +98,9 @@ QString SinkStateTone(relay::SinkState state)
 // "Sending · 2.5 Mbps": a destination's chip.
 QString SinkChipText(const relay::SinkStatus &sink)
 {
+	// v1.1.0: while the delay builds up it sends the loading screen.
+	if (sink.state == relay::SinkState::Live && sink.loading)
+		return T("Stream.SinkState.Loading");
 	QString state = SinkStateText(sink.state);
 	if (sink.state == relay::SinkState::Live)
 		state += QStringLiteral(" · ") + QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps");

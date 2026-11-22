@@ -410,9 +410,9 @@ std::vector<relay::SinkStatus> VerticalTaps::Sinks() const
 	return sinks;
 }
 
-void VerticalTaps::SetBadge(bool visible, const std::string &imagePath, uint32_t corner)
+void VerticalTaps::SetBadge(bool visible, const std::string &imagePath, uint32_t corner, bool canvasDelayed)
 {
-	bool tapped = false;
+	bool tapped = canvasDelayed;
 	for (const auto &tap : taps_)
 		tapped = tapped || tap->swapped;
 	obs_canvas_t *canvas = obs_get_canvas_by_name(kCanvasName);

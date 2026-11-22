@@ -205,7 +205,7 @@ a live stream yet).
   watching the platform's player. So far it is unit-tested, checked with the local relay harness and
   run in a real OBS 33 on Windows against a local RTMP server (`docs/STREAM_MODE.md`,
   "Verification status").
-- **Enhanced Broadcasting, SRT, RIST and WHIP in stream mode.** Today those streams fall back to
+- **SRT, RIST and WHIP in stream mode** (Enhanced Broadcasting is done in v1.1.0). Today those streams fall back to
 - **Scene mode following scene switches: one shared ring for every scene** (evaluated 2026-11-11,
   `docs/SPEC.md` §3.9). A delay filter on each top-level scene, only the Program scene (and a running
   transition's sources) capturing into and drawing from one shared ring, audio filters writing
