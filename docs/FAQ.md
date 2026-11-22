@@ -58,7 +58,7 @@ All of OBS, the default. Those plugins encode what OBS shows, so every output th
 like OBS's own stream. With "only the stream", only OBS's own stream goes through the delay: the
 outputs those plugins start go out live, and the dock lists them while they run ("Aitum Multistream
 is sending 2 outputs live, without the delay..."). Services that take one stream and send it on
-(Restream and the like) work with both modes, since OBS only sends them one stream. The (i) next to
+(Trigglow Multistream, Restream and the like) work with both modes, since OBS only sends them one stream. The (i) next to
 Advanced in the dock sums this up.
 
 **Does Aitum Vertical get the delay?**

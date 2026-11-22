@@ -106,10 +106,18 @@ Delay"** is checked in that same menu:
 The dock appears: one panel with the status, one **Turn delay on** button, the delay and your
 scenes. By default the delay applies to all of OBS (stream and recording): pick your **live
 scene** and you're set. To delay only the stream and keep the recording live, tick **Apply the
-delay only to the stream** in Options > Advanced. The screenshot below is from an earlier version.
+delay only to the stream** in Options > Advanced.
 See `README.md` ("Using the plugin") for what to configure next.
 
 ![Trigglow Dynamic Delay dock, Inactive state](images/obs-panel-3-dock.png)
+
+Under **Options** (v1.1.0): the badge your viewers see is part of the free plan, so on Free "Show
+the delay badge to viewers" stays ticked (you still pick its corner and whether it shows the
+seconds) and **See plans** opens trigglow.com/pricing; Starter and Pro can untick it. The (i) next
+to **Advanced** says what each option covers with Aitum Multistream, Multiple RTMP Outputs and
+Aitum Vertical (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
+
+![Options: the badge box locked on Free, See plans, and the (i) next to Advanced](images/obs-options-badge.png)
 
 ## 6. Sign in once
 

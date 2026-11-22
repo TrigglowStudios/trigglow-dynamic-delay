@@ -110,10 +110,18 @@ esté marcado en ese mismo menú:
 El panel aparece: un solo panel con el estado, un solo botón **Activar delay**, el delay y tus
 escenas. Por defecto el delay se aplica a todo OBS (directo y grabación): elige tu **escena en
 directo** y listo. Para retrasar solo la emisión y dejar la grabación en directo, marca **Aplicar el
-delay solo a la emisión** en Opciones > Avanzado. La captura de abajo es de una versión anterior.
+delay solo a la emisión** en Opciones > Avanzado.
 Ver "Usar el plugin" en `README-es.md` para qué configurar a continuación.
 
 ![Panel de Trigglow Dynamic Delay, estado Inactive](images/obs-panel-3-dock.png)
+
+En **Opciones** (v1.1.0): la insignia que ven tus espectadores forma parte del plan gratuito, así
+que en Free "Mostrar la insignia de delay a los espectadores" queda marcada (sigues eligiendo su
+esquina y si muestra los segundos) y **Ver planes** abre trigglow.com/pricing; Starter y Pro pueden
+desmarcarla. La (i) junto a **Avanzado** dice qué cubre cada opción con Aitum Multistream, Multiple
+RTMP Outputs y Aitum Vertical (`docs/STREAM_MODE-es.md`, "Salidas de stream de otros plugins").
+
+![Opciones: la casilla de la insignia bloqueada en Free, Ver planes y la (i) junto a Avanzado](images/obs-options-badge.png)
 
 ## 6. Inicia sesión una vez
 

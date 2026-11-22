@@ -42,7 +42,7 @@
   the outputs those plugins start go out live, and the panel now says so while they run, naming
   the plugin and how many outputs ("Aitum Multistream is sending 2 outputs live, without the
   delay..."). An (i) next to **Advanced** sums it up. Services that take one stream and send it on
-  (Restream and the like) work with both.
+  (Trigglow Multistream, Restream and the like) work with both.
 
 ## v1.0.0 — 2026-11-11
 

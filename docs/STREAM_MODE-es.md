@@ -266,7 +266,7 @@ mientras el stream propio de OBS va con delay. Lo que hace el plugin:
 - Con todo OBS (modo escena) esas salidas codifican el programa retrasado igual que la propia de
   OBS, así que van con delay, y el lienzo vertical recibe un espejo del delay en la escena que
   muestra (`docs/SPEC.md` §3.13). La (i) junto a **Avanzado** en el dock dice qué cubre cada modo.
-- Un servicio que recibe un stream RTMP y lo reparte (Restream, Castr y similares) es solo un
+- Un servicio que recibe un stream RTMP y lo reparte (Trigglow Multistream, Restream, Castr y similares) es solo un
   destino de la salida propia de OBS: funciona con los dos modos.
 
 ## Comprobación de ajustes
