@@ -95,6 +95,7 @@ void TestValueChecks()
 	CHECK_STR(api::NormalizeLocale("pt_br"), "pt-BR");
 	CHECK_STR(api::NormalizeLocale("EN"), "en");
 	CHECK_STR(api::NormalizeLocale("ast-ES"), "en-US");
+	CHECK_STR(api::NormalizeLocale("val-ES"), "ca-ES");
 	CHECK_STR(api::NormalizeLocale(""), "en-US");
 	CHECK_STR(api::LoggableCode("client_disabled"), "client_disabled");
 	CHECK_STR(api::LoggableCode("Evil\nline"), "?");

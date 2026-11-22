@@ -5,6 +5,10 @@
 ## Unreleased
 
 **What's new:**
+- **16 languages.** The panel, the settings and the messages are now in Catalan, Valencian, German,
+  Basque, French, Galician, Hindi, Italian, Japanese, Korean, Russian and Ukrainian too, besides
+  English, Spanish, Brazilian Portuguese and Simplified Chinese: the plugin follows OBS's language.
+  The "adding delay" loading video your viewers see comes in the same 16, horizontal and vertical.
 - **Update from OBS.** When a new version is out, the dock shows a card with it and an **Update**
   button, and the first time you open OBS after it's published a window tells you once. On
   Windows, **Update now** downloads the installer, checks it against the SHA-256 GitHub publishes

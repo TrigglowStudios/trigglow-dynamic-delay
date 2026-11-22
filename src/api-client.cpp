@@ -414,6 +414,10 @@ std::string NormalizeLocale(std::string_view obsLocale)
 	std::string s;
 	for (char c : obsLocale)
 		s += c == '_' ? '-' : c;
+	// v1.1.0: OBS's Valencian ("val-ES") doesn't fit the form: Catalan.
+	if (s.size() >= 3 && toLower(s[0]) == 'v' && toLower(s[1]) == 'a' && toLower(s[2]) == 'l' &&
+	    (s.size() == 3 || s[3] == '-'))
+		return "ca-ES";
 	if (s.size() == 2 || (s.size() == 5 && s[2] == '-')) {
 		s[0] = toLower(s[0]);
 		s[1] = toLower(s[1]);

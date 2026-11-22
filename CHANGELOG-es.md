@@ -5,6 +5,10 @@
 ## Sin publicar
 
 **Novedades:**
+- **16 idiomas.** El panel, los ajustes y los mensajes están ahora también en catalán, valenciano,
+  alemán, euskera, francés, gallego, hindi, italiano, japonés, coreano, ruso y ucraniano, además de
+  inglés, español, portugués de Brasil y chino simplificado: el plugin sigue el idioma de OBS. El
+  vídeo de carga "poniendo delay" que ve tu audiencia viene en los mismos 16, horizontal y vertical.
 - **Actualiza desde OBS.** Cuando sale una versión nueva, el dock la enseña en una tarjeta con un
   botón **Actualizar**, y la primera vez que abres OBS después de publicarse una ventana te avisa
   (una sola vez). En Windows, **Actualizar ahora** descarga el instalador, lo comprueba con el
