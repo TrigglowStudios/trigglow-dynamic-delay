@@ -53,6 +53,22 @@ Broadcasting, SRT, RIST and WHIP services, and macOS and Linux (their FFmpeg doe
 part the relay needs yet). In those cases the dock says why: untick "Apply the delay only to the
 stream" to delay all of OBS.
 
+**I multistream with Aitum Multistream or Multiple RTMP Outputs. Which mode delays every platform?**
+All of OBS, the default. Those plugins encode what OBS shows, so every output they start is delayed
+like OBS's own stream. With "only the stream", only OBS's own stream goes through the delay: the
+outputs those plugins start go out live, and the dock lists them while they run ("Aitum Multistream
+is sending 2 outputs live, without the delay..."). Services that take one stream and send it on
+(Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both modes, since OBS only sends them one stream. The (i) next to
+Advanced in the dock sums this up.
+
+**Does Aitum Vertical get the delay?**
+With all of OBS, yes, since v1.1.0: the scene the vertical canvas shows is delayed by the same
+seconds, whatever it is called (1.0 only delayed a vertical scene named like one of your delayed
+scenes). The dock warns that the delay then uses about twice the resources, because that canvas
+keeps a buffer of its own. While that buffer fills, and each time the vertical canvas switches
+scene, it shows black for the delay. With "only the stream", the vertical stream goes out live and
+the dock says so.
+
 **Does the stream reconnect when I turn the delay on, off, up or down?**
 No. The relay keeps one connection to your platform and splices: turning the delay on (or raising
 it) jumps back to an older keyframe, so viewers see the last seconds again, never anything newer;
@@ -308,7 +324,9 @@ hotkeys aren't affected. If you go back to v0.5.0 or earlier afterwards, it crea
 One image the plugin draws itself: since v1.0.0 a rounded plate with the Dynamic Delay logo,
 "DELAY" and your seconds, and "Dynamic Delay by Trigglow" under them, the same in every language. It
 only shows while the delay is on. **Show the delay badge to viewers** and **Badge position** (dock:
-Options) work for both modes. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
+Options) work for both modes. Since v1.1.0 the badge is part of the free plan: on Free the first box
+is locked (viewers always see the badge; the corner and "Show the seconds on the badge" stay yours)
+and **See plans** opens trigglow.com/pricing; Starter and Pro accounts can untick it. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
 you can move and resize it in OBS (it stays where you put it). With only the stream it's drawn over
 OBS's program on its own output channel (up to 600 s) and can't be moved by hand.
 

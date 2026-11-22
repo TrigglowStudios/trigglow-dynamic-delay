@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "scene-combo-box.hpp"
 #include "settings-ui-parts.hpp"
 #include "stream-delay-controller.hpp"
+#include "trigi-widgets.hpp" // supportui::OpenWebPage, for "See plans".
 #include "ui-tasks.hpp"
 #include "update-checker.hpp"
 #include "update-dialog.hpp"
@@ -1326,6 +1327,22 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 	body->addWidget(MakeDivider(host));
 	body->addSpacing(2);
 	body->addWidget(MakeCheckRow(host, overlayCheck_, overlayText_, T("Dock.Overlay.Label")));
+	// v1.1.0: the badge is part of the free plan (Starter and Pro can hide
+	// it): the box locks with this line and a link to the plans.
+	overlayLockRow_ = MakeNoteRow(host, overlayLockIcon_, T("Dock.Overlay.Locked"));
+	overlayLockRow_->setContentsMargins(24, 0, 0, 0);
+	body->addWidget(overlayLockRow_);
+	plansButton_ = new QPushButton(T("Dock.Overlay.SeePlans"), host);
+	plansButton_->setProperty("tgVariant", QStringLiteral("secondary"));
+	plansButton_->setFocusPolicy(Qt::TabFocus);
+	plansButton_->setCursor(Qt::PointingHandCursor);
+	plansButton_->setToolTip(T("Dock.Overlay.SeePlans.Tooltip"));
+	plansButton_->setIconSize(kButtonIconBox);
+	plansButton_->setLayoutDirection(Qt::RightToLeft); // Icon after the text: it opens the browser.
+	SetRole(plansButton_, "button", ui::FontRole::Button);
+	plansButton_->setVisible(false);
+	body->addWidget(plansButton_);
+	connect(plansButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kPricing); });
 	body->addWidget(MakeCheckRow(host, overlaySecondsCheck_, overlaySecondsText_, T("Dock.Overlay.Seconds.Label")));
 	overlaySecondsCheck_->setToolTip(T("Dock.Overlay.Seconds.Tooltip"));
 	overlaySecondsCheck_->setAccessibleDescription(T("Dock.Overlay.Seconds.Tooltip"));
@@ -1374,7 +1391,23 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 	body->addSpacing(2);
 	body->addWidget(MakeDivider(host));
 	body->addSpacing(2);
-	body->addWidget(MakeEyebrow(T("Dock.Advanced"), nullptr, host));
+	{
+		// The eyebrow with an (i): multistream and vertical plugins with each
+		// mode live in its tooltip (v1.1.0), not in a paragraph.
+		auto *eyebrowRow = new QWidget(host);
+		auto *eyebrowLayout = new QHBoxLayout(eyebrowRow);
+		eyebrowLayout->setContentsMargins(0, 0, 0, 0);
+		eyebrowLayout->setSpacing(6);
+		eyebrowLayout->addWidget(MakeEyebrow(T("Dock.Advanced"), nullptr, eyebrowRow), 0, Qt::AlignVCenter);
+		multistreamInfo_ = MakeIconLabel(eyebrowRow, kInlineIconSize);
+		multistreamInfo_->setToolTip(T("Dock.Multistream.Tooltip"));
+		multistreamInfo_->setAccessibleName(T("Dock.Multistream.Title"));
+		multistreamInfo_->setAccessibleDescription(T("Dock.Multistream.Tooltip"));
+		multistreamInfo_->setCursor(Qt::WhatsThisCursor);
+		eyebrowLayout->addWidget(multistreamInfo_, 0, Qt::AlignVCenter);
+		eyebrowLayout->addStretch(1);
+		body->addWidget(eyebrowRow);
+	}
 	body->addWidget(MakeCheckRow(host, applyCheck_, applyText_, T("Dock.ApplyTo.Stream")));
 	applyCheck_->setToolTip(T("Dock.ApplyTo.Tooltip"));
 	applyText_->setToolTip(T("Dock.ApplyTo.Tooltip"));
@@ -1611,6 +1644,9 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(sceneSwitchIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(healthIcon_, ui::IconId::Sliders, QStringLiteral("warning"), kInlineIconSize);
 	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(overlayLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(multistreamInfo_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
+	SetButtonIcon(plansButton_, ui::IconId::ExternalLink, ui::ToQColor(t.text), Qt::AlignRight);
 	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
 	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
 	SetIcon(multiNoteIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
@@ -1755,7 +1791,14 @@ void TrigglowDelayDock::Refresh()
 	// values (the dock writes both, plugin-main.cpp aligns them at load).
 	const bool showOverlay = streamOnly ? stream.showOverlay : scene.showOverlay;
 	const uint32_t corner = streamOnly ? stream.overlayCorner : scene.overlayCorner;
+	// v1.1.0: locked on Free (and signed out): the box stays ticked and
+	// disabled, the line under it says why, "See plans" opens the pricing.
+	const bool badgeLocked = streamOnly ? stream.badgeLocked : scene.badgeLocked;
 	overlayCheck_->setChecked(showOverlay);
+	overlayCheck_->setEnabled(!badgeLocked);
+	overlayText_->setEnabled(!badgeLocked);
+	overlayLockRow_->setVisible(badgeLocked);
+	plansButton_->setVisible(badgeLocked && authManager_.IsLoggedIn());
 	const int cornerIndex = overlayCornerCombo_->findData(static_cast<int>(corner));
 	if (cornerIndex >= 0)
 		overlayCornerCombo_->setCurrentIndex(cornerIndex);
@@ -2172,6 +2215,12 @@ void TrigglowDelayDock::RefreshAccountUi()
 {
 	using LoginError = AuthManager::LoginError;
 	const LoginError error = authManager_.LastError();
+	// v1.1.0: the plan decides whether the delay badge may be hidden (Starter
+	// and Pro); both engines lock their box from the one answer. Each
+	// controller ignores the call when nothing changes.
+	const bool badgeLocked = !authManager_.HideBadgeAllowed();
+	bufferController_.SetBadgeLocked(badgeLocked);
+	streamController_.SetBadgeLocked(badgeLocked);
 	ui::IconId icon = ui::IconId::Lock;
 	QString iconTone = QStringLiteral("muted");
 	QString text;
@@ -2198,6 +2247,10 @@ void TrigglowDelayDock::RefreshAccountUi()
 						.toHtmlEscaped()
 						.arg(QStringLiteral("<span style=\"font-weight:600;\">%1</span>")
 							     .arg(name.toHtmlEscaped()));
+		// The plan after the name ("Starter plan"), once the server said it.
+		const QString plan = QString::fromStdString(authManager_.Account().planName);
+		if (!plan.isEmpty())
+			text += QStringLiteral(" · ") + T("Dock.Account.Plan").toHtmlEscaped().arg(plan.toHtmlEscaped());
 		inlineText = T("Dock.Account.SignOut");
 	} else if (authManager_.IsLoggingIn()) {
 		inlineText = T("Dock.Account.Cancel");

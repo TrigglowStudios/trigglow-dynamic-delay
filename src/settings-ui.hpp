@@ -458,6 +458,14 @@ private:
 	// "Show the seconds on the badge": off leaves only the mark and the name.
 	QCheckBox *overlaySecondsCheck_ = nullptr;
 	QLabel *overlaySecondsText_ = nullptr;
+	// v1.1.0: the badge box locked (Free plan, or signed out): the lock line
+	// under it and "See plans" (opens trigglow.com/pricing).
+	QWidget *overlayLockRow_ = nullptr;
+	QLabel *overlayLockIcon_ = nullptr;
+	QPushButton *plansButton_ = nullptr;
+	// v1.1.0: the (i) next to the Advanced eyebrow: multistream and vertical
+	// plugins with each mode, in its tooltip.
+	QLabel *multistreamInfo_ = nullptr;
 	// Rows that reflow to a column when the dock is narrow -- see ApplyNarrowLayout().
 	QBoxLayout *accountLayout_ = nullptr; // Text | inline button; stacked when narrow.
 	QBoxLayout *buttonRow_ = nullptr;

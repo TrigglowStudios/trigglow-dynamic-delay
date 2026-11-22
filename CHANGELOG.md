@@ -25,6 +25,24 @@
   delay is on, its seconds and where the stream goes, and can turn it on or off, change the seconds
   or drop what hasn't aired yet. It applies in a few seconds, like a hotkey.
 - A stream to Trigglow Multistream shows as "Trigglow Multistream" in the dock.
+- **The delay badge is part of the free plan.** On Free, viewers always see the "Delay 30 s"
+  badge while the delay is on: you still pick its corner and whether it shows the seconds, but
+  "Show the delay badge to viewers" is locked, with a line that says why and a **See plans**
+  button. Starter and Pro accounts can untick it as before. The dock shows your plan next to your
+  name ("Signed in as X · Starter plan"). The plugin asks trigglow.com at each OBS start and keeps
+  the last answer for a start without a connection; a settings file from an earlier version locks
+  nothing until the server has answered once.
+- **Multistream and vertical, reviewed.** With the delay on all of OBS (the default), every output
+  of your main canvas is delayed too: Aitum Multistream, Multiple RTMP Outputs and anything else
+  that encodes what OBS shows. An Aitum Vertical canvas now gets the delay on **the scene it
+  shows, whatever it is called**: 1.0 only delayed a vertical scene named like one of your delayed
+  scenes, so most vertical streams went out live with delayed sound. A scene the vertical canvas
+  switches to while the delay is on gets it too (black for the delay while its buffer fills, as
+  before). With "Apply the delay only to the stream", only OBS's own stream goes through the delay:
+  the outputs those plugins start go out live, and the panel now says so while they run, naming
+  the plugin and how many outputs ("Aitum Multistream is sending 2 outputs live, without the
+  delay..."). An (i) next to **Advanced** sums it up. Services that take one stream and send it on
+  (Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both.
 
 ## v1.0.0 — 2026-11-11
 

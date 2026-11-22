@@ -188,6 +188,13 @@ void AuthManager::ApplySessionCheck(const auth::MeResult &r)
 		if (!r.displayName.empty())
 			displayName_ = r.displayName;
 		trigi_ = r.trigi;
+		if (r.account.known) {
+			account_ = r.account;
+			cachedHideBadge_ = r.account.hideBadge;
+			TRIGGLOW_LOG_INFO(kComponent, "plan %s: the delay badge %s be hidden",
+					  api::LoggableCode(r.account.planId).c_str(),
+					  r.account.hideBadge ? "can" : "can't");
+		}
 		accountInactive_ = false;
 		break;
 	case auth::MeStatus::SessionEnded:
@@ -266,6 +273,8 @@ void AuthManager::EndSession(LoginError reason)
 	session_ = Session::None;
 	accountInactive_ = false;
 	displayName_.clear();
+	account_ = auth::AccountFeatures{};
+	cachedHideBadge_ = false;
 	trigi_ = auth::TrigiInfo{};
 	lastError_ = reason;
 	TRIGGLOW_LOG_INFO(kComponent, "session ended");
@@ -491,6 +500,8 @@ void AuthManager::Logout()
 	accountInactive_ = false;
 	displayName_.clear();
 	trigi_ = auth::TrigiInfo{};
+	account_ = auth::AccountFeatures{};
+	cachedHideBadge_ = false;
 	lastError_ = LoginError::None;
 	TRIGGLOW_LOG_INFO(kComponent, "signed out");
 	tasks::Registry *registry = uitasks::Registry();

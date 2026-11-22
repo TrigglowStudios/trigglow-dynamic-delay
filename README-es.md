@@ -52,8 +52,12 @@ YouTube, Kick, TikTok, servidores personalizados). Con Enhanced Broadcasting, SR
 dock dice que ese directo no puede usarlo: desmarca la opción para retrasar todo OBS. Detalles:
 `docs/STREAM_MODE-es.md`.
 
-Las dos tienen la insignia de delay para los espectadores, tres presets, atajos, obs-websocket y
-Stream Deck.
+Multistream: a todo OBS, las salidas que arrancan otros plugins (Aitum Multistream, Multiple RTMP
+Outputs) y un lienzo de Aitum Vertical también van con delay; solo a la emisión salen en directo y
+el dock lo dice (`docs/STREAM_MODE-es.md`, "Salidas de stream de otros plugins").
+
+Las dos tienen la insignia de delay para los espectadores (siempre visible en el plan Free; Starter
+y Pro pueden ocultarla), tres presets, atajos, obs-websocket y Stream Deck.
 
 ## Cómo funciona
 

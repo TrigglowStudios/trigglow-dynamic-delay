@@ -123,6 +123,7 @@ void TestWebPages()
 	CHECK(api::IsAllowedWebUrl(api::web::kPrivacy));
 	CHECK(api::IsAllowedWebUrl(api::web::kProduct));
 	CHECK(api::IsAllowedWebUrl(api::web::kLatestRelease));
+	CHECK(api::IsAllowedWebUrl(api::web::kPricing));
 	CHECK(api::IsAllowedWebUrl(api::AppSupportTicketUrl("123e4567-e89b-12d3-a456-426614174000")));
 	CHECK(api::IsAllowedWebUrl(api::PublicSupportTicketUrl("123e4567-e89b-12d3-a456-426614174000", "ab12cd")));
 	CHECK(api::IsAllowedWebUrl(Url("https", "www.trigglow.com/plugin/link?code=abc_DEF-123")));
