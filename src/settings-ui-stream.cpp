@@ -98,6 +98,9 @@ QString SinkStateTone(relay::SinkState state)
 // "Sending · 2.5 Mbps": a destination's chip.
 QString SinkChipText(const relay::SinkStatus &sink)
 {
+	// v1.1.0: while the delay builds up it sends the loading screen.
+	if (sink.state == relay::SinkState::Live && sink.loading)
+		return T("Stream.SinkState.Loading");
 	QString state = SinkStateText(sink.state);
 	if (sink.state == relay::SinkState::Live)
 		state += QStringLiteral(" · ") + QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps");
@@ -366,7 +369,9 @@ void TrigglowDelayDock::BuildRules(QVBoxLayout *body)
 		obs_source_t *current = obs_frontend_get_current_scene();
 		const std::string name = current ? obs_source_get_name(current) : "";
 		obs_source_release(current);
-		AddRuleRow(name, static_cast<int>(SceneAction::DelayOn), 0);
+		// v1.1.0: a new rule does nothing until the streamer picks what it does,
+		// so adding a scene never turns the delay on by itself.
+		AddRuleRow(name, static_cast<int>(SceneAction::None), 0);
 		RulesChanged();
 		if (!ruleRows_.empty())
 			ruleRows_.back().scene->setFocus(Qt::TabFocusReason);

@@ -191,9 +191,11 @@ void AuthManager::ApplySessionCheck(const auth::MeResult &r)
 		if (r.account.known) {
 			account_ = r.account;
 			cachedHideBadge_ = r.account.hideBadge;
-			TRIGGLOW_LOG_INFO(kComponent, "plan %s: the delay badge %s be hidden",
+			TRIGGLOW_LOG_INFO(kComponent,
+					  "plan %s: the delay badge %s be hidden, the loading scene %s be chosen",
 					  api::LoggableCode(r.account.planId).c_str(),
-					  r.account.hideBadge ? "can" : "can't");
+					  r.account.hideBadge ? "can" : "can't",
+					  r.account.customLoading ? "can" : "can't");
 		}
 		accountInactive_ = false;
 		break;

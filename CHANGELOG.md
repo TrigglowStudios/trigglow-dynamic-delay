@@ -43,6 +43,29 @@
   the plugin and how many outputs ("Aitum Multistream is sending 2 outputs live, without the
   delay..."). An (i) next to **Advanced** sums it up. Services that take one stream and send it on
   (Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both.
+- **Aitum Vertical with "only the stream".** Its vertical stream now goes through the delay too,
+  with the same seconds as OBS's own, Dump and the badge included, and the dock lists it with your
+  other destinations. The first time it starts in an OBS session it goes out directly for a
+  fraction of a second, then the plugin restarts it through the delay. Use a stream key of its own
+  for the vertical stream: Restream and most platforms accept one sender per key.
+- **The loading screen with "only the stream".** While the delay builds up, viewers now see the
+  loading scene, as with all of OBS, instead of the last seconds again (when you raise it live) or
+  nothing (when the stream starts with the delay on). The plugin makes a short clip of it with your
+  own stream encoder when each stream starts (a few seconds of extra encoding, once) and the dock
+  shows "Loading screen" on the destination meanwhile. Works with Enhanced Broadcasting too
+  (vertical tracks get it fitted). H.264 streams.
+- **Choosing the loading scene is for Starter and Pro.** On Free, viewers see Trigglow's "adding
+  delay" video in both modes; the picker is locked with a line that says why and a **See plans**
+  button. A scene you had chosen is kept and comes back if you upgrade.
+- **Enhanced Broadcasting works with "only the stream".** Every track it sends (each quality,
+  and the vertical canvas when you send one) goes through the delay together, in sync, with Dump,
+  the badge and the last seconds sent after you stop. Your Multistream channels get the main
+  track as a regular stream. Nothing to change: turning Enhanced Broadcasting on or off is up to
+  you.
+- **The delay is off by default with "only the stream".** It no longer turns itself on: Delay by
+  scene rules act only while you're live (switching scenes in OBS before going live doesn't arm
+  it), a new rule does nothing until you choose what it does, and when a stream ends the delay
+  turns off, so the next one starts without it unless you turn it on.
 
 ## v1.0.0 — 2026-11-11
 

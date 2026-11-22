@@ -47,6 +47,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace trigglow::relay {
@@ -95,6 +96,11 @@ public:
 	// up to the next keyframe. Senders behind the new front re-splice.
 	void DropLost();
 
+	// v1.1.0 loading screen: the primary keyframe at or before `seq` (where a
+	// sink that stops sending at `seq` resumes without skipping anything),
+	// as a splice start. False when none is kept.
+	bool FindKeyAtOrBefore(uint64_t seq, uint64_t &seqOut) const;
+
 	// Drops whole GOPs from the front while the NEXT video keyframe is still
 	// older than now - retention, and never past `minKeepSeq` (the oldest
 	// packet a sink still needs). Audio-only streams trim packet by packet.
@@ -122,6 +128,12 @@ public:
 	// RAM held for the history: records plus the packets' metadata.
 	size_t RamBytes() const { return store_.RamBytes() + packets_.CapacityBytes(); }
 	bool HasVideo() const { return sawVideo_; }
+	// v1.1.0 Enhanced Broadcasting: OBS can send several video tracks at once
+	// (multitrack E-RTMP, one per quality and canvas), each with its own
+	// stream index and GOP-aligned keyframes. The history splices and trims at
+	// the keyframes of the lowest video stream index (the primary track), and
+	// a splice starts at the first keyframe of that same frame on any track.
+	uint8_t PrimaryVideoStream() const { return primaryVideo_; }
 
 	// Seconds the history covers (newest arrival - oldest arrival).
 	double SpanSeconds() const;
@@ -140,7 +152,31 @@ private:
 	uint64_t nextSeq_ = 0;
 	size_t bytes_ = 0;
 	bool sawVideo_ = false;
+	uint8_t primaryVideo_ = 0xFF;
 	int64_t spliceFloorNs_ = INT64_MIN;
+
+	bool IsSpliceKey(const Packet &p) const
+	{
+		return p.kind == MediaKind::Video && p.keyframe && p.stream == primaryVideo_;
+	}
+	// `i` is a primary keyframe: the index of the first keyframe of the same
+	// frame on the other video tracks, when they arrived just before it.
+	size_t SpliceStart(size_t i) const;
+};
+
+// v1.1.0 loading screen: what viewers see while the delay builds up in
+// stream mode, instead of the seconds they already saw again. One short
+// clip per stream (the loading scene encoded like the stream, and silence),
+// each looped on its own. Packets' timestamps start at 0 (the first video
+// packet is a keyframe) and their recordOffset indexes the owner's payloads.
+struct FillerTrack {
+	uint8_t stream = 0; // The stream (index) it stands in for.
+	MediaKind kind = MediaKind::Video;
+	std::vector<Packet> packets;
+	int64_t loopMs = 0; // One loop's length; the next starts right after.
+};
+struct Filler {
+	std::vector<FillerTrack> tracks;
 };
 
 // A packet ready to leave, with its timestamps rewritten for the destination.
@@ -148,6 +184,12 @@ struct OutPacket {
 	const Packet *packet = nullptr;
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
+	// Set for a loading-clip packet (packet points into it).
+	const FillerTrack *filler = nullptr;
+	// The first packet of its stream since the source changed (the stream
+	// and the loading clip have codec headers of their own): the sender puts
+	// that source's header before it.
+	bool newSource = false;
 };
 
 struct SpliceInfo {
@@ -158,6 +200,9 @@ struct SpliceInfo {
 	// True when the history is shorter than the delay asked for: the sink waits
 	// (the picture holds) until the oldest kept keyframe is old enough.
 	bool shortHistory = false;
+	// v1.1.0: the loading clip plays while the delay builds up (SetFiller),
+	// instead of a replay or a wait.
+	bool filling = false;
 };
 
 class SinkScheduler {
@@ -188,13 +233,29 @@ public:
 	// destination connection that wants a fresh one).
 	void ResetTimeline();
 
+	// v1.1.0 loading screen. With a filler, raising the delay no longer
+	// replays what viewers saw: the sink stops at the keyframe at or before
+	// where it was, sends the loading clip until that keyframe is due at the
+	// new delay, then goes on from it (a stream that starts with less history
+	// than the delay plays it too, instead of waiting). Null: as before.
+	void SetFiller(std::shared_ptr<const Filler> filler);
+	bool Filling() const { return filling_; }
+
 	bool Started() const { return started_; }
 	uint64_t CursorSeq() const { return cursor_; }
 	int64_t DelayNs() const { return delayNs_; }
-	bool CaughtUp(const PacketHistory &history) const { return cursor_ >= history.EndSeq(); }
+	bool CaughtUp(const PacketHistory &history) const { return !filling_ && cursor_ >= history.EndSeq(); }
 
 private:
 	SpliceInfo TrySplice(int64_t nowNs, const PacketHistory &history);
+	bool CanFill(const PacketHistory &history) const;
+	void StartFill(int64_t nowNs);
+	void EndFill(const Packet &resume);
+	void EmitFiller(int64_t nowNs, std::vector<OutPacket> &out, size_t maxPackets);
+	// Per-stream bookkeeping for every packet that leaves (stream or clip):
+	// false when it must be skipped (a video track waiting for its keyframe,
+	// audio that would go back in time).
+	bool Account(const Packet &p, int64_t &dts, int64_t &pts, bool &newSource);
 
 	bool started_ = false;
 	// SetDelay() came before the history had a splice point (no keyframe yet):
@@ -204,8 +265,33 @@ private:
 	int64_t delayNs_ = 0;
 	int64_t offsetMs_ = 0;
 	bool haveTimeline_ = false;
-	int64_t lastVideoDtsOut_ = 0;
-	int64_t maxVideoPtsOut_ = 0; // Newest display time sent (B-frames: ahead of dts).
+	// Per video stream (multitrack sends several, all on the same clock).
+	struct VideoOut {
+		int64_t lastDts = 0;
+		int64_t maxPts = 0; // Newest display time sent (B-frames: ahead of dts).
+		bool have = false;
+		// The splice this track last sent a keyframe after: until it matches
+		// spliceGen_, its frames are skipped (they'd need a keyframe that
+		// wasn't sent).
+		uint32_t keyGen = 0;
+	};
+	std::vector<VideoOut> video_;
+	uint32_t spliceGen_ = 0;
+	VideoOut &VideoState(uint8_t stream);
+	// Loading screen.
+	std::shared_ptr<const Filler> filler_;
+	bool filling_ = false;
+	int64_t fillStartNs_ = 0;
+	int64_t fillBaseMs_ = 0;
+	struct FillPos {
+		size_t index = 0;
+		int64_t loop = 0;
+	};
+	std::vector<FillPos> fillPos_; // Per filler track.
+	// The source changes (stream <-> clip): each stream's first packet after
+	// it carries the source's codec header (OutPacket::newSource).
+	uint32_t sourceGen_ = 0;
+	std::vector<uint32_t> streamSourceGen_;
 	int64_t lastAudioDtsOut_ = 0;
 	int64_t lastAnyDtsOut_ = 0;
 	bool haveVideoOut_ = false;

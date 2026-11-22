@@ -77,6 +77,10 @@ StreamDelayController::StreamDelayController()
 		std::lock_guard<std::mutex> lock(eventMutex_);
 		lastEvent_ = message;
 	});
+	verticalTaps_.SetEventCallback([this](const std::string &message) {
+		std::lock_guard<std::mutex> lock(eventMutex_);
+		lastEvent_ = message;
+	});
 }
 
 StreamDelayController::~StreamDelayController()
@@ -112,6 +116,7 @@ void StreamDelayController::Shutdown()
 	timer_.reset();
 	RestoreFrontendService();
 	relay_.Stop();
+	verticalTaps_.Shutdown();
 	if (loopbackService_) {
 		obs_service_release(loopbackService_);
 		loopbackService_ = nullptr;
@@ -122,9 +127,14 @@ void StreamDelayController::Shutdown()
 
 bool StreamDelayController::Dump()
 {
-	if (!engaged_ || !delayOn_ || relay_.Delay() == 0)
+	const bool mainDelayed = engaged_ && relay_.Delay() > 0;
+	const bool verticalDelayed = verticalTaps_.AnyStreaming();
+	if (!delayOn_ || (!mainDelayed && !verticalDelayed))
 		return false;
-	relay_.Dump();
+	if (mainDelayed)
+		relay_.Dump();
+	if (verticalDelayed)
+		verticalTaps_.Dump();
 	// Back to the delay once there are its seconds of stream after the dump
 	// (plus a keyframe interval for the splice), rewinding only into them.
 	dumpRestoreAtNs_ =
@@ -142,6 +152,7 @@ void StreamDelayController::SetPreset(int index, uint32_t seconds)
 	presets_[index] = std::max<uint32_t>(1, relay::ClampDelaySeconds(seconds));
 	if (engaged_)
 		relay_.SetKeepSeconds(RamKeepSeconds());
+	verticalTaps_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
 }
 
@@ -175,12 +186,15 @@ void StreamDelayController::SetSceneRules(std::vector<SceneRule> rules)
 	sceneRules_ = std::move(rules);
 	if (engaged_)
 		relay_.SetKeepSeconds(RamKeepSeconds());
+	verticalTaps_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
 }
 
 void StreamDelayController::ApplySceneRule()
 {
-	if (!HandlesControls())
+	// Only while a stream goes out through the delay: switching scenes in OBS
+	// with nothing live never turns the delay on (or arms it) by itself.
+	if (!HandlesControls() || !(engaged_ || verticalTaps_.AnyStreaming()))
 		return;
 	obs_source_t *scene = obs_frontend_get_current_scene();
 	const std::string name = scene ? obs_source_get_name(scene) : "";
@@ -253,6 +267,9 @@ void StreamDelayController::UpdateOverlay()
 {
 	constexpr uint32_t kOverlayChannel = 61;
 	const bool want = showOverlay_ && delayOn_ && overlayImage_ && (engaged_ || HandlesControls());
+	// The same badge on Aitum Vertical's canvas while its stream goes through the delay.
+	verticalTaps_.SetBadge(want, want ? overlayImage_(delaySeconds_) : std::string(), overlayCorner_,
+			       multitrackEngaged_ && (engaged_ || draining_));
 	if (!want) {
 		if (overlayShown_) {
 			obs_set_output_source(kOverlayChannel, nullptr);
@@ -357,8 +374,8 @@ void StreamDelayController::SetDelaySeconds(uint32_t seconds)
 	if (seconds == delaySeconds_)
 		return;
 	delaySeconds_ = seconds;
-	if (engaged_ && delayOn_)
-		relay_.SetDelay(EffectiveDelay());
+	if (delayOn_)
+		PushDelay(EffectiveDelay());
 	Notify();
 }
 
@@ -400,8 +417,7 @@ bool StreamDelayController::Enable()
 	if (delayOn_)
 		return true;
 	delayOn_ = true;
-	if (engaged_)
-		relay_.SetDelay(EffectiveDelay());
+	PushDelay(EffectiveDelay());
 	TRIGGLOW_LOG_INFO(kComponent, "delay on (%us)%s", delaySeconds_, engaged_ ? "" : ", armed for the next stream");
 	Notify();
 	return true;
@@ -413,8 +429,7 @@ void StreamDelayController::Disable()
 		return;
 	delayOn_ = false;
 	dumpRestoreAtNs_ = 0;
-	if (engaged_)
-		relay_.SetDelay(0);
+	PushDelay(0);
 	TRIGGLOW_LOG_INFO(kComponent, "delay off");
 	Notify();
 }
@@ -493,6 +508,8 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	}
 	if (engaged_ || draining_)
 		status.relay = relay_.GetStatus();
+	for (relay::SinkStatus &sink : verticalTaps_.Sinks())
+		status.relay.sinks.push_back(std::move(sink));
 	return status;
 }
 
@@ -513,8 +530,11 @@ void StreamDelayController::FrontendEvent(int event, void *param)
 		self->VerifyOutputUsesRelay();
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
+		self->loadingClipWanted_ = false;
+		self->loadingClip_.Cancel();
 		self->RestoreFrontendService();
 		self->relay_.Stop();
+		self->verticalTaps_.Shutdown();
 		self->engaged_ = false;
 		self->draining_ = false;
 		break;
@@ -531,6 +551,7 @@ void StreamDelayController::OnStreamingStarting()
 		draining_ = false;
 	}
 	engaged_ = false;
+	multitrackEngaged_ = false;
 	ineligible_.clear();
 	{
 		std::lock_guard<std::mutex> lock(eventMutex_);
@@ -550,6 +571,16 @@ void StreamDelayController::OnStreamingStarting()
 	obs_service_t *service = obs_frontend_get_streaming_service();
 	const char *outputId = output ? obs_output_get_id(output) : nullptr;
 	const char *outputName = output ? obs_output_get_name(output) : nullptr;
+	// v1.1.0 Enhanced Broadcasting: OBS streams through its own multitrack
+	// output ("rtmp multitrack video"), which already has a private service
+	// with the ingest the platform gave it (and the key with its query) by
+	// the time this event fires (BasicOutputHandler::SetupMultitrackVideo).
+	// That service is where the relay sends; the streamer's own service only
+	// names the platform.
+	const bool multitrack = outputName && std::strstr(outputName, "multitrack") != nullptr;
+	obs_service_t *frontendService = service;
+	if (multitrack && output)
+		service = obs_output_get_service(output);
 	const char *protocol = service ? obs_service_get_protocol(service) : nullptr;
 	std::string server;
 	std::string key;
@@ -562,8 +593,8 @@ void StreamDelayController::OnStreamingStarting()
 
 	if (!output || !outputId || std::strcmp(outputId, "rtmp_output") != 0)
 		ineligible_ = "output";
-	else if (outputName && std::strstr(outputName, "multitrack"))
-		ineligible_ = "multitrack";
+	else if (!service || service == loopbackService_)
+		ineligible_ = "server";
 	else if (!protocol || !(std::strcmp(protocol, "RTMP") == 0 || std::strcmp(protocol, "RTMPS") == 0))
 		ineligible_ = "protocol";
 	else if (server.empty() || !(StartsWith(server.c_str(), "rtmp://") || StartsWith(server.c_str(), "rtmps://")))
@@ -581,7 +612,7 @@ void StreamDelayController::OnStreamingStarting()
 
 	std::vector<relay::Destination> destinations;
 	relay::Destination primary;
-	primary.name = ServiceDisplayName(service, server, key);
+	primary.name = ServiceDisplayName(frontendService ? frontendService : service, server, key);
 	primary.server = server;
 	primary.key = key;
 	primary.primary = true;
@@ -628,6 +659,13 @@ void StreamDelayController::OnStreamingStarting()
 	obs_data_set_string(settings, "server", loopServer.c_str());
 	obs_data_set_string(settings, "key", loopKey.c_str());
 	obs_data_set_bool(settings, "use_auth", false);
+	// Enhanced Broadcasting builds a new output for every stream, and libobs
+	// won't hand a service the previous one may still hold (it stays
+	// "active" past that output's teardown): a fresh one each time.
+	if (loopbackService_ && multitrack) {
+		obs_service_release(loopbackService_);
+		loopbackService_ = nullptr;
+	}
 	if (loopbackService_)
 		obs_service_update(loopbackService_, settings);
 	else
@@ -640,15 +678,32 @@ void StreamDelayController::OnStreamingStarting()
 	// now, and the frontend's service is swapped for it until OBS has started
 	// the output (same UI call, see RestoreFrontendService).
 	obs_output_set_service(output, loopbackService_);
-	SwapFrontendService();
+	if (obs_output_get_service(output) != loopbackService_) {
+		// libobs refused the swap: the stream would go out undelayed while
+		// the dock said otherwise.
+		TRIGGLOW_LOG_ERROR(kComponent,
+				   "OBS's stream output didn't take the relay; this stream goes out without it");
+		relay_.Stop();
+		ineligible_ = "relay";
+		obs_output_release(output);
+		Notify();
+		return;
+	}
+	// The multitrack output is OBS's own per stream: Advanced mode's
+	// obs_output_set_service() goes to the regular output, not to it.
+	if (!multitrack)
+		SwapFrontendService();
 	CheckObsSettings(output);
 	obs_output_release(output);
 
 	engaged_ = true;
+	multitrackEngaged_ = multitrack;
+	loadingClipWanted_ = true;
 	dumpRestoreAtNs_ = 0;
 	TRIGGLOW_LOG_INFO(kComponent,
-			  "this stream goes through the relay to %s and %zu Multistream channel(s), delay %us",
-			  primary.name.c_str(), destinations.size() - 1, EffectiveDelay());
+			  "this stream goes through the relay to %s and %zu Multistream channel(s), delay %us%s",
+			  primary.name.c_str(), destinations.size() - 1, EffectiveDelay(),
+			  multitrack ? " (Enhanced Broadcasting)" : "");
 	// The scene the stream starts on may have a rule.
 	ApplySceneRule();
 	Notify();
@@ -656,6 +711,8 @@ void StreamDelayController::OnStreamingStarting()
 
 void StreamDelayController::OnStreamingStopped()
 {
+	loadingClipWanted_ = false;
+	loadingClip_.Cancel();
 	if (!engaged_)
 		return;
 	engaged_ = false;
@@ -737,12 +794,14 @@ void StreamDelayController::RefreshOtherOutputs()
 {
 	struct Ctx {
 		obs_output_t *skip;
+		const VerticalTaps *taps;
 		std::vector<outputs::OtherOutput> found;
-	} ctx{obs_frontend_get_streaming_output(), {}};
+	} ctx{obs_frontend_get_streaming_output(), &verticalTaps_, {}};
 	obs_enum_outputs(
 		[](void *param, obs_output_t *output) -> bool {
 			auto *c = static_cast<Ctx *>(param);
-			if (output == c->skip || !obs_output_active(output))
+			// A tapped Aitum Vertical output goes through the delay: not "live".
+			if (output == c->skip || !obs_output_active(output) || c->taps->Owns(output))
 				return true;
 			const char *id = obs_output_get_id(output);
 			if (!id || !outputs::IsStreamOutputType(id))
@@ -767,8 +826,102 @@ void StreamDelayController::RefreshOtherOutputs()
 	Notify();
 }
 
+void StreamDelayController::PushDelay(uint32_t seconds)
+{
+	if (engaged_)
+		relay_.SetDelay(seconds);
+	verticalTaps_.SetDelay(seconds);
+}
+
+VerticalTaps::Options StreamDelayController::TapOptions() const
+{
+	VerticalTaps::Options options;
+	options.delaySeconds = EffectiveDelay();
+	options.keepSeconds = RamKeepSeconds();
+	options.drainOnStop = drainOnStop_;
+	options.spillToDisk = relay::SpillsToDisk(bufferStorage_, driveKind_);
+	return options;
+}
+
+// The key a loading clip is good for: the scene and every video encoder of
+// OBS's stream (id, settings, size, frame rate divisor).
+std::string StreamDelayController::LoadingClipKey(const std::string &scene) const
+{
+	std::string key = scene;
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	if (!output)
+		return {};
+	for (size_t idx = 0; idx < MAX_OUTPUT_VIDEO_ENCODERS; ++idx) {
+		obs_encoder_t *encoder = obs_output_get_video_encoder2(output, idx);
+		if (!encoder)
+			break;
+		obs_data_t *settings = obs_encoder_get_settings(encoder);
+		const char *json = settings ? obs_data_get_json(settings) : nullptr;
+		key += "|";
+		key += obs_encoder_get_id(encoder) ? obs_encoder_get_id(encoder) : "";
+		key += "|" + std::to_string(obs_encoder_get_width(encoder)) + "x" +
+		       std::to_string(obs_encoder_get_height(encoder)) + "/" +
+		       std::to_string(obs_encoder_get_frame_rate_divisor(encoder)) + "|";
+		key += json ? json : "";
+		obs_data_release(settings);
+	}
+	obs_output_release(output);
+	return key;
+}
+
+void StreamDelayController::StepLoadingClip()
+{
+	if (loadingClip_.Running()) {
+		std::vector<relay::LoadingVideoTrack> tracks;
+		std::string why;
+		const LoadingClipMaker::State state = loadingClip_.Poll(tracks, why);
+		if (state == LoadingClipMaker::State::Done) {
+			if (engaged_ && relay_.SetLoadingClip(tracks, why)) {
+				cachedClip_ = std::move(tracks);
+				cachedClipKey_ = loadingClipKey_;
+				TRIGGLOW_LOG_INFO(kComponent,
+						  "loading screen ready: raising the delay shows it to viewers");
+			} else if (!why.empty()) {
+				TRIGGLOW_LOG_WARN(kComponent, "no loading screen for this stream (%s)", why.c_str());
+			}
+		}
+		return;
+	}
+	if (!loadingClipWanted_ || !engaged_ || !loadingScene_)
+		return;
+	bool allH264 = false;
+	const auto sizes = relay_.VideoSizes(allH264);
+	if (sizes.empty())
+		return; // OBS's stream hasn't reached the relay yet.
+	loadingClipWanted_ = false;
+	if (!allH264) {
+		TRIGGLOW_LOG_INFO(kComponent,
+				  "no loading screen for this stream (not H.264): raising the delay replays");
+		return;
+	}
+	const std::string scene = loadingScene_();
+	const std::string key = LoadingClipKey(scene);
+	std::string why;
+	if (!key.empty() && key == cachedClipKey_ && !cachedClip_.empty()) {
+		if (relay_.SetLoadingClip(cachedClip_, why))
+			TRIGGLOW_LOG_INFO(kComponent, "loading screen ready (same as the last stream)");
+		else
+			TRIGGLOW_LOG_WARN(kComponent, "no loading screen for this stream (%s)", why.c_str());
+		return;
+	}
+	obs_output_t *output = obs_frontend_get_streaming_output();
+	loadingClipKey_ = key;
+	if (!loadingClip_.Start(output, scene, 8000, why))
+		TRIGGLOW_LOG_WARN(kComponent, "no loading screen for this stream (%s): raising the delay replays",
+				  why.c_str());
+	obs_output_release(output);
+}
+
 void StreamDelayController::Tick()
 {
+	StepLoadingClip();
+	// Aitum Vertical's outputs through the delay, with "only the stream".
+	verticalTaps_.Update(applyTo_ == ApplyTo::Stream && relay::RelayAvailable(), TapOptions());
 	if ((++ticks_ % 2) == 0)
 		RefreshOtherOutputs();
 	if (draining_ && relay_.Finished()) {
@@ -778,11 +931,22 @@ void StreamDelayController::Tick()
 	}
 	if (dumpRestoreAtNs_ > 0 && static_cast<int64_t>(os_gettime_ns()) >= dumpRestoreAtNs_) {
 		dumpRestoreAtNs_ = 0;
-		if (engaged_ && delayOn_) {
-			relay_.SetDelay(delaySeconds_);
+		if (delayOn_) {
+			PushDelay(delaySeconds_);
 			TRIGGLOW_LOG_INFO(kComponent, "dump: the %us delay is back", delaySeconds_);
 		}
 	}
+	// v1.1.0: the delay is off by default. Turned on (or armed) for a stream, it
+	// turns off again once nothing goes out through the delay any more, so the
+	// next stream starts without it unless the streamer turns it on.
+	const bool streaming = engaged_ || draining_ || verticalTaps_.AnyStreaming();
+	if (wasStreaming_ && !streaming && delayOn_) {
+		delayOn_ = false;
+		dumpRestoreAtNs_ = 0;
+		PushDelay(0);
+		TRIGGLOW_LOG_INFO(kComponent, "the stream ended: delay off until you turn it on again");
+	}
+	wasStreaming_ = streaming;
 	Notify();
 }
 

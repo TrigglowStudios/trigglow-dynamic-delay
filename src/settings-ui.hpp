@@ -422,6 +422,15 @@ private:
 	// under the scene pickers while those are locked (Filling, Active).
 	// v1.0.0: the seconds stay editable, the delay changes live.
 	QWidget *delayLockedRow_ = nullptr;
+	// v1.1.0: the loading scene picker, its lock (Free: Trigglow's video) and
+	// "See plans". In the scenes card with all of OBS, in the delay card with
+	// only the stream (both modes show the same loading scene).
+	QWidget *loadingBlock_ = nullptr;
+	QVBoxLayout *scenesCardLayout_ = nullptr;
+	QVBoxLayout *delayCardLayout_ = nullptr;
+	QWidget *loadingLockRow_ = nullptr;
+	QLabel *loadingLockIcon_ = nullptr;
+	QPushButton *loadingPlansButton_ = nullptr;
 	QLabel *delayLockedIcon_ = nullptr;
 	// v1.0.0: while the delay runs, that switching scenes needs stream mode
 	// (scene mode delays the live scene only).

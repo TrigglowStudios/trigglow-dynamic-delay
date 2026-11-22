@@ -887,6 +887,9 @@ bool obs_module_load(void)
 #endif
 	g_state->streamController->SetOverlayImageProvider(
 		[files = g_state->badgeFiles.get()](uint32_t seconds) { return BadgeImagePath(*files, seconds); });
+	// v1.1.0: stream mode shows the same loading scene as all of OBS.
+	g_state->streamController->SetLoadingSceneProvider(
+		[buffer = g_state->bufferController.get()] { return buffer->EffectiveLoadingScene(); });
 	LoadStreamSettings(*g_state->streamController);
 	// The last server answer about the badge (see LoadStreamSettings): what
 	// AuthManager::HideBadgeAllowed() says until /auth/plugin/me answers.

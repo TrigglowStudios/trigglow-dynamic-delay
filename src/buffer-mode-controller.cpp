@@ -271,6 +271,14 @@ void BufferModeController::SetShowOverlay(bool show)
 	UpdateOverlay();
 }
 
+void BufferModeController::SetLoadingLocked(bool locked)
+{
+	if (status_.loadingLocked == locked)
+		return;
+	status_.loadingLocked = locked;
+	NotifyStatusChanged();
+}
+
 void BufferModeController::SetBadgeLocked(bool locked)
 {
 	if (badgeLocked_ == locked)
@@ -568,7 +576,7 @@ void BufferModeController::Tick()
 	{
 		ObsFrontendBridge::MirrorTuning tuning;
 		tuning.delaySeconds = status_.effectiveDelaySeconds > 0 ? status_.effectiveDelaySeconds
-									 : status_.delaySeconds;
+									: status_.delaySeconds;
 		tuning.minResolutionHeight = status_.minResolutionHeight;
 		tuning.codecWorkers = codecWorkers_;
 		tuning.autoCodec = bufferCodecAuto_;
@@ -627,8 +635,10 @@ bool BufferModeController::BufferRestartsWith(uint32_t previousDelaySeconds, uin
 
 std::string BufferModeController::LoadingSceneToShow() const
 {
-	// The user's loading scene, or else the Trigglow "adding delay" video.
-	return status_.loadingSceneName.empty() ? bridge_.EnsureDefaultLoadingScene() : status_.loadingSceneName;
+	// The user's loading scene (Starter and Pro), or else the Trigglow
+	// "adding delay" video.
+	return status_.loadingSceneName.empty() || status_.loadingLocked ? bridge_.EnsureDefaultLoadingScene()
+									 : status_.loadingSceneName;
 }
 
 void BufferModeController::ShowLoadingSceneForRefill()

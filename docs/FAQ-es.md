@@ -13,8 +13,8 @@ con delay, así que el directo **y tu grabación** van con delay; funciona con c
 todas las plataformas. **Marcada, solo a la emisión** (modo stream, Windows): el plugin apunta la
 salida de emisión de OBS a un relay dentro de OBS, en `127.0.0.1`, guarda los paquetes ya
 codificados y los envía a tu plataforma pasado el delay. Gasta mucha menos RAM y CPU y retrasa todas
-las escenas, pero la grabación, el Replay Buffer y la vista previa de OBS siguen en directo, y no
-hay escena de carga. El botón del dock, los atajos, obs-websocket y el Stream Deck manejan la opción
+las escenas, pero la grabación, el Replay Buffer y la vista previa de OBS siguen en directo; tu
+audiencia ve la escena de carga mientras se acumula el delay (desde la v1.1.0). El botón del dock, los atajos, obs-websocket y el Stream Deck manejan la opción
 elegida, y solo esa. La casilla se bloquea con el delay activo; si la marcas en pleno directo, se
 aplica desde tu próximo directo. Detalles: `docs/STREAM_MODE-es.md`.
 
@@ -52,16 +52,17 @@ fuente, y por eso ocupa de ~190 MB a ~2,3 GB para 30–60 s.
 
 **¿Qué directos pueden usar solo a la emisión?**
 Los que salen por la salida RTMP propia de OBS, por RTMP o RTMPS: Twitch, YouTube, Kick, TikTok y
-cualquier servidor rtmp:// o rtmps:// personalizado, con Enhanced Broadcasting desactivado. (Aún)
-no: Enhanced Broadcasting, los servicios SRT, RIST y WHIP, ni macOS y Linux (su FFmpeg todavía no
+cualquier servidor rtmp:// o rtmps:// personalizado, con o sin Enhanced Broadcasting (desde la
+v1.1.0 todas las pistas que envía, la vertical incluida, pasan por el delay). (Aún) no: los
+servicios SRT, RIST y WHIP, ni macOS y Linux (su FFmpeg todavía no
 tiene la parte que necesita el relay). En esos casos el dock dice por qué: desmarca "Aplicar el
 delay solo a la emisión" para retrasar todo OBS.
 
 **Hago multistream con Aitum Multistream o Multiple RTMP Outputs. ¿Qué modo retrasa todas las plataformas?**
 A todo OBS, lo predeterminado. Esos plugins codifican lo que muestra OBS, así que todas las salidas
-que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", solo el
-stream propio de OBS pasa por el delay: las salidas que arrancan esos plugins salen en directo, y el
-dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
+que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", el stream
+propio de OBS y el de Aitum Vertical pasan por el delay: las salidas que arrancan los plugins de
+multistream salen en directo, y el dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
 delay..."). Los servicios que reciben un stream y lo reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con
 los dos modos, porque OBS solo les manda un stream. La (i) junto a Avanzado en el dock lo resume.
 
@@ -70,8 +71,17 @@ A todo OBS, sí, desde la v1.1.0: la escena que muestra el lienzo vertical se re
 segundos, se llame como se llame (la 1.0 solo retrasaba una escena vertical con el mismo nombre que
 una de tus escenas con delay). El dock avisa de que el delay usa entonces el doble de recursos,
 porque ese lienzo mantiene un búfer propio. Mientras se llena ese búfer, y cada vez que el lienzo
-vertical cambia de escena, se ve en negro durante el delay. Con "solo a la emisión", el directo
-vertical sale en directo y el dock lo dice.
+vertical cambia de escena, se ve en negro durante el delay. Con "solo a la emisión", también
+(v1.1.0): el stream vertical pasa por su propio relay con el mismo delay que el de OBS. La primera vez
+que arranca en una sesión de OBS sale directo una fracción de segundo y el plugin lo reinicia a
+través del delay. Tu stream vertical necesita su propia clave de emisión: Restream y la mayoría de
+plataformas aceptan un solo emisor por clave, así que un vertical con la misma clave que tu stream
+principal lo echa ("End of file" en el dock).
+
+**¿Por qué se quita el delay al terminar el directo?**
+Desde la v1.1.0 el delay está desactivado por defecto con "solo a la emisión": solo se activa cuando
+tú lo activas (o lo armas antes de empezar), una regla de Delay por escena solo actúa en directo, y al
+terminar el directo se quita, así que el siguiente empieza sin él.
 
 **¿Se reconecta el directo al activar, quitar, subir o bajar el delay?**
 No. El relay mantiene una sola conexión con tu plataforma y empalma: activar el delay (o subirlo)
@@ -344,6 +354,13 @@ planes** abre trigglow.com/pricing; las cuentas Starter y Pro pueden desmarcarla
 **Trigglow Delay Badge (auto)**, y puedes moverla y escalarla en OBS (se queda donde la pongas).
 Solo a la emisión se pinta sobre el programa de OBS en su propio canal de salida (hasta 600 s) y no
 se puede mover a mano.
+
+**¿Qué ve mi audiencia mientras se acumula el delay? ¿Puedo cambiarlo?**
+La escena de carga, en los dos modos (solo a la emisión desde la v1.1.0: al empezar cada directo
+se prepara un clip corto con tu encoder de emisión). En Free es el vídeo "poniendo delay" de
+Trigglow y el selector **Escena de carga** queda bloqueado, con **Ver planes**; las cuentas Starter
+y Pro pueden elegir cualquier escena suya. La escena que tenías elegida se guarda y vuelve si
+mejoras de plan.
 
 **¿Qué provoca el estado `Error`?**
 Cualquier cosa que de otro modo dejaría al plugin en una condición rota pero silenciosa: no haber

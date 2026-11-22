@@ -124,6 +124,15 @@ public:
 	{
 		return IsLoggedIn() && !accountInactive_ && (account_.known ? account_.hideBadge : cachedHideBadge_);
 	}
+	// v1.1.0: the streamer may choose the loading scene viewers see while
+	// the delay builds up (Starter, Pro); otherwise Trigglow's own video.
+	// Before the server answers, the same last answer as the badge (the same
+	// plans have both).
+	bool CustomLoadingAllowed() const
+	{
+		return IsLoggedIn() && !accountInactive_ &&
+		       (account_.known ? account_.customLoading : cachedHideBadge_);
+	}
 	// The last server answer, kept in the settings file by plugin-main.cpp
 	// so an OBS start without a connection keeps the badge as it was.
 	void SeedHideBadge(bool allowed) { cachedHideBadge_ = allowed; }
