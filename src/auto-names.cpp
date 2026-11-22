@@ -171,6 +171,16 @@ std::string DefaultLoadingStillFile(std::string_view locale)
 	return SpanishLocale(locale) ? "images/adding-delay-es.jpg" : "images/adding-delay-en.jpg";
 }
 
+std::string DefaultVerticalLoadingVideoFile(std::string_view locale)
+{
+	return SpanishLocale(locale) ? "videos/adding-delay-vertical-es.mp4" : "videos/adding-delay-vertical-en.mp4";
+}
+
+std::string DefaultVerticalLoadingStillFile(std::string_view locale)
+{
+	return SpanishLocale(locale) ? "images/adding-delay-vertical-es.jpg" : "images/adding-delay-vertical-en.jpg";
+}
+
 RenamePlan PlanRename(bool legacyExists, bool currentNameTaken)
 {
 	if (!legacyExists)

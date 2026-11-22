@@ -99,6 +99,11 @@ bool IsHelperSceneName(std::string_view name);
 std::string DefaultLoadingVideoFile(std::string_view locale);
 // v1.0.0: that video's first frame (JPEG), same rule, relative to the data folder.
 std::string DefaultLoadingStillFile(std::string_view locale);
+// v1.1.0: the same video and still made for vertical canvases (1080x1920),
+// same rule. Stream mode's loading clip shows them on vertical tracks
+// (loading-clip.hpp) instead of the horizontal one with bars.
+std::string DefaultVerticalLoadingVideoFile(std::string_view locale);
+std::string DefaultVerticalLoadingStillFile(std::string_view locale);
 // Any overlay item the wrapper scene may hold, current or old: never the live
 // scene the delay filter attaches to.
 bool IsOverlayName(std::string_view name);

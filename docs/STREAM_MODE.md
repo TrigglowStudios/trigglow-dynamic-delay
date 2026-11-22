@@ -230,8 +230,8 @@ stream that started with the delay on sent nothing until it was old enough. Now,
 reaches the relay, `LoadingClipMaker` (`src/loading-clip.*`) makes an 8 s clip of the loading
 scene (Trigglow's "adding delay" video, or the scene a Starter or Pro streamer chose in the dock,
 the same one all of OBS uses): for each video encoder of OBS's stream output, a private canvas at
-that encoder's size and frame rate shows the scene fitted inside (a vertical track gets it
-letterboxed), and a copy of the encoder (same id and settings) encodes it into a capture output.
+that encoder's size and frame rate shows the scene fitted inside (a vertical track gets Trigglow's video made for vertical,
+`data/videos/adding-delay-vertical-*.mp4`, or a chosen scene letterboxed), and a copy of the encoder (same id and settings) encodes it into a capture output.
 Everything is released once the clip is captured; the clip is kept for the next streams while the
 scene and the encoders stay the same. H.264 only (with HEVC or AV1 raising replays, as before).
 

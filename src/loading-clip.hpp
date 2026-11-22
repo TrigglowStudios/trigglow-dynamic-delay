@@ -42,6 +42,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 struct obs_output;
 typedef struct obs_output obs_output_t;
+struct obs_source;
+typedef struct obs_source obs_source_t;
 
 namespace trigglow {
 
@@ -56,7 +58,11 @@ public:
 
 	// Starts encoding the scene `sceneName` like every video encoder of
 	// `output`. False, with why, when it can't (no such scene, no encoder).
-	bool Start(obs_output_t *output, const std::string &sceneName, int64_t loopMs, std::string &why);
+	// `verticalVideo` (a file, with `verticalStill` its first frame): what
+	// vertical tracks show instead of the scene with bars; empty for a scene
+	// the streamer chose, which is fitted inside.
+	bool Start(obs_output_t *output, const std::string &sceneName, int64_t loopMs, std::string &why,
+		   const std::string &verticalVideo = {}, const std::string &verticalStill = {});
 	// Twice a second: Done hands the clip over (once), Failed says why.
 	State Poll(std::vector<relay::LoadingVideoTrack> &tracksOut, std::string &why);
 	// Stops and releases everything (a stream that ended, OBS closing).
@@ -68,6 +74,9 @@ private:
 	void Release();
 
 	std::vector<std::unique_ptr<Track>> tracks_;
+	// The vertical video and its still, shared by every vertical track.
+	obs_source_t *verticalVideo_ = nullptr;
+	obs_source_t *verticalStill_ = nullptr;
 	State state_ = State::Idle;
 	int64_t loopMs_ = 8000;
 	int64_t startedNs_ = 0;
