@@ -799,9 +799,10 @@ std::vector<std::string> ObsFrontendBridge::AttachLateMirrorFilters(const std::v
 		mirrorFilters_.push_back(obs_source_get_weak_source(filter));
 		if (std::find(names.begin(), names.end(), mirror.canvasName) == names.end())
 			names.push_back(mirror.canvasName);
-		TRIGGLOW_LOG_INFO(kComponent,
-				  "canvas \"%s\" switched to \"%s\": video delay mirrored on it too (%us, one more ring)",
-				  mirror.canvasName.c_str(), mirror.sceneName.c_str(), tuning.delaySeconds);
+		TRIGGLOW_LOG_INFO(
+			kComponent,
+			"canvas \"%s\" switched to \"%s\": video delay mirrored on it too (%us, one more ring)",
+			mirror.canvasName.c_str(), mirror.sceneName.c_str(), tuning.delaySeconds);
 	}
 	return names;
 }
