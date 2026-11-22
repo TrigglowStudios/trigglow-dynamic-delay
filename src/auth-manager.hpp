@@ -114,6 +114,28 @@ public:
 	// What the server said about Trigi at the last start check (unknown until
 	// then).
 	const auth::TrigiInfo &Trigi() const { return trigi_; }
+	// The account's plan and what it allows, from the last start check
+	// (auth::AccountFeatures; `known` false until the server answered).
+	const auth::AccountFeatures &Account() const { return account_; }
+	// v1.1.0: the delay badge may be hidden. Only with a working sign-in on a
+	// plan the server said can (Starter, Pro); before it answers, the answer
+	// it gave last time (SeedHideBadge). Signed out, or on Free: never.
+	bool HideBadgeAllowed() const
+	{
+		return IsLoggedIn() && !accountInactive_ && (account_.known ? account_.hideBadge : cachedHideBadge_);
+	}
+	// v1.1.0: the streamer may choose the loading scene viewers see while
+	// the delay builds up (Starter, Pro); otherwise Trigglow's own video.
+	// Before the server answers, the same last answer as the badge (the same
+	// plans have both).
+	bool CustomLoadingAllowed() const
+	{
+		return IsLoggedIn() && !accountInactive_ &&
+		       (account_.known ? account_.customLoading : cachedHideBadge_);
+	}
+	// The last server answer, kept in the settings file by plugin-main.cpp
+	// so an OBS start without a connection keeps the badge as it was.
+	void SeedHideBadge(bool allowed) { cachedHideBadge_ = allowed; }
 
 	// Opens the confirmation page and waits for it (at most the link's own
 	// lifetime, polling at the server's interval). No-op while signed in or
@@ -145,6 +167,11 @@ public:
 	// Fired whenever anything above may have changed.
 	void SetStatusChangedCallback(StatusChangedCallback callback) { onStatusChanged_ = std::move(callback); }
 
+signals:
+	// The same moments as the callback above (which is the dock's), for the
+	// plugin's other parts (the Multistream link).
+	void StatusChanged();
+
 private:
 	enum class Session { None, Plugin, Legacy };
 
@@ -174,6 +201,8 @@ private:
 	bool accountInactive_ = false;
 	std::string displayName_;
 	auth::TrigiInfo trigi_;
+	auth::AccountFeatures account_;
+	bool cachedHideBadge_ = false;
 
 	// The sign-in being waited for. Its secrets live only here, in memory.
 	std::optional<auth::LinkRequest> link_;

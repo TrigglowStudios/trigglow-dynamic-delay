@@ -132,8 +132,17 @@ wherever it is. Stream mode keeps it on disk, encrypted, and in RAM only what is
 
 1. On `OBS_FRONTEND_EVENT_STREAMING_STARTING` (after OBS created the stream output, before it
    starts), with "only the stream" chosen, `StreamDelayController` checks the stream is eligible: OBS's `rtmp_output`, protocol
-   RTMP or RTMPS, not Enhanced Broadcasting (multitrack). It reads the server and key with
-   `obs_service_get_connect_info()` (the resolved ingest, "auto" included).
+   RTMP or RTMPS. It reads the server and key with `obs_service_get_connect_info()` (the resolved
+   ingest, "auto" included). With Enhanced Broadcasting (v1.1.0) OBS streams through its own
+   multitrack output ("rtmp multitrack video"), which already has a private service with the
+   ingest the platform gave it by then: that service is the destination, and the output gets a
+   fresh loopback service each stream (libobs keeps the previous one "active" past that output's
+   teardown, and the swap is checked right away). The relay takes every video track (one per
+   quality and canvas, GOP-aligned) and the audio: the history splices and trims at the keyframes
+   of the first video track and starts at the first keyframe of that frame on any track, and the
+   scheduler keeps each track's timestamps and waits for each track's own keyframe after a splice
+   (`packet-delay-core.hpp`). The streamer's own service gets every track, as Enhanced RTMP;
+   Multistream channels get the first video track, as a regular stream.
 2. It starts `StreamRelay` (FFmpeg avformat): a listener on `127.0.0.1:<free port>` and one
    sender to the streamer's own service. Dynamic Delay doesn't multistream: `StreamRelay::Start()`
    takes a list of destinations, but the controller only ever passes that one.
@@ -204,9 +213,39 @@ so it only rewinds into what came after the dump. Checked with the harness: dump
 
 ### Scene rules and presets
 
+The delay is off by default (v1.1.0): scene rules act only while a stream goes out through the
+delay (switching scenes in OBS while not live never turns it on or arms it), a new rule does
+nothing until the streamer picks what it does, and when nothing goes out through the delay any
+more the delay turns off, so the next stream starts without it unless it's turned on again.
+
 Rules map a scene to "delay on (with its seconds)" or "delay off", applied on
 `OBS_FRONTEND_EVENT_SCENE_CHANGED` and when a stream starts. Three presets (default 10/30/60 s) set
 the seconds and turn the delay on, each with a hotkey and `ApplyPreset {index}` over obs-websocket.
+
+## The loading screen (v1.1.0)
+
+Stream mode delays packets OBS has already encoded, so what viewers see while the delay builds up
+can't come out of OBS's stream. Until v1.1.0 raising the delay replayed the last seconds, and a
+stream that started with the delay on sent nothing until it was old enough. Now, once a stream
+reaches the relay, `LoadingClipMaker` (`src/loading-clip.*`) makes an 8 s clip of the loading
+scene (Trigglow's "adding delay" video, or the scene a Starter or Pro streamer chose in the dock,
+the same one all of OBS uses): for each video encoder of OBS's stream output, a private canvas at
+that encoder's size and frame rate shows the scene fitted inside (a vertical track gets Trigglow's video made for vertical,
+`data/videos/adding-delay-vertical-*.mp4`, or a chosen scene letterboxed), and a copy of the encoder (same id and settings) encodes it into a capture output.
+Everything is released once the clip is captured; the clip is kept for the next streams while the
+scene and the encoders stay the same. H.264 only (with HEVC or AV1 raising replays, as before).
+
+The relay (`SetLoadingClip`) turns it into Annex B to FLV packets with their own avcC header and
+adds AAC silence for each audio track. The scheduler (`SinkScheduler::SetFiller`) then plays it:
+raising the delay stops each destination at the keyframe at or before what it had sent, plays the
+clip (looped, timestamps continuing) until that keyframe is due at the new delay, and goes on from
+it, so nothing is skipped and at most a keyframe interval is seen again; a stream that starts with
+less history than the delay plays it from the start. Each switch between the clip and the stream
+puts that source's SPS and PPS in band in front of its first keyframe (not a new FLV sequence
+header: MediaMTX, behind Trigglow Multistream, rejects a second one in its first 2 s and ignores
+it later). Each destination's socket gets an 8 MB send buffer: FFmpeg's fixed 64 KB capped one
+connection at about 17 Mbps, which Enhanced Broadcasting's tracks together exceed. The dock lists the destination as
+"loading" meanwhile.
 
 ## What stays live
 
@@ -221,7 +260,49 @@ as scene mode, up to 600 s) is drawn on libobs output channel 61, over OBS's pro
 scene. Viewers get it with the delayed picture. Because it is on the program, the recording (and
 anything else that takes the program) shows it too while the delay is on. On/off ("Show the delay
 badge to viewers") and the corner are in the dock's Options, one control for both engines, and
-saved.
+saved. Since v1.1.0 the badge is part of the free plan: on Free the box is locked and the badge
+always shows (`SetBadgeLocked()`, from the account's plan; `docs/ACCOUNT_GATE.md`, "The plan and
+the badge"); Starter and Pro can untick it.
+
+## Other plugins' stream outputs (v1.1.0)
+
+Stream mode holds **OBS's own stream output** and nothing else. Multistream plugins (Aitum
+Multistream, Multiple RTMP Outputs) and Aitum Vertical start outputs of their own, each with its
+own `rtmp_custom` service, and connect to their platform themselves: they create the output, set
+its service and start it in one call, and libobs' "starting" signal only fires after
+`obs_output_actual_start()`, so there is no moment at which the relay could take their
+destination before they connect. Those outputs therefore go out **live**, while OBS's own stream is
+delayed. Aitum Vertical is the exception (below). What the plugin does about it:
+
+- **Aitum Vertical goes through the delay too** (`src/vertical-taps.*`). Aitum creates each stream
+  output once and afterwards only updates its own service before every start, calling
+  `obs_output_set_service()` only on creation. So `VerticalTaps` gives each
+  `vertical_canvas_stream[_<name>]` output (RTMP or RTMPS destinations only) a private loopback
+  service pointing at a relay of its own, whose destination is what Aitum's service holds; the
+  output keeps it across Aitum's stops and starts, and Aitum's settings, dock and saved config never
+  see the relay. The first start of an output in an OBS session goes out directly for a moment
+  (Aitum creates and starts it in one call): the next `Tick()`, at most 0.5 s later, stops it
+  through Aitum's own `aitum_vertical_stop_stream_output` proc, takes it while idle and starts it
+  again (`aitum_vertical_start_stream_output`). The delay, Dump, the keep window and drain follow
+  stream mode's; the badge is drawn on the Aitum Vertical canvas too (channel 61, placed for its
+  size). Checked in a portable OBS 33.0.1 with Aitum Vertical 1.6.8 and two local RTMP servers
+  (2026-11-22): on the first start the direct output sent 13 frames before it was taken; the
+  vertical stream (1080x1920) then reached its server 11 s after the start with a 10 s delay,
+  together with OBS's own, and both sent their last 10 s after the stop; later starts went through
+  the relay straight away.
+
+- `StreamDelayController::RefreshOtherOutputs()` (once a second, from `Tick()`) lists the active
+  outputs whose type sends a stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
+  `ftl_output`; `src/other-outputs.*`), skipping OBS's own, and tells the plugins apart by the
+  names they give their outputs: `aitum_multi_output_<name>` (Aitum Multistream), the literal
+  `multi-output` (Multiple RTMP Outputs), `vertical_canvas...` (Aitum Vertical); anything else is
+  "another plugin". With "only the stream" the dock's warnings list them while they run
+  (`Stream.Warn.other_*`, with the count), each saying to untick the option to delay all of OBS.
+- With all of OBS (scene mode) those outputs encode the delayed program like OBS's own, so they are
+  delayed, and the vertical canvas gets a mirror of the delay on the scene it shows (`docs/SPEC.md`
+  §3.13). The (i) next to **Advanced** in the dock says which mode covers what.
+- A service that takes one RTMP stream and fans it out (Restream.io, Streamlabs Multistream, Trigglow Multistream, Castr and the like) is just a
+  destination for OBS's own output: it works with both modes.
 
 ## Settings checks
 
@@ -252,12 +333,53 @@ mode worse (`StreamDelayController::CheckObsSettings`):
 
 The free-account gate applies to Enable as in scene mode.
 
+## With Trigglow Multistream (v1.1.0, not released yet)
+
+Three ways the plugin works with Trigglow Multistream (trigglow.com, Live > Multistream):
+
+- **Streaming to Trigglow's ingest.** Stream mode needs nothing special for it: OBS's Settings >
+  Stream as a custom server (Trigglow's ingest) with the streamer's `tgms_...` key is an ordinary
+  RTMP service, so the relay delays it and Trigglow's cloud forwards the delayed stream to every
+  channel. The dock names that destination "Trigglow Multistream" instead of its bare host.
+- **"Also send to my Trigglow Multistream channels"** (Options, only the stream; off by default,
+  saved as `send_to_multistream`, only that boolean). The relay sends the delayed stream to each
+  enabled horizontal Multistream channel straight from OBS, besides OBS's own service, with no
+  cloud in between: each channel is one more upload of the stream's bitrate. The channels come from
+  `GET /api/multistream/plugin/destinations` (a background job: when the box is ticked, at load,
+  after sign-in, and again when a stream starts with a copy older than 60 s; a stream that starts
+  before the first answer goes to OBS's service only and the dock says why). Their stream keys stay
+  in memory only: never written to disk, the settings file, the log, a bug report or the
+  diagnostics, and wiped on sign-out, when the box is unticked and on unload. A channel that is the
+  same as OBS's service (same host and key) is skipped, and none is added when OBS already streams
+  to Trigglow's ingest (`tgms_` key), so nothing is sent twice. Each channel gets its own row in the
+  dock with its state. The plan decides whether it's offered: `403 plan_required` makes the dock
+  say the plan doesn't include it, `404` hides it quietly.
+- **Status and remote control from the dashboard.** While signed in, the plugin reports the delay
+  (on/off, seconds, which engine, whether OBS streams, and in stream mode each destination's name and
+  state; never a key or a URL) to `POST /api/multistream/dynamic-delay/status`: every 5 s while OBS
+  streams or the delay is on, every 30 s otherwise, about 1 s after a change, and once a minute
+  after three failures in a row. The answer may carry one command from the Multistream page
+  (`enable`, `disable`, `set_delay` 1-600 s, `dump`), applied through `DelayRouter` exactly like a
+  hotkey: to the engine the dock selects, with the free-account gate on Enable. Failures are
+  silent.
+
+Per-channel delay (a channel held further back than the others) is a server feature of the
+Multistream page, on top of whatever this plugin delays.
+
+Tested: the protocol (`tests/multistream_link_tests.cpp`, scripted transport) and the full plugin
+build on Windows. Not yet tested against a real OBS with real platforms.
+
 ## Not covered yet
 
-- Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: the dock says the stream
-  can't use it; all of OBS (the default) works with them.
+- SRT, RIST and WHIP services: the dock says the stream can't use it; all of OBS (the default)
+  works with them. Enhanced Broadcasting is covered since v1.1.0.
 - Delay by scene only with "only the stream": all of OBS keeps delaying the one live scene chosen
   in the dock.
+- Outputs multistream plugins start (Aitum Multistream, Multiple RTMP Outputs): they go out live,
+  and the dock says so (see "Other plugins' stream outputs"); all of OBS delays them. Aitum
+  Vertical's are delayed in both modes.
+- The first start of an Aitum Vertical output in an OBS session sends a fraction of a second
+  directly before it is taken and restarted through the delay.
 
 ## Verification status
 

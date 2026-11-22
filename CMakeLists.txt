@@ -36,6 +36,15 @@ if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE AND DEFINED ENV{CI})
   message(FATAL_ERROR "TRIGGLOW_TEST_SKIP_ACCOUNT_GATE is for local test builds only")
 endif()
 
+# v1.1.0, local tests of the update from OBS only: with
+# TRIGGLOW_TEST_UPDATE_DIR=<folder> in OBS's environment, the update check reads
+# <folder>/latest.json and the installer from that folder instead of GitHub
+# (src/update-checker.cpp, src/update-installer.cpp). A CI build with it ON stops here.
+option(TRIGGLOW_TEST_UPDATE_SOURCE "Test builds only: update from TRIGGLOW_TEST_UPDATE_DIR instead of GitHub" OFF)
+if(TRIGGLOW_TEST_UPDATE_SOURCE AND DEFINED ENV{CI})
+  message(FATAL_ERROR "TRIGGLOW_TEST_UPDATE_SOURCE is for local test builds only")
+endif()
+
 include(compilerconfig)
 include(defaults)
 include(helpers)
@@ -288,7 +297,13 @@ if(ENABLE_QT)
     # crypt32: the sign-in is stored with the Windows data protection API
     # (CryptProtectData, src/token-store.cpp). dxgi: the GPU's PCI vendor ID for
     # Trigi's opt-in technical data (src/diagnostics-collector.cpp).
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp crypt32 dxgi)
+    # v1.1.0, updating from OBS (src/update-installer.cpp): bcrypt hashes the
+    # downloaded installer (SHA-256), shell32 starts it and finds ProgramData,
+    # ole32 frees that path.
+    target_link_libraries(
+      ${CMAKE_PROJECT_NAME}
+      PRIVATE winhttp crypt32 dxgi bcrypt shell32 ole32
+    )
   endif()
 
   target_compile_options(
@@ -372,6 +387,16 @@ else()
       src/stream-delay-controller.hpp
       src/apply-to.cpp
       src/apply-to.hpp
+      src/multistream-link.cpp
+      src/multistream-link.hpp
+      src/multistream-service.cpp
+      src/multistream-service.hpp
+      src/other-outputs.cpp
+      src/other-outputs.hpp
+      src/vertical-taps.cpp
+      src/vertical-taps.hpp
+      src/loading-clip.cpp
+      src/loading-clip.hpp
       src/delay-router.hpp
       src/delay-targets.cpp
       src/delay-targets.hpp
@@ -464,6 +489,12 @@ else()
       src/trigi-widgets.hpp
       src/update-checker.cpp
       src/update-checker.hpp
+      src/release-info.cpp
+      src/release-info.hpp
+      src/update-installer.cpp
+      src/update-installer.hpp
+      src/update-dialog.cpp
+      src/update-dialog.hpp
       src/i18n.hpp
       src/auto-names.cpp
       src/auto-names.hpp
@@ -484,6 +515,11 @@ set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STAND
 if(TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
   message(WARNING "Test build: stream mode's account gate can be skipped. Never publish this build.")
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_TEST_SKIP_ACCOUNT_GATE)
+endif()
+
+if(TRIGGLOW_TEST_UPDATE_SOURCE)
+  message(WARNING "Test build: updates can come from TRIGGLOW_TEST_UPDATE_DIR. Never publish this build.")
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TRIGGLOW_TEST_UPDATE_SOURCE)
 endif()
 
 if(TRIGGLOW_ALLOW_API_HOST_OVERRIDE)

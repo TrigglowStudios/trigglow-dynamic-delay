@@ -125,8 +125,12 @@ RoleSpec SpecFor(FontRole role)
 	return {RoleSpec::Obs, 0.0, 7.5, 600, false, 100.0};
 }
 
+QString g_scriptFamily; // UseScriptFontFor().
+
 QString RoleFamily(const RoleSpec &spec)
 {
+	if (!g_scriptFamily.isEmpty())
+		return g_scriptFamily;
 	switch (spec.family) {
 	case RoleSpec::Display:
 		return g_fonts.display;
@@ -629,16 +633,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 		    .arg(focus));
 	add(QStringLiteral("QPushButton[tgVariant=\"link\"]:disabled { color: %1; }").arg(disabled));
 
-	// Update banner: the whole banner is one button.
-	// Its height comes from the layout inside (TrigglowDelayDock::FitUpdateBanner).
-	add(QStringLiteral("QPushButton#tgUpdateBanner { background-color: %1; border: 1px solid %2; border-left: 3px "
-			   "solid %3; border-radius: 10px; padding: 0px; margin: 0px; max-height: 200px; text-align: "
-			   "left; }")
-		    .arg(warningTint, line, hc ? text : warning));
-	add(QStringLiteral("QPushButton#tgUpdateBanner:hover { border-color: %1; border-left: 3px solid %2; }")
-		    .arg(warningText, hc ? text : warning));
-	add(QStringLiteral("QPushButton#tgUpdateBanner:focus { border: 2px solid %1; border-left: 3px solid %2; }")
-		    .arg(focus, hc ? text : warning));
+	// Update card and window (v1.1.0): the icon sits on an accent-tinted
+	// square, like the web's feature badges. High contrast outlines it.
+	add(QStringLiteral("QFrame#tgUpdateBadge { background-color: %1; border: 1px solid %2; border-radius: 10px; }")
+		    .arg(hc ? card : accentTint, hc ? text : accentTint));
 
 	// Fill progress: 4 px, rounded ends. High contrast outlines the track instead of
 	// tinting it (track and chunk would both be the text color).
@@ -652,6 +650,10 @@ QString BuildStyleSheet(const uitokens::Tokens &t, double basePt)
 			    .arg(line));
 	}
 	add(QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 2px; }").arg(C(t.progressChunk)));
+	// v1.1.0: with a script font (UseScriptFontFor) the text that keeps OBS's
+	// own font gets it too, or that script's marks are cut there.
+	if (!g_scriptFamily.isEmpty())
+		s = QStringLiteral("QWidget { font-family: \"%1\"; } ").arg(g_scriptFamily) + s;
 	return s;
 }
 
@@ -711,6 +713,22 @@ BrandFontsReport LoadBrandFonts(const QString &directory)
 const BrandFonts &Fonts()
 {
 	return g_fonts;
+}
+
+QString UseScriptFontFor(const QString &obsLocale)
+{
+	g_scriptFamily.clear();
+	if (!obsLocale.startsWith(QStringLiteral("hi"), Qt::CaseInsensitive))
+		return {};
+	// Windows, macOS, Linux.
+	for (const char *name : {"Nirmala UI", "Kohinoor Devanagari", "Noto Sans Devanagari", "Lohit Devanagari"}) {
+		const QString family = QString::fromLatin1(name);
+		if (QFontDatabase::hasFamily(family)) {
+			g_scriptFamily = family;
+			break;
+		}
+	}
+	return g_scriptFamily;
 }
 
 double BaseFontPointSize(QWidget *context)

@@ -95,10 +95,17 @@ bool IsDelayedScenesName(std::string_view name);
 // scenes' holder, the default loading scene): never a delayed or loading scene.
 bool IsHelperSceneName(std::string_view name);
 // The default loading video for an OBS locale ("es-ES", "en-US", ...), relative
-// to the plugin's data folder: Spanish for any "es" locale, English otherwise.
+// to the plugin's data folder: in that locale's language for the 16 the plugin
+// is translated to (v1.1.0; "adding-delay-<es|pt|zh|ca|val|de|...>.mp4"),
+// English otherwise.
 std::string DefaultLoadingVideoFile(std::string_view locale);
 // v1.0.0: that video's first frame (JPEG), same rule, relative to the data folder.
 std::string DefaultLoadingStillFile(std::string_view locale);
+// v1.1.0: the same video and still made for vertical canvases (1080x1920),
+// same rule. Stream mode's loading clip shows them on vertical tracks
+// (loading-clip.hpp) instead of the horizontal one with bars.
+std::string DefaultVerticalLoadingVideoFile(std::string_view locale);
+std::string DefaultVerticalLoadingStillFile(std::string_view locale);
 // Any overlay item the wrapper scene may hold, current or old: never the live
 // scene the delay filter attaches to.
 bool IsOverlayName(std::string_view name);

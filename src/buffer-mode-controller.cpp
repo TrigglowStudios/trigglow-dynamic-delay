@@ -266,7 +266,27 @@ void BufferModeController::OnLiveDelayChanged(uint32_t before, uint32_t after)
 
 void BufferModeController::SetShowOverlay(bool show)
 {
-	status_.showOverlay = show;
+	status_.showOverlay = show || badgeLocked_;
+	NotifyStatusChanged();
+	UpdateOverlay();
+}
+
+void BufferModeController::SetLoadingLocked(bool locked)
+{
+	if (status_.loadingLocked == locked)
+		return;
+	status_.loadingLocked = locked;
+	NotifyStatusChanged();
+}
+
+void BufferModeController::SetBadgeLocked(bool locked)
+{
+	if (badgeLocked_ == locked)
+		return;
+	badgeLocked_ = locked;
+	status_.badgeLocked = locked;
+	if (locked && !status_.showOverlay)
+		status_.showOverlay = true;
 	NotifyStatusChanged();
 	UpdateOverlay();
 }
@@ -347,10 +367,11 @@ void BufferModeController::Enable()
 		return;
 	}
 	// OBS has one audio mix for every canvas, so the audio filters below delay
-	// the sound of other canvases too (Aitum Vertical...): their scenes named
-	// like a delayed scene get a mirror of the video filter, tuned and
-	// switched by the same calls below. Before them, so each one reaches the
-	// mirrors.
+	// the sound of other canvases too (Aitum Vertical...): the scene each one
+	// shows, and their scenes named like a delayed scene, get a mirror of the
+	// video filter, tuned and switched by the same calls below. Before them,
+	// so each one reaches the mirrors. A scene such a canvas switches to
+	// later gets its mirror from Tick().
 	bridge_.AttachMirrorFilters(status_.liveSceneNames);
 	bridge_.SetBufferFilterDelaySeconds(host_, status_.delaySeconds);
 	bridge_.SetBufferFilterMinResolutionHeight(host_, status_.minResolutionHeight);
@@ -548,6 +569,21 @@ void BufferModeController::Tick()
 	// are watched for encoder errors too.
 	RefreshObsEncoders(false);
 	bridge_.WatchOutputStops();
+	// v1.1.0: a scene another canvas (Aitum Vertical...) switched to since
+	// Enable() gets its mirror now, tuned like the ones Enable() made, so
+	// that canvas keeps its video in step with the one delayed audio whatever
+	// its scenes are called.
+	{
+		ObsFrontendBridge::MirrorTuning tuning;
+		tuning.delaySeconds = status_.effectiveDelaySeconds > 0 ? status_.effectiveDelaySeconds
+									: status_.delaySeconds;
+		tuning.minResolutionHeight = status_.minResolutionHeight;
+		tuning.codecWorkers = codecWorkers_;
+		tuning.autoCodec = bufferCodecAuto_;
+		tuning.ringClass = cycleRingClass_;
+		if (!bridge_.AttachLateMirrorFilters(status_.liveSceneNames, tuning).empty())
+			NotifyStatusChanged(); // The dock's other-canvas notice.
+	}
 	const uint64_t skipped = bridge_.TakeMixSkippedFrames();
 	if (skipped > 0)
 		bridge_.ReportBufferEncoderLag(host_, skipped);
@@ -599,8 +635,10 @@ bool BufferModeController::BufferRestartsWith(uint32_t previousDelaySeconds, uin
 
 std::string BufferModeController::LoadingSceneToShow() const
 {
-	// The user's loading scene, or else the Trigglow "adding delay" video.
-	return status_.loadingSceneName.empty() ? bridge_.EnsureDefaultLoadingScene() : status_.loadingSceneName;
+	// The user's loading scene (Starter and Pro), or else the Trigglow
+	// "adding delay" video.
+	return status_.loadingSceneName.empty() || status_.loadingLocked ? bridge_.EnsureDefaultLoadingScene()
+									 : status_.loadingSceneName;
 }
 
 void BufferModeController::ShowLoadingSceneForRefill()

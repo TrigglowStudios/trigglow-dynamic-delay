@@ -18,6 +18,30 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "win-http.hpp"
 
+namespace trigglow::http {
+namespace {
+// Content-Length as a number; -1 when empty, not all digits, or absurd.
+[[maybe_unused]] long long ParseContentLength(const std::string &value)
+{
+	size_t begin = 0, end = value.size();
+	while (begin < end && (value[begin] == ' ' || value[begin] == '\t'))
+		++begin;
+	while (end > begin &&
+	       (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n'))
+		--end;
+	if (begin == end || end - begin > 15)
+		return -1;
+	long long n = 0;
+	for (size_t i = begin; i < end; ++i) {
+		if (value[i] < '0' || value[i] > '9')
+			return -1;
+		n = n * 10 + (value[i] - '0');
+	}
+	return n;
+}
+} // namespace
+} // namespace trigglow::http
+
 #ifdef _WIN32
 
 #include <windows.h>
@@ -137,6 +161,29 @@ Response FailLast()
 {
 	const DWORD code = GetLastError();
 	return Fail(MapError(code), code);
+}
+
+constexpr DWORD kMaxLocationChars = 8192;
+
+// A response header as printable ASCII (anything else dropped), empty when
+// absent or longer than maxChars.
+std::string QueryHeaderAscii(HINTERNET request, DWORD info, DWORD maxChars)
+{
+	DWORD size = 0;
+	WinHttpQueryHeaders(request, info, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &size,
+			    WINHTTP_NO_HEADER_INDEX);
+	if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0 || size / sizeof(wchar_t) > maxChars + 1)
+		return std::string();
+	std::wstring value(size / sizeof(wchar_t) + 1, L'\0');
+	if (!WinHttpQueryHeaders(request, info, WINHTTP_HEADER_NAME_BY_INDEX, value.data(), &size,
+				 WINHTTP_NO_HEADER_INDEX))
+		return std::string();
+	std::string out;
+	for (const wchar_t *p = value.c_str(); *p; ++p) {
+		if (*p >= 0x20 && *p < 0x7F)
+			out += static_cast<char>(*p);
+	}
+	return out;
 }
 
 void SetDwordOption(HINTERNET handle, DWORD option, DWORD value)
@@ -448,16 +495,11 @@ Response Send(const Request &req)
 		return FailLast();
 	result.status = static_cast<int>(statusCode);
 
-	wchar_t retryAfter[64] = {};
-	DWORD retryAfterSize = sizeof(retryAfter) - sizeof(wchar_t);
-	if (WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_RETRY_AFTER, WINHTTP_HEADER_NAME_BY_INDEX, retryAfter,
-				&retryAfterSize, WINHTTP_NO_HEADER_INDEX)) {
-		for (const wchar_t *p = retryAfter; *p; ++p) {
-			if (*p >= 0x20 && *p < 0x7F)
-				result.retryAfter += static_cast<char>(*p);
-		}
-	}
+	result.retryAfter = QueryHeaderAscii(request.get(), WINHTTP_QUERY_RETRY_AFTER, 64);
+	result.location = QueryHeaderAscii(request.get(), WINHTTP_QUERY_LOCATION, kMaxLocationChars);
+	result.contentLength = ParseContentLength(QueryHeaderAscii(request.get(), WINHTTP_QUERY_CONTENT_LENGTH, 32));
 
+	unsigned long long received = 0;
 	for (;;) {
 		if (!WinHttpQueryDataAvailable(request.get(), nullptr))
 			return FailLast();
@@ -467,7 +509,7 @@ Response Send(const Request &req)
 		const DWORD available = call.bytes;
 		if (available == 0)
 			break;
-		if (result.body.size() + available > req.maxResponseBytes)
+		if (received + available > req.maxResponseBytes)
 			return Fail(Error::TooLarge);
 		const DWORD want = available < kChunkBytes ? available : kChunkBytes;
 		if (!WinHttpReadData(request.get(), call.chunk.data(), want, nullptr))
@@ -477,7 +519,14 @@ Response Send(const Request &req)
 			return StepFailure(step, call);
 		if (call.bytes == 0)
 			break;
-		result.body.append(call.chunk.data(), call.bytes < want ? call.bytes : want);
+		const DWORD got = call.bytes < want ? call.bytes : want;
+		received += got;
+		if (req.onBody) {
+			if (!req.onBody(call.chunk.data(), got))
+				return Fail(Error::Cancelled);
+		} else {
+			result.body.append(call.chunk.data(), got);
+		}
 	}
 
 	result.error = Error::None;
@@ -506,18 +555,48 @@ struct CurlCall {
 	const Request *request = nullptr;
 	Response *response = nullptr;
 	bool tooLarge = false;
+	bool stopped = false; // Request::onBody returned false.
+	size_t received = 0;
 };
 
 size_t OnBody(char *data, size_t size, size_t count, void *param)
 {
 	auto *call = static_cast<CurlCall *>(param);
 	const size_t bytes = size * count;
-	if (call->response->body.size() + bytes > call->request->maxResponseBytes) {
+	if (call->received + bytes > call->request->maxResponseBytes) {
 		call->tooLarge = true;
 		return 0; // Aborts the transfer.
 	}
+	call->received += bytes;
+	if (call->request->onBody) {
+		if (!call->request->onBody(data, bytes)) {
+			call->stopped = true;
+			return 0;
+		}
+		return bytes;
+	}
 	call->response->body.append(data, bytes);
 	return bytes;
+}
+
+// "name:" at the start of a header line (any case) -> its trimmed value.
+bool HeaderValue(const std::string &line, const char *name, std::string &value)
+{
+	const size_t len = std::char_traits<char>::length(name);
+	if (line.size() <= len)
+		return false;
+	for (size_t i = 0; i < len; ++i) {
+		char c = line[i];
+		c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+		if (c != name[i])
+			return false;
+	}
+	value = line.substr(len);
+	while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+		value.erase(value.begin());
+	while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' '))
+		value.pop_back();
+	return true;
 }
 
 size_t OnHeader(char *data, size_t size, size_t count, void *param)
@@ -525,20 +604,23 @@ size_t OnHeader(char *data, size_t size, size_t count, void *param)
 	auto *call = static_cast<CurlCall *>(param);
 	const size_t bytes = size * count;
 	const std::string line(data, bytes);
-	constexpr char kRetryAfter[] = "retry-after:";
-	constexpr size_t kLen = sizeof(kRetryAfter) - 1;
-	if (line.size() > kLen) {
-		std::string head = line.substr(0, kLen);
-		for (char &c : head)
-			c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
-		if (head == kRetryAfter) {
-			std::string value = line.substr(kLen);
-			while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
-				value.erase(value.begin());
-			while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' '))
-				value.pop_back();
-			call->response->retryAfter = value;
-		}
+	// A new status line (an interim 1xx answer came first): start over.
+	if (line.compare(0, 5, "HTTP/") == 0) {
+		call->response->retryAfter.clear();
+		call->response->location.clear();
+		call->response->contentLength = -1;
+		return bytes;
+	}
+	std::string value;
+	if (HeaderValue(line, "retry-after:", value)) {
+		call->response->retryAfter = value;
+	} else if (HeaderValue(line, "location:", value)) {
+		bool printable = value.size() <= 8192;
+		for (char c : value)
+			printable = printable && c >= 0x20 && c < 0x7F;
+		call->response->location = printable ? value : std::string();
+	} else if (HeaderValue(line, "content-length:", value)) {
+		call->response->contentLength = ParseContentLength(value);
 	}
 	return bytes;
 }
@@ -611,7 +693,7 @@ Response Send(const Request &req)
 		result.error = Error::Other;
 		return result;
 	}
-	CurlCall call{&req, &result, false};
+	CurlCall call{&req, &result, false, false, 0};
 	const std::string url = "https://" + req.host + ":443" + (req.path.empty() ? "/" : req.path);
 	curl_slist *headers = nullptr;
 	for (const Header &h : req.headers)
@@ -662,6 +744,11 @@ Response Send(const Request &req)
 	result.systemError = static_cast<unsigned long>(code);
 	if (call.tooLarge) {
 		result.error = Error::TooLarge;
+		result.body.clear();
+		return result;
+	}
+	if (call.stopped) {
+		result.error = Error::Cancelled;
 		result.body.clear();
 		return result;
 	}

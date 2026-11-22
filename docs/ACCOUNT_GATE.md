@@ -2,9 +2,12 @@
 
 # Free account gate
 
-Trigglow Dynamic Delay is, and stays, 100% free -- no subscription, no paid tier, no feature ever
-locked behind payment. Since v0.3.3, turning the delay on (the dock's buttons, the hotkeys, Stream
+Trigglow Dynamic Delay is, and stays, free: no subscription and no paid tier for the delay itself.
+Since v0.3.3, turning the delay on (the dock's buttons, the hotkeys, Stream
 Deck and obs-websocket, in stream mode and in scene mode) requires having signed in to a free trigglow.com account at least once.
+The one thing a Trigglow plan changes (v1.1.0) is the delay badge viewers see: it is part of the
+free plan and always shows on Free (corner and seconds still the streamer's choice); Starter and
+Pro accounts can hide it. See "The plan and the badge" below.
 The purpose is discovery, not monetization or lead generation: Trigglow ships several other free
 (with-limits) products for streamers, and most people who install this plugin from the OBS
 resources directory would otherwise never find out they exist.
@@ -82,6 +85,26 @@ it works on macOS and Linux too, over the system's libcurl (CMake links `CURL::l
 the binary's needs; macOS 12's libcurl 7.79 is handled). This path is built by CI but hasn't been
 run on a real Mac or Linux machine yet. The planned keychain or secret-store storage wasn't done:
 see step 6.
+
+## The plan and the badge (v1.1.0)
+
+`GET /auth/plugin/me` answers, besides the name and Trigi, the account's plan and what it allows:
+`account.plan {id, name}` and `account.features.hideBadge` (true for Starter and Pro, `plus`;
+false for Free and for the viewer-only ad-free plan). `auth::CheckSession()` reads it into
+`MeResult::account` (`auth-client.hpp`, `AccountFeatures`) and `AuthManager::HideBadgeAllowed()`
+is true only with a working sign-in on a plan the server said can hide it. The dock
+(`RefreshAccountUi()`) pushes `!HideBadgeAllowed()` into both engines'
+`SetBadgeLocked()`: locked, "Show the delay badge to viewers" is ticked and disabled, a line under
+it says why, **See plans** opens `trigglow.com/pricing` (an allowed page, `api::web::kPricing`),
+and `SetShowOverlay(false)` from anywhere (a settings file edited by hand included) is ignored.
+The corner, the seconds on the badge, and everything else stay free.
+
+Between OBS starting and the server answering, and on a start without a connection, the plugin
+uses the last answer, kept as `badge_hide_allowed` in `stream-mode-settings.json` (seeded into
+`AuthManager::SeedHideBadge()` by `plugin-main.cpp`). A settings file from before 1.1.0 has no
+such key: nothing is locked until the server has answered once, so nobody's choice is overwritten
+by a guess. Signing out locks it (there is no plan without an account); signing back in unlocks it
+again once the server answers.
 
 ## Enforcement points
 

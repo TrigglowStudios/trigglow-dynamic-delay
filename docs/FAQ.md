@@ -13,7 +13,7 @@ recording** are delayed; it works with any output and on every platform. **On, o
 (stream mode, Windows): the plugin points OBS's stream output at a relay inside OBS, on
 `127.0.0.1`, keeps the already-encoded packets and sends them to your platform after the delay. It
 costs far less RAM and CPU and delays every scene, but your recording, the Replay Buffer and OBS's
-preview stay live, and there's no loading scene. The dock's button, the hotkeys, obs-websocket and
+preview stay live; viewers see the loading scene while the delay builds up (since v1.1.0). The dock's button, the hotkeys, obs-websocket and
 the Stream Deck drive the one you chose, and only that one. The box is locked while a delay is on;
 ticked while you're live, it applies from your next stream. Details: `docs/STREAM_MODE.md`.
 
@@ -48,10 +48,36 @@ disk, deleted when the stream ends; measured at 6 Mbps, about 11-16 MB of RAM at
 
 **Which streams can use only the stream?**
 Streams that go out through OBS's own RTMP output over RTMP or RTMPS: Twitch, YouTube, Kick, TikTok
-and any custom rtmp:// or rtmps:// server, with Enhanced Broadcasting off. Not (yet): Enhanced
-Broadcasting, SRT, RIST and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
+and any custom rtmp:// or rtmps:// server, with or without Enhanced Broadcasting (since v1.1.0
+every track it sends, the vertical one included, goes through the delay). Not (yet): SRT, RIST
+and WHIP services, and macOS and Linux (their FFmpeg doesn't have the
 part the relay needs yet). In those cases the dock says why: untick "Apply the delay only to the
 stream" to delay all of OBS.
+
+**I multistream with Aitum Multistream or Multiple RTMP Outputs. Which mode delays every platform?**
+All of OBS, the default. Those plugins encode what OBS shows, so every output they start is delayed
+like OBS's own stream. With "only the stream", OBS's own stream and Aitum Vertical's go through the
+delay: the outputs the multistream plugins start go out live, and the dock lists them while they run
+("Aitum Multistream is sending 2 outputs live, without the delay..."). Services that take one stream and send it on
+(Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both modes, since OBS only sends them one stream. The (i) next to
+Advanced in the dock sums this up.
+
+**Does Aitum Vertical get the delay?**
+With all of OBS, yes, since v1.1.0: the scene the vertical canvas shows is delayed by the same
+seconds, whatever it is called (1.0 only delayed a vertical scene named like one of your delayed
+scenes). The dock warns that the delay then uses about twice the resources, because that canvas
+keeps a buffer of its own. While that buffer fills, and each time the vertical canvas switches
+scene, it shows black for the delay. With "only the stream", yes too (v1.1.0): the vertical stream
+goes through its own relay with the same delay as OBS's stream. The first time it starts in an OBS
+session it goes out directly for a fraction of a second, then the plugin restarts it through the
+delay. Your vertical stream needs its own stream key: Restream and most platforms accept one
+sender per key, so a vertical sent with the same key as your main stream kicks it off ("End of
+file" in the dock).
+
+**Why does the delay turn off when my stream ends?**
+Since v1.1.0 the delay is off by default with "only the stream": it turns on only when you turn it on
+(or arm it before going live), a Delay by scene rule acts only while you're live, and when the stream
+ends it turns off, so the next stream starts without it.
 
 **Does the stream reconnect when I turn the delay on, off, up or down?**
 No. The relay keeps one connection to your platform and splices: turning the delay on (or raising
@@ -103,6 +129,19 @@ before it's called verified (`docs/STREAM_MODE.md`, "Verification status"). All 
 default, is there if anything goes wrong.
 
 ## General
+
+**How do I update the plugin?**
+From OBS, since v1.1.0. When a new version is out, the dock shows it in a card at the top, and the
+first time you open OBS after it's published a window tells you (once per version). On Windows,
+with the plugin installed by its installer, press **Update** and then **Update now**: the plugin
+downloads the installer, checks it against the SHA-256 GitHub publishes for it (a download that
+doesn't match is deleted, never run), and starts it. Windows asks for permission once; then OBS
+closes, the update installs in a few seconds with only a progress window, and OBS opens again on
+its own. Your scenes, settings, hotkeys and sign-in are kept. The button waits while you're live,
+recording or with the delay on, because closing OBS would cut them. If you say no to Windows'
+prompt, nothing changes and OBS stays open. On macOS and Linux, or if you installed the plugin by
+hand, the button opens the download page on trigglow.com instead. **What's new** opens the
+changelog on trigglow.com.
 
 **Does the stream cut out or reconnect when I enable, disable, or use the delay?**
 No — never, at any point, for any reason, in either mode. Only the stream keeps one connection to
@@ -295,9 +334,17 @@ hotkeys aren't affected. If you go back to v0.5.0 or earlier afterwards, it crea
 One image the plugin draws itself: since v1.0.0 a rounded plate with the Dynamic Delay logo,
 "DELAY" and your seconds, and "Dynamic Delay by Trigglow" under them, the same in every language. It
 only shows while the delay is on. **Show the delay badge to viewers** and **Badge position** (dock:
-Options) work for both modes. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
+Options) work for both modes. Since v1.1.0 the badge is part of the free plan: on Free the first box
+is locked (viewers always see the badge; the corner and "Show the seconds on the badge" stay yours)
+and **See plans** opens trigglow.com/pricing; Starter and Pro accounts can untick it. With all of OBS it's the source **Trigglow Delay Badge (auto)**, and
 you can move and resize it in OBS (it stays where you put it). With only the stream it's drawn over
 OBS's program on its own output channel (up to 600 s) and can't be moved by hand.
+
+**What do viewers see while the delay builds up? Can I change it?**
+The loading scene, in both modes (with only the stream since v1.1.0: a short clip of it is made
+with your stream encoder when each stream starts). On Free it's Trigglow's "adding delay" video
+and the **Loading scene** picker is locked, with **See plans**; Starter and Pro accounts can pick
+any scene of theirs. A scene you had chosen is kept and comes back if you upgrade.
 
 **What triggers the `Error` state?**
 Anything that would otherwise leave the plugin in a broken but silent condition: no live scene
@@ -336,10 +383,11 @@ the dock asks you to sign in, do it once. Your scenes and settings are kept.
 **The dock or "Report a problem" says to update the plugin. What do I do?**
 "This plugin version can't sign in any more. Update the plugin." in the dock, "Update the plugin to
 use Trigi" in "Report a problem" or "Update required" on the trigglow.com sign-in page all mean the
-same: your version is too old for what you're trying to do. Download the latest version (**Get the
-update** in the dialog, the update notice in the dock, or the
-[latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)) and install
-it with OBS closed; your settings and your sign-in are kept. Meanwhile you can still send a report
+same: your version is too old for what you're trying to do. Update it: since v1.1.0, the **Update**
+button on the dock's update card does it from OBS (see "How do I update the plugin?"); from older
+versions, or with **Get the update** in the dialog, download it from
+[trigglow.com/dynamic-delay](https://www.trigglow.com/dynamic-delay) and install it with OBS closed.
+Your settings and your sign-in are kept. Meanwhile you can still send a report
 from the form in the dialog or from [trigglow.com/support](https://www.trigglow.com/support).
 
 **What is Trigi?**

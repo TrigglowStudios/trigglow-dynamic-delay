@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -100,6 +101,11 @@ struct Request {
 	// Aborts the call when cancelled (background-tasks.hpp gives every job
 	// one). Null: not cancellable. Must outlive the call.
 	const tasks::CancelToken *cancel = nullptr;
+	// v1.1.0, large downloads (the update's installer): when set, the body is
+	// handed over here chunk by chunk as it arrives instead of collected in
+	// Response::body. maxResponseBytes still caps the total. Returning false
+	// stops the call with Error::Cancelled. Called on the calling thread.
+	std::function<bool(const char *data, size_t size)> onBody;
 };
 
 enum class Error : unsigned char {
@@ -117,9 +123,14 @@ enum class Error : unsigned char {
 
 struct Response {
 	Error error = Error::Other;
-	int status = 0;                // Valid when error == None.
-	std::string body;              // Valid when error == None.
-	std::string retryAfter;        // Raw Retry-After header, empty if absent.
+	int status = 0;         // Valid when error == None.
+	std::string body;       // Valid when error == None.
+	std::string retryAfter; // Raw Retry-After header, empty if absent.
+	// v1.1.0: the Location header (printable ASCII only, empty if absent or
+	// longer than 8 KB) -- read, never followed -- and Content-Length (-1 if
+	// absent or not a number).
+	std::string location;
+	long long contentLength = -1;
 	unsigned long systemError = 0; // WinHTTP error code (for the log), 0 if none.
 
 	bool Ok() const { return error == Error::None; }

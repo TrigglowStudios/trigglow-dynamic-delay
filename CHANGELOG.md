@@ -2,6 +2,82 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.1.0 — 2026-11-22
+
+Dynamic Delay in 16 languages, Enhanced Broadcasting and the loading screen with "only the stream",
+and updates from OBS itself.
+
+**Before you update:** nothing to do. Install it like v1.0.0; your scenes, settings, hotkeys and
+sign-in are kept. From this version on, new versions install from OBS (Windows).
+
+**What's new:**
+- **16 languages.** The panel, the settings and the messages are now in Catalan, Valencian, German,
+  Basque, French, Galician, Hindi, Italian, Japanese, Korean, Russian and Ukrainian too, besides
+  English, Spanish, Brazilian Portuguese and Simplified Chinese: the plugin follows OBS's language.
+  The "adding delay" loading video your viewers see comes in the same 16, horizontal and vertical.
+- **Update from OBS.** When a new version is out, the dock shows a card with it and an **Update**
+  button, and the first time you open OBS after it's published a window tells you once. On
+  Windows, **Update now** downloads the installer, checks it against the SHA-256 GitHub publishes
+  for it, and runs it: Windows asks for permission once, OBS closes, the update installs in a few
+  seconds and OBS opens again on its own. Your scenes, settings, hotkeys and sign-in are kept. It
+  waits while you're live, recording or with the delay on (closing OBS would cut them) and says
+  why. **What's new** opens the changelog on trigglow.com. On macOS, Linux or a manual install, the
+  button opens the download page on trigglow.com instead; nothing sends you to GitHub any more.
+- The update card has a new look: the brand rule, the new version and yours, and an X that hides
+  it until OBS starts again.
+- **Send to your Trigglow Multistream channels from OBS.** In stream mode, Options has "Also send
+  to my Trigglow Multistream channels": the delayed stream goes straight from OBS to every channel
+  you have enabled on trigglow.com (Live > Multistream), besides your OBS service. Each channel is
+  one more upload of your bitrate. Stream keys are read from your account when needed and kept only
+  in memory. If you already stream to Trigglow Multistream, nothing is added: the cloud forwards it.
+  Depends on your Trigglow plan.
+- **The delay on the Multistream page.** While you're signed in, trigglow.com shows whether the
+  delay is on, its seconds and where the stream goes, and can turn it on or off, change the seconds
+  or drop what hasn't aired yet. It applies in a few seconds, like a hotkey.
+- A stream to Trigglow Multistream shows as "Trigglow Multistream" in the dock.
+- **The delay badge is part of the free plan.** On Free, viewers always see the "Delay 30 s"
+  badge while the delay is on: you still pick its corner and whether it shows the seconds, but
+  "Show the delay badge to viewers" is locked, with a line that says why and a **See plans**
+  button. Starter and Pro accounts can untick it as before. The dock shows your plan next to your
+  name ("Signed in as X · Starter plan"). The plugin asks trigglow.com at each OBS start and keeps
+  the last answer for a start without a connection; a settings file from an earlier version locks
+  nothing until the server has answered once.
+- **Multistream and vertical, reviewed.** With the delay on all of OBS (the default), every output
+  of your main canvas is delayed too: Aitum Multistream, Multiple RTMP Outputs and anything else
+  that encodes what OBS shows. An Aitum Vertical canvas now gets the delay on **the scene it
+  shows, whatever it is called**: 1.0 only delayed a vertical scene named like one of your delayed
+  scenes, so most vertical streams went out live with delayed sound. A scene the vertical canvas
+  switches to while the delay is on gets it too (black for the delay while its buffer fills, as
+  before). With "Apply the delay only to the stream", only OBS's own stream goes through the delay:
+  the outputs those plugins start go out live, and the panel now says so while they run, naming
+  the plugin and how many outputs ("Aitum Multistream is sending 2 outputs live, without the
+  delay..."). An (i) next to **Advanced** sums it up. Services that take one stream and send it on
+  (Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both.
+- **Aitum Vertical with "only the stream".** Its vertical stream now goes through the delay too,
+  with the same seconds as OBS's own, Dump and the badge included, and the dock lists it with your
+  other destinations. The first time it starts in an OBS session it goes out directly for a
+  fraction of a second, then the plugin restarts it through the delay. Use a stream key of its own
+  for the vertical stream: Restream and most platforms accept one sender per key.
+- **The loading screen with "only the stream".** While the delay builds up, viewers now see the
+  loading scene, as with all of OBS, instead of the last seconds again (when you raise it live) or
+  nothing (when the stream starts with the delay on). The plugin makes a short clip of it with your
+  own stream encoder when each stream starts (a few seconds of extra encoding, once) and the dock
+  shows "Loading screen" on the destination meanwhile. Works with Enhanced Broadcasting too:
+  vertical tracks get Trigglow's loading video in a version made for vertical (a scene you chose
+  is fitted inside). H.264 streams.
+- **Choosing the loading scene is for Starter and Pro.** On Free, viewers see Trigglow's "adding
+  delay" video in both modes; the picker is locked with a line that says why and a **See plans**
+  button. A scene you had chosen is kept and comes back if you upgrade.
+- **Enhanced Broadcasting works with "only the stream".** Every track it sends (each quality,
+  and the vertical canvas when you send one) goes through the delay together, in sync, with Dump,
+  the badge and the last seconds sent after you stop. Your Multistream channels get the main
+  track as a regular stream. Nothing to change: turning Enhanced Broadcasting on or off is up to
+  you.
+- **The delay is off by default with "only the stream".** It no longer turns itself on: Delay by
+  scene rules act only while you're live (switching scenes in OBS before going live doesn't arm
+  it), a new rule does nothing until you choose what it does, and when a stream ends the delay
+  turns off, so the next one starts without it unless you turn it on.
+
 ## v1.0.0 — 2026-11-17
 
 Dynamic Delay comes out of beta on Windows: version 1.0, in Trigglow's new look. The macOS and Linux

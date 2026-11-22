@@ -24,7 +24,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Broadcasting -- it starts the relay (stream-relay.hpp) with the streamer's
 // own service as the first destination and points THAT stream's output at the
 // relay on 127.0.0.1. The streamer's saved service settings are never touched:
-// OBS sets its service on the output again on every start.
+// OBS sets its service on the output again on every start. v1.1.0: with "Also
+// send to my Trigglow Multistream channels" ticked, the streamer's Multistream
+// channels follow as extra destinations (multistream-service.hpp).
 //
 // From then on the delay is a number the relay applies to the encoded stream:
 // on, off, or changed while live (0-600 s), with no reconnect, no scene
@@ -49,6 +51,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "apply-to.hpp"
 #include "drive-kind.hpp"
 #include "stream-relay.hpp"
+#include "vertical-taps.hpp"
+#include "loading-clip.hpp"
 
 struct obs_service;
 typedef struct obs_service obs_service_t;
@@ -98,6 +102,9 @@ struct StreamDelayStatus {
 	// "Stream.Warn." with an optional ":<value>" (e.g. "keyint_long:8").
 	std::vector<std::string> warnings;
 	bool showOverlay = true;
+	// v1.1.0: the badge can't be switched off (Free plan, or signed out):
+	// showOverlay is then always true and the dock's box is locked.
+	bool badgeLocked = false;
 	uint32_t overlayCorner = 1;
 	// Seconds until the delay comes back after a Dump (0: no dump pending).
 	uint32_t dumpRestoreIn = 0;
@@ -149,10 +156,30 @@ public:
 	// The drive type of the spill folder, detected at Init() and again at each
 	// stream start.
 	relay::DriveKind DetectedDrive() const { return driveKind_; }
+	// v1.1.0 "send_to_multistream": also send the stream to the streamer's
+	// Trigglow Multistream channels. Only this boolean is saved; the channels
+	// and their keys come from the provider below and stay in memory.
+	void SetSendToMultistream(bool send);
+	bool SendToMultistream() const { return sendToMultistream_; }
+	// Asked once per stream, at STREAMING_STARTING, with the stream's primary
+	// destination: what to send to besides it (nothing when the option is
+	// off). Must not block.
+	using ExtraDestinations = std::function<std::vector<relay::Destination>(const relay::Destination &primary)>;
+	void SetExtraDestinationsProvider(ExtraDestinations provider) { extraDestinations_ = std::move(provider); }
+	// v1.1.0 loading screen: the scene viewers see while the delay builds up
+	// (BufferModeController::EffectiveLoadingScene, shared by both modes).
+	void SetLoadingSceneProvider(std::function<std::string()> provider) { loadingScene_ = std::move(provider); }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
 	bool ShowOverlay() const { return showOverlay_; }
+	// v1.1.0: the badge is part of the free plan. Locked (Free, or no
+	// sign-in), SetShowOverlay(false) is ignored and the badge stays on; the
+	// corner and the seconds stay the streamer's choice. Set from the dock
+	// out of AuthManager::HideBadgeAllowed(); the last server answer is kept
+	// in the settings file (plugin-main.cpp) for a start without a connection.
+	void SetBadgeLocked(bool locked);
+	bool BadgeLocked() const { return badgeLocked_; }
 	void SetOverlayCorner(uint32_t corner);
 	uint32_t OverlayCorner() const { return overlayCorner_; }
 	// True: the badge says "DELAY 30 s". False: only the Dynamic Delay mark
@@ -217,12 +244,21 @@ private:
 	void UpdateOverlay();
 	void ClearOverlay();
 	void CheckObsSettings(obs_output_t *output);
+	// v1.1.0: other plugins' stream outputs (Aitum Multistream, Multiple RTMP
+	// outputs, Aitum Vertical...) go to their platform themselves, live: with
+	// "only the stream" the dock names them while they run (other-outputs.hpp).
+	// Once a second from Tick(); notifies when the list changes.
+	void RefreshOtherOutputs();
 	void SwapFrontendService();
 	void RestoreFrontendService();
 	void VerifyOutputUsesRelay();
 	uint32_t EffectiveDelay() const { return delayOn_ ? delaySeconds_ : 0; }
 
 	void ApplySceneRule();
+	// The delay now to every relay that carries a stream: OBS's own (while
+	// engaged) and Aitum Vertical's (vertical-taps.hpp).
+	void PushDelay(uint32_t seconds);
+	VerticalTaps::Options TapOptions() const;
 
 	uint32_t presets_[3] = {10, 30, 60};
 	std::vector<SceneRule> sceneRules_;
@@ -230,6 +266,7 @@ private:
 	int64_t dumpRestoreAtNs_ = 0; // Monotonic; 0 = no dump pending.
 
 	bool showOverlay_ = true;
+	bool badgeLocked_ = false;
 	uint32_t overlayCorner_ = 1;
 	bool overlayShowSeconds_ = true;
 	std::function<std::string(uint32_t)> overlayImage_;
@@ -238,8 +275,19 @@ private:
 	uint32_t overlaySeconds_ = 0;
 	bool overlayShown_ = false;
 	std::vector<std::string> warnings_;
+	// "other_<plugin>:<count>" per plugin with a live stream output of its own (RefreshOtherOutputs).
+	std::vector<std::string> otherOutputs_;
+	unsigned ticks_ = 0;
 
 	relay::StreamRelay relay_;
+	// v1.1.0: Aitum Vertical's stream outputs through the delay too.
+	VerticalTaps verticalTaps_;
+	// This stream is Enhanced Broadcasting (OBS's multitrack output, which
+	// can carry the vertical canvas as tracks) and goes through the relay.
+	bool multitrackEngaged_ = false;
+	// Something went out through a relay at the last Tick: when that ends the
+	// delay turns off (each stream starts without it unless turned on).
+	bool wasStreaming_ = false;
 	obs_service_t *loopbackService_ = nullptr;
 	// The streamer's own service while the frontend's is swapped for the
 	// relay's (Advanced output mode, see OnStreamingStarting). Holds a ref.
@@ -253,6 +301,19 @@ private:
 	bool drainOnStop_ = true;
 	relay::BufferStorage bufferStorage_ = relay::BufferStorage::Auto;
 	relay::DriveKind driveKind_ = relay::DriveKind::Unknown;
+	bool sendToMultistream_ = false;
+	ExtraDestinations extraDestinations_;
+	// v1.1.0 loading screen (loading-clip.hpp): made once OBS's stream
+	// reached the relay, kept for the next streams while the scene and the
+	// encoders stay the same.
+	std::function<std::string()> loadingScene_;
+	LoadingClipMaker loadingClip_;
+	bool loadingClipWanted_ = false;
+	std::string loadingClipKey_; // What the clip being made is for.
+	std::string cachedClipKey_;
+	std::vector<relay::LoadingVideoTrack> cachedClip_;
+	void StepLoadingClip();
+	std::string LoadingClipKey(const std::string &scene) const;
 	bool streamOnDisk_ = false;
 	bool engaged_ = false;
 	bool draining_ = false;

@@ -26,7 +26,7 @@ on a live stream yet (alpha).
 
 ## 1. Download
 
-Get `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` from the
+Get `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe` from the
 [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). Prefer to
 install by hand instead? The `.zip` in the same release contains just the plugin files — see
 "Installing the plugin" in `README.md`.
@@ -69,19 +69,22 @@ It's a standard next-next-next wizard:
 
    ![Language selector](images/installer-1-language.png)
 
-2. Welcome screen — confirms the version being installed (shows 0.2.0 and Inno Setup's generic
-   styling in this screenshot; as of v0.3.1 you'll see the Trigglow icon and banner instead, plus
-   the current version number, but the same layout and buttons):
+2. Welcome screen — confirms the version being installed:
 
-   ![Welcome screen, version 0.2.0](images/installer-2-welcome.png)
+   ![Welcome screen, version 1.1.0](images/installer-2-welcome.png)
 
 3. There is no folder to choose since v0.7.1: the plugin always goes to OBS's plugin folder,
    `C:\ProgramData\obs-studio\plugins\obs-trigglow-dynamic-delay` (see "Where the files go on
    Windows" below). The installer finds OBS through the registry key the official OBS installer
    writes and checks that it's OBS 31.1.0 or newer; with an older OBS it stops and asks you to
-   update OBS first.
+   update OBS first. While it does, it shows "Preparing to install":
 
-4. If OBS is still running, the installer asks you to close it (File → Exit) and click **Retry**.
+   ![Preparing to install](images/installer-3-destination.png)
+
+4. If OBS is still running, the installer asks you to close it (File → Exit) and click **Retry**
+   (right after the language, before the welcome screen):
+
+   ![OBS Studio is open: close it and click Retry](images/installer-4-close-obs.png)
 
 5. Installing:
 
@@ -106,10 +109,18 @@ Delay"** is checked in that same menu:
 The dock appears: one panel with the status, one **Turn delay on** button, the delay and your
 scenes. By default the delay applies to all of OBS (stream and recording): pick your **live
 scene** and you're set. To delay only the stream and keep the recording live, tick **Apply the
-delay only to the stream** in Options > Advanced. The screenshot below is from an earlier version.
+delay only to the stream** in Options > Advanced.
 See `README.md` ("Using the plugin") for what to configure next.
 
 ![Trigglow Dynamic Delay dock, Inactive state](images/obs-panel-3-dock.png)
+
+Under **Options** (v1.1.0): the badge your viewers see is part of the free plan, so on Free "Show
+the delay badge to viewers" stays ticked (you still pick its corner and whether it shows the
+seconds) and **See plans** opens trigglow.com/pricing; Starter and Pro can untick it. The (i) next
+to **Advanced** says what each option covers with Aitum Multistream, Multiple RTMP Outputs and
+Aitum Vertical (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
+
+![Options: the badge box locked on Free, See plans, and the (i) next to Advanced](images/obs-options-badge.png)
 
 ## 6. Sign in once
 
@@ -149,9 +160,9 @@ The Flatpak OBS isn't supported: it runs plugins inside its own runtime and keep
 Install, with OBS closed:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 The packages put the plugin in OBS 33's system location,

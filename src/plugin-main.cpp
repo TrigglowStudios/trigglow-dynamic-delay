@@ -57,6 +57,7 @@ extern "C" {
 #include "hotkeys.hpp"
 #include "i18n.hpp"
 #include "logging.hpp"
+#include "multistream-service.hpp"
 #include "obs-frontend-bridge.hpp"
 #include "overlay-badge.hpp"
 #include "settings-ui.hpp"
@@ -120,6 +121,10 @@ struct PluginState {
 	std::unique_ptr<trigglow::SceneDelayTarget> sceneTarget;
 	std::unique_ptr<trigglow::StreamDelayTarget> streamTarget;
 	std::unique_ptr<trigglow::DelayRouter> router;
+	// v1.1.0: the streamer's Trigglow Multistream channels as extra
+	// destinations of stream mode, and the delay's status and remote control
+	// for the dashboard. After what it uses, so it goes first.
+	std::unique_ptr<trigglow::MultistreamLink> multistreamLink;
 	std::unique_ptr<trigglow::DelayHotkeys> hotkeys;
 	// Not owned past AddDock(): OBS's dock system takes ownership of the
 	// QWidget once obs_frontend_add_dock_by_id() returns true, and may destroy
@@ -147,6 +152,12 @@ void LoadBrandFonts()
 	const QString dir = rawDir ? QString::fromUtf8(rawDir) : QString();
 	bfree(rawDir);
 	const trigglow::ui::BrandFontsReport report = trigglow::ui::LoadBrandFonts(dir);
+	// v1.1.0: Hindi needs a font that has its script (ui-theme.hpp).
+	const char *uiLocale = obs_get_locale();
+	const QString scriptFont = trigglow::ui::UseScriptFontFor(QString::fromUtf8(uiLocale ? uiLocale : ""));
+	if (!scriptFont.isEmpty())
+		TRIGGLOW_LOG_INFO(kComponent, "the panel uses %s for this language's script",
+				  scriptFont.toUtf8().constData());
 	// The folder relative to the plugin, never its absolute path: OBS's log is
 	// attached to support tickets, and a portable OBS lives under the user's
 	// profile folder.
@@ -427,9 +438,11 @@ trigglow::ApplyTo ReadApplyTo(obs_data_t *data)
 	return setting.value;
 }
 
-// Stream mode settings, and what the delay applies to. The stream goes only to
-// the streamer's own OBS service; a "destinations" array left by a 1.0
-// pre-release is ignored and dropped on the next save.
+// Stream mode settings, and what the delay applies to. A "destinations" array
+// left by a 1.0 pre-release is ignored and dropped on the next save: besides
+// the streamer's own OBS service the stream only goes to their Trigglow
+// Multistream channels (v1.1.0 "send_to_multistream"), which are never saved,
+// only that boolean.
 void LoadStreamSettings(trigglow::StreamDelayController &controller)
 {
 	const QString path = ModuleConfigPath(kStreamSettingsFile);
@@ -451,6 +464,8 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
 	// Missing (settings from before the choice) or unknown: Automatic.
 	controller.SetBufferStorage(trigglow::relay::ParseBufferStorage(obs_data_get_string(data, "buffer_storage")));
+	// Missing (settings from before 1.1.0): off.
+	controller.SetSendToMultistream(obs_data_get_bool(data, "send_to_multistream"));
 	if (obs_data_has_user_value(data, "show_overlay"))
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
@@ -458,6 +473,13 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 	// Both modes' badge. Missing (settings from before the choice): the seconds show.
 	if (obs_data_has_user_value(data, "overlay_show_seconds"))
 		controller.SetOverlayShowSeconds(obs_data_get_bool(data, "overlay_show_seconds"));
+	// v1.1.0: what trigglow.com said last about hiding the badge (Starter and
+	// Pro can; Free can't), for a start without a connection. Missing (a file
+	// from before the plan contract): not locked until the server answers, so
+	// nobody's choice is overwritten by a guess. AuthManager is seeded from it
+	// (obs_module_load) and the dock applies the live answer to both modes.
+	if (obs_data_has_user_value(data, "badge_hide_allowed"))
+		controller.SetBadgeLocked(!obs_data_get_bool(data, "badge_hide_allowed"));
 	for (int i = 0; i < 3; ++i) {
 		const std::string key = "preset" + std::to_string(i + 1);
 		if (obs_data_has_user_value(data, key.c_str()))
@@ -502,9 +524,11 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
 	obs_data_set_string(data, "buffer_storage",
 			    trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
+	obs_data_set_bool(data, "send_to_multistream", controller.SendToMultistream());
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
 	obs_data_set_bool(data, "overlay_show_seconds", controller.OverlayShowSeconds());
+	obs_data_set_bool(data, "badge_hide_allowed", !controller.BadgeLocked());
 	for (int i = 0; i < 3; ++i)
 		obs_data_set_int(data, ("preset" + std::to_string(i + 1)).c_str(), controller.Preset(i));
 	obs_data_array_t *rules = obs_data_array_create();
@@ -869,7 +893,13 @@ bool obs_module_load(void)
 #endif
 	g_state->streamController->SetOverlayImageProvider(
 		[files = g_state->badgeFiles.get()](uint32_t seconds) { return BadgeImagePath(*files, seconds); });
+	// v1.1.0: stream mode shows the same loading scene as all of OBS.
+	g_state->streamController->SetLoadingSceneProvider(
+		[buffer = g_state->bufferController.get()] { return buffer->EffectiveLoadingScene(); });
 	LoadStreamSettings(*g_state->streamController);
+	// The last server answer about the badge (see LoadStreamSettings): what
+	// AuthManager::HideBadgeAllowed() says until /auth/plugin/me answers.
+	g_state->authManager->SeedHideBadge(!g_state->streamController->BadgeLocked());
 	g_state->streamController->Init();
 	AlignSharedSettings(*g_state->bufferController, *g_state->streamController);
 	g_state->sceneTarget =
@@ -883,9 +913,24 @@ bool obs_module_load(void)
 	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->router);
 	g_state->hotkeys->Init();
 
+	// v1.1.0: Trigglow Multistream. The controller asks it for the extra
+	// destinations as each stream starts.
+	g_state->multistreamLink = std::make_unique<trigglow::MultistreamLink>(
+		*g_state->authManager, *g_state->streamController, *g_state->router);
+	g_state->streamController->SetExtraDestinationsProvider(
+		[link = g_state->multistreamLink.get()](const trigglow::relay::Destination &primary) {
+			return link->ForStream(primary);
+		});
+	g_state->multistreamLink->Init();
+
 	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->streamController,
-						     *g_state->router, *g_state->authManager);
+						     *g_state->router, *g_state->authManager,
+						     *g_state->multistreamLink);
 	g_state->dock = dock;
+	g_state->multistreamLink->SetChangedCallback([] {
+		if (g_state && g_state->dock)
+			g_state->dock->OnStreamStatusChanged();
+	});
 	dock->SetSettingsChanged([] {
 		if (g_state && g_state->streamController)
 			SaveStreamSettings(*g_state->streamController);
@@ -937,9 +982,14 @@ void obs_module_unload(void)
 	// back into.
 	if (g_state->hotkeys)
 		g_state->hotkeys->Shutdown();
+	// Before what it reports on and asks for goes away: no more status
+	// reports, and the channels' keys leave memory.
+	if (g_state->multistreamLink)
+		g_state->multistreamLink->Shutdown();
 	// Cuts the relay (and whatever it was still sending) and joins its threads.
 	if (g_state->streamController) {
 		SaveStreamSettings(*g_state->streamController);
+		g_state->streamController->SetExtraDestinationsProvider(nullptr);
 		g_state->streamController->SetStatusCallback(nullptr);
 		g_state->streamController->Shutdown();
 	}

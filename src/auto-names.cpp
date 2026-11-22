@@ -154,21 +154,45 @@ bool IsHelperSceneName(std::string_view name)
 }
 
 namespace {
-bool SpanishLocale(std::string_view locale)
+// The language the loading video is in for an OBS locale: the 16 the plugin
+// is translated to (data/locale), English for any other. Portuguese and
+// Chinese only for the variants translated (pt-BR, zh-CN).
+std::string LoadingLanguage(std::string_view locale)
 {
-	return locale.size() >= 2 && (locale[0] == 'e' || locale[0] == 'E') && (locale[1] == 's' || locale[1] == 'S') &&
-	       (locale.size() == 2 || locale[2] == '-' || locale[2] == '_');
+	std::string lower;
+	for (char c : locale)
+		lower += c == '_' ? '-' : (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+	if (lower == "pt-br")
+		return "pt";
+	if (lower == "zh-cn")
+		return "zh";
+	const std::string language = lower.substr(0, lower.find('-'));
+	for (const char *known : {"es", "ca", "val", "de", "eu", "fr", "gl", "hi", "it", "ja", "ko", "ru", "uk"}) {
+		if (language == known)
+			return language;
+	}
+	return "en";
 }
 } // namespace
 
 std::string DefaultLoadingVideoFile(std::string_view locale)
 {
-	return SpanishLocale(locale) ? "videos/adding-delay-es.mp4" : "videos/adding-delay-en.mp4";
+	return "videos/adding-delay-" + LoadingLanguage(locale) + ".mp4";
 }
 
 std::string DefaultLoadingStillFile(std::string_view locale)
 {
-	return SpanishLocale(locale) ? "images/adding-delay-es.jpg" : "images/adding-delay-en.jpg";
+	return "images/adding-delay-" + LoadingLanguage(locale) + ".jpg";
+}
+
+std::string DefaultVerticalLoadingVideoFile(std::string_view locale)
+{
+	return "videos/adding-delay-vertical-" + LoadingLanguage(locale) + ".mp4";
+}
+
+std::string DefaultVerticalLoadingStillFile(std::string_view locale)
+{
+	return "images/adding-delay-vertical-" + LoadingLanguage(locale) + ".jpg";
 }
 
 RenamePlan PlanRename(bool legacyExists, bool currentNameTaken)

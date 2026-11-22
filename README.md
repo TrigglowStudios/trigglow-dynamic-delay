@@ -8,7 +8,7 @@ Native OBS Studio plugin that delays what your viewers see by a configurable num
 everything lives inside the OBS process, and your stream goes straight from your computer to your
 platform.
 
-**Status: 1.0.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
+**Status: 1.1.0. Stable on Windows. The macOS and Linux builds are alpha: they build and pass CI
 but haven't been run on a live stream yet.**
 
 ## What the delay applies to
@@ -46,10 +46,17 @@ loading scene. With it:
 - When you stop streaming, the seconds viewers haven't seen are still sent (optional).
 
 It needs OBS's own RTMP or RTMPS output and works with any service on it (Twitch, YouTube, Kick,
-TikTok, custom servers). With Enhanced Broadcasting, SRT, RIST or WHIP the dock says that stream
-can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
+TikTok, custom servers), Enhanced Broadcasting included. With SRT, RIST or WHIP the dock says
+that stream can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
 
-Both have the delay badge for viewers, three presets, hotkeys, obs-websocket and the Stream Deck.
+Multistream: with all of OBS, outputs other plugins start (Aitum Multistream, Multiple RTMP
+Outputs) and an Aitum Vertical canvas are delayed too; with only the stream, Aitum Vertical's stream
+is delayed too and the multistream plugins' outputs go out live, as the dock says (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
+
+Both show viewers a loading scene while the delay builds up (Trigglow's video on the Free plan;
+Starter and Pro can pick their own) and have the delay badge (always shown on the Free plan;
+Starter and Pro can hide it),
+three presets, hotkeys, obs-websocket and the Stream Deck.
 
 ## How it works
 
@@ -119,6 +126,7 @@ v0.7.1 install locations but not tested live yet. The minimum is set in one plac
 
 | Plugin | Minimum OBS | Tested up to | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.1.0 | 31.1.0 | 33.0.1 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 1.0.0 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.2 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Installer, `.zip` (OBS 33 location) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
@@ -187,7 +195,7 @@ your browser; the plugin stays 100% free), in both modes. Since 1.0.0 sign-in wo
 Linux too (over the system's libcurl); before, it was Windows only. See `docs/ACCOUNT_GATE.md`.
 
 **For only the stream (stream mode):** Windows, macOS or Linux (alpha on macOS and Linux), OBS's own RTMP or RTMPS output (the usual "Stream" settings with any
-RTMP service or a custom rtmp:// or rtmps:// server), Enhanced Broadcasting off. A keyframe
+RTMP service or a custom rtmp:// or rtmps:// server), with or without Enhanced Broadcasting. A keyframe
 interval of 2 s is recommended (Settings > Output): the delay moves in steps of it.
 
 ## Network use and privacy
@@ -265,7 +273,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # Ubuntu 24.04 packages
 
 ## Installing the plugin
 
-**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe`
+**Windows: use the installer.** Download `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe`
 from the [latest release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest)
 and run it — it installs into OBS's plugin folder for all users and moves an install of v0.7.0 or
 earlier out of OBS's own folder. It isn't code-
@@ -273,7 +281,7 @@ signed yet, so Windows SmartScreen will warn you before letting it run. **Full g
 with screenshots for every step, including the SmartScreen warning: `docs/INSTALL_GUIDE.md`.**
 Install it before you go live, not mid-stream — it needs OBS closed to overwrite its files.
 
-**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb`
+**Linux: use your distro's package.** `obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb`
 (Debian, Ubuntu, Mint, Pop!_OS: `sudo apt install ./<file>.deb`), `.rpm` (Fedora, openSUSE:
 `sudo dnf install ./<file>.rpm`) or `.pkg.tar.zst` (Arch, Manjaro, EndeavourOS:
 `sudo pacman -U <file>.pkg.tar.zst`), which pull in what they need. Any other distro: the `.tar.xz`
@@ -371,8 +379,8 @@ estimate go away, and the stream's own parts show: where it sends, **Dump**, **S
 The dock shows the state ("Delay off", "Armed", "Delay on: viewers see the stream 30 s late",
 "Sending the rest"...), where it sends and the connection's state, the RAM and disk used and the
 bitrate, and the OBS settings worth changing. The delay moves in steps of your keyframe interval:
-set it to 2 s in `Settings → Output`. If a stream can't use it (Enhanced Broadcasting, SRT,
-WHIP...), the dock says why: untick the option to delay all of OBS.
+set it to 2 s in `Settings → Output`. If a stream can't use it (SRT, RIST, WHIP...), the dock
+says why: untick the option to delay all of OBS.
 
 ### Hotkeys
 
@@ -497,7 +505,7 @@ src/
   settings-ui.{hpp,cpp}            → the Qt dock, one panel for both modes (status, the one
                                      button, delay, live/loading scene, options with quality, fit
                                      estimate and the advanced check box, fill countdown,
-                                     degradation notice, update notice)
+                                     degradation notice, update card)
   ui-tokens.{hpp,cpp}              → pure color tokens derived from OBS's palette, with the WCAG
                                      AA contract unit-tested in tests/
   ui-theme.{hpp,cpp}               → the UI's single style sheet, bundled brand fonts and
@@ -527,6 +535,13 @@ src/
   log-redact.{hpp,cpp}             → pure, line-by-line redaction of the OBS log, unit-tested
   update-checker.{hpp,cpp}         → checks this repo's latest GitHub release against the running
                                      version
+  release-info.{hpp,cpp}           → pure parsing of that release: version, Windows installer
+                                     path, size and SHA-256, the allowed download redirect,
+                                     unit-tested
+  update-installer.{hpp,cpp}       → v1.1.0 update from OBS (Windows): download, size + SHA-256
+                                     check, start the installer, wait for its admin-rights signal
+  update-dialog.{hpp,cpp}          → the "new version" window (once per version at OBS start, and
+                                     from the dock's update card)
   background-tasks.{hpp,cpp}       → cancellable background jobs (sign-in, Trigi, tickets, update
   cancel-token.{hpp,cpp}             check) with a bounded shutdown when OBS unloads the plugin,
   ui-tasks.{hpp,cpp}                 unit-tested; ui-tasks ties them to Qt's event loop

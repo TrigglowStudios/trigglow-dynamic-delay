@@ -75,7 +75,6 @@ protocol …)`.
 
 | El dock dice | Por qué | Qué hacer |
 |---|---|---|
-| "Este directo usa Enhanced Broadcasting…" | Enhanced Broadcasting envía varias pistas por una sola salida multipista | Desactiva Enhanced Broadcasting en `Ajustes → Emisión`, o retrasa todo OBS |
 | "Tu servicio no emite por RTMP ni RTMPS (SRT, WHIP...)" | SRT, RIST y WHIP aún no se reenvían | Usa un servidor RTMP o RTMPS si tu plataforma lo tiene, o retrasa todo OBS |
 | "Este directo no usa la salida RTMP de OBS" | emite otro plugin de salida | Retrasa todo OBS |
 | "Tu servidor de emisión no es una dirección rtmp:// ni rtmps://" | el servidor de `Ajustes → Emisión` no se puede leer como tal | Revisa la dirección del servidor |

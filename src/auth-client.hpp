@@ -217,6 +217,21 @@ struct TrigiInfo {
 	bool AcceptsDiagnostics(int version) const;
 };
 
+// v1.1.0: the account's plan and what it allows, from /auth/plugin/me's
+// "account". The delay badge viewers see is part of the free plan: on Free it
+// always shows (its corner and seconds stay the streamer's choice); Starter
+// and Pro can hide it. The server decides (features.hideBadge); the plugin
+// only remembers the last answer for when trigglow.com can't be reached.
+struct AccountFeatures {
+	bool known = false;     // The server said something about the plan.
+	bool hideBadge = false; // The plan can hide the delay badge.
+	// The plan can choose its own loading scene (features.customLoading; an
+	// older server that doesn't say: the same as hideBadge, same plans).
+	bool customLoading = false;
+	std::string planId;   // "free", "starter", "plus"... (log-safe: [a-z0-9_-]).
+	std::string planName; // Shown in the dock next to the name ("Starter").
+};
+
 enum class MeStatus : unsigned char {
 	Valid,
 	SessionEnded,    // 401: cleared.
@@ -229,6 +244,7 @@ struct MeResult {
 	MeStatus status = MeStatus::Unreachable;
 	std::string displayName;
 	TrigiInfo trigi;
+	AccountFeatures account;
 	AuthEvents events;
 	int httpStatus = 0;
 	std::string errorCode;

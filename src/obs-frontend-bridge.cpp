@@ -653,8 +653,12 @@ struct MirrorScene {
 	OBSSourceAutoRelease scene;
 };
 
-// On each other canvas, every scene named like one of the delayed scenes
-// (v1.0.0: several; the canvas's own switcher picks which one it shows).
+// On each other canvas, the scene it shows (its channel 0 -- v1.1.0: Aitum
+// Vertical's current vertical scene, whatever its name; before, that canvas
+// was only delayed when its scene was named like a delayed scene, which it
+// rarely is) and every scene named like one of the delayed scenes (v1.0.0:
+// several; the canvas's own switcher picks which one it shows). Each scene
+// once.
 std::vector<MirrorScene> MirrorScenes(const std::vector<std::string> &sceneNames)
 {
 	std::vector<MirrorScene> result;
@@ -663,12 +667,21 @@ std::vector<MirrorScene> MirrorScenes(const std::vector<std::string> &sceneNames
 		return result;
 	for (obs_canvas_t *canvas : OtherCanvasRefs()) {
 		const char *canvasName = obs_canvas_get_name(canvas);
+		auto add = [&](OBSSourceAutoRelease scene) {
+			if (!scene || !obs_scene_from_source(scene))
+				return;
+			for (const MirrorScene &m : result)
+				if (m.scene.Get() == scene.Get())
+					return;
+			const char *name = obs_source_get_name(scene);
+			result.push_back({canvasName ? canvasName : "", name ? name : "", std::move(scene)});
+		};
+		// obs_canvas_get_channel() hands out its own reference.
+		add(OBSSourceAutoRelease(obs_canvas_get_channel(canvas, 0)));
 		for (const std::string &sceneName : sceneNames) {
 			if (sceneName.empty())
 				continue;
-			OBSSourceAutoRelease scene = obs_canvas_get_source_by_name(canvas, sceneName.c_str());
-			if (scene && obs_scene_from_source(scene))
-				result.push_back({canvasName ? canvasName : "", sceneName, std::move(scene)});
+			add(OBSSourceAutoRelease(obs_canvas_get_source_by_name(canvas, sceneName.c_str())));
 		}
 		obs_canvas_release(canvas);
 	}
@@ -676,6 +689,32 @@ std::vector<MirrorScene> MirrorScenes(const std::vector<std::string> &sceneNames
 	(void)sceneNames;
 #endif
 	return result;
+}
+
+OBSSourceAutoRelease FindVideoDelayFilterById(obs_source_t *scene);
+
+// The mirror filter on `mirror`'s scene, created (disabled) when it has none.
+// Null when it couldn't be created (logged).
+OBSSourceAutoRelease EnsureMirrorFilter(const MirrorScene &mirror)
+{
+	OBSSourceAutoRelease filter = FindVideoDelayFilterById(mirror.scene);
+	if (filter)
+		return filter;
+	// Canvas and scene in the name: one canvas can carry several.
+	const std::string filterName =
+		std::string(autonames::kBufferFilter) + " - " + mirror.canvasName + " - " + mirror.sceneName;
+	obs_data_t *settings = obs_data_create();
+	// The output cap is the main canvas's: never for another canvas.
+	obs_data_set_bool(settings, "buffer_output_cap", false);
+	filter = obs_source_create(VideoDelayFilter::Id(), filterName.c_str(), settings, nullptr);
+	obs_data_release(settings);
+	if (!filter) {
+		TRIGGLOW_LOG_ERROR(kComponent, "canvas \"%s\": could not create the mirror delay filter",
+				   mirror.canvasName.c_str());
+		return filter;
+	}
+	obs_source_filter_add(mirror.scene, filter);
+	return filter;
 }
 
 // The VideoDelayFilter on `scene`, whatever its name (a mirror's carries its canvas's).
@@ -710,24 +749,9 @@ std::vector<std::string> ObsFrontendBridge::AttachMirrorFilters(const std::vecto
 	DetachMirrorFilters(); // A previous cycle's, normally gone already.
 	std::vector<std::string> names;
 	for (const MirrorScene &mirror : MirrorScenes(sceneNames)) {
-		OBSSourceAutoRelease filter = FindVideoDelayFilterById(mirror.scene);
-		if (!filter) {
-			// Canvas and scene in the name: one canvas can carry several.
-			const std::string filterName = std::string(autonames::kBufferFilter) + " - " +
-						       mirror.canvasName + " - " + mirror.sceneName;
-			obs_data_t *settings = obs_data_create();
-			// The output cap is the main canvas's: never for another canvas.
-			obs_data_set_bool(settings, "buffer_output_cap", false);
-			filter = obs_source_create(VideoDelayFilter::Id(), filterName.c_str(), settings, nullptr);
-			obs_data_release(settings);
-			if (!filter) {
-				TRIGGLOW_LOG_ERROR(kComponent,
-						   "canvas \"%s\": could not create the mirror delay filter",
-						   mirror.canvasName.c_str());
-				continue;
-			}
-			obs_source_filter_add(mirror.scene, filter);
-		}
+		OBSSourceAutoRelease filter = EnsureMirrorFilter(mirror);
+		if (!filter)
+			continue;
 		obs_source_set_enabled(filter, false); // SetBufferFilterEnabled(true) switches it on.
 		mirrorFilters_.push_back(obs_source_get_weak_source(filter));
 		if (std::find(names.begin(), names.end(), mirror.canvasName) == names.end())
@@ -736,6 +760,49 @@ std::vector<std::string> ObsFrontendBridge::AttachMirrorFilters(const std::vecto
 				  "canvas \"%s\": video delay mirrored on its \"%s\" scene (one more ring, its own RAM "
 				  "and codecs)",
 				  mirror.canvasName.c_str(), mirror.sceneName.c_str());
+	}
+	return names;
+}
+
+std::vector<std::string> ObsFrontendBridge::AttachLateMirrorFilters(const std::vector<std::string> &sceneNames,
+								    const MirrorTuning &tuning) const
+{
+	std::vector<std::string> names;
+	const std::vector<OBSSourceAutoRelease> kept = MirrorFilters();
+	for (const MirrorScene &mirror : MirrorScenes(sceneNames)) {
+		// Already a mirror of this cycle (kept in mirrorFilters_): nothing to do.
+		bool known = false;
+		if (OBSSourceAutoRelease existing = FindVideoDelayFilterById(mirror.scene)) {
+			for (const OBSSourceAutoRelease &m : kept)
+				known = known || m.Get() == existing.Get();
+		}
+		if (known)
+			continue;
+		OBSSourceAutoRelease filter = EnsureMirrorFilter(mirror);
+		if (!filter)
+			continue;
+		// Tuned like Enable() tunes the main filter and the first mirrors
+		// (the setters above), then switched on.
+		CallIntProc(filter, "set_managed_delay_seconds", "seconds", tuning.delaySeconds);
+		CallIntProc(filter, "set_managed_min_resolution_height", "height", tuning.minResolutionHeight);
+		obs_data_t *settings = obs_data_create();
+		obs_data_set_int(settings, "delay_seconds", tuning.delaySeconds);
+		obs_data_set_int(settings, "min_resolution_height", tuning.minResolutionHeight);
+		obs_data_set_bool(settings, "codec_workers", tuning.codecWorkers);
+		obs_data_set_string(settings, "buffer_codec", tuning.autoCodec ? "auto" : "mjpeg");
+		obs_data_set_bool(settings, "buffer_output_cap", false);
+		if (!CallIntProc(filter, "set_storage_class", "ring_class", static_cast<long long>(tuning.ringClass)))
+			obs_data_set_string(settings, "storage_class", bufferfit::RingClassName(tuning.ringClass));
+		obs_source_update(filter, settings);
+		obs_data_release(settings);
+		obs_source_set_enabled(filter, true);
+		mirrorFilters_.push_back(obs_source_get_weak_source(filter));
+		if (std::find(names.begin(), names.end(), mirror.canvasName) == names.end())
+			names.push_back(mirror.canvasName);
+		TRIGGLOW_LOG_INFO(
+			kComponent,
+			"canvas \"%s\" switched to \"%s\": video delay mirrored on it too (%us, one more ring)",
+			mirror.canvasName.c_str(), mirror.sceneName.c_str(), tuning.delaySeconds);
 	}
 	return names;
 }

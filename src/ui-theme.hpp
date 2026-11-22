@@ -74,6 +74,12 @@ struct BrandFontsReport {
 // GeistMono[wght].ttf). The caller logs the report (one line).
 BrandFontsReport LoadBrandFonts(const QString &directory);
 const BrandFonts &Fonts();
+// v1.1.0: a language whose script the brand fonts don't have and whose glyphs
+// are taller than their line (Hindi: Devanagari's vowel signs were cut and
+// lines overlapped). Every role then uses the first of the system's fonts for
+// that script that is installed, with the role's size and weight; returns
+// its name ("" when the language needs none or none is installed: as before).
+QString UseScriptFontFor(const QString &obsLocale);
 
 enum class FontRole {
 	Headline, // Dock status headline: display 600, uppercase, base + 2.5 pt.

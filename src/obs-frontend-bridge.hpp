@@ -312,10 +312,13 @@ public:
 	// OBS mixes ONE audio for every canvas, so the audio filters delay it on
 	// all of them: a canvas whose video isn't delayed too plays its picture
 	// the whole delay ahead of its sound. On every canvas other than the main
-	// one, each scene named like one of the delayed scenes gets its own
-	// VideoDelayFilter (a "mirror"): attached at Enable(), switched and tuned
-	// together with the main filter by the setters above and removed again by
-	// SetBufferFilterEnabled(false). Each mirror has its own ring, codecs and
+	// one, the scene it shows (its channel 0: Aitum Vertical's current
+	// vertical scene, whatever it is called -- v1.1.0) and each scene named
+	// like one of the delayed scenes get their own VideoDelayFilter (a
+	// "mirror"): attached at Enable(), switched and tuned together with the
+	// main filter by the setters above and removed again by
+	// SetBufferFilterEnabled(false). A scene the canvas switches to later
+	// gets one from AttachLateMirrorFilters(). Each mirror has its own ring, codecs and
 	// RAM: the dock warns that the delay then costs about twice the
 	// resources. The main filter alone drives the effective delay, the health
 	// notice and the encoder ceiling. Empty in the core build (Streamlabs'
@@ -330,6 +333,21 @@ public:
 	// The mirrors' delay alone: the main filter's effective one when RAM
 	// trims it, so every canvas's video keeps to the one audio delay.
 	void SetMirrorFiltersDelaySeconds(uint32_t seconds) const;
+	// v1.1.0: what a mirror attached while the delay runs is tuned with (the
+	// values Enable() pushed into the main filter and the first mirrors).
+	struct MirrorTuning {
+		uint32_t delaySeconds = 0;
+		uint32_t minResolutionHeight = 720;
+		bool codecWorkers = true;
+		bool autoCodec = true;
+		bufferfit::RingClass ringClass = bufferfit::RingClass::Intra;
+	};
+	// Attaches, tunes and switches on a mirror for every scene that would get
+	// one now (AttachMirrorFilters's rule) but has none yet: the scene another
+	// canvas switched to since Enable(). Returns those canvases' names (empty
+	// when nothing changed). UI thread, while the delay is on.
+	std::vector<std::string> AttachLateMirrorFilters(const std::vector<std::string> &sceneNames,
+							 const MirrorTuning &tuning) const;
 
 	// Pushes `seconds` into the already-attached filter's configured delay,
 	// through its set_managed_delay_seconds proc: the filter then keeps the

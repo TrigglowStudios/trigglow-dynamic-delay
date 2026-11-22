@@ -26,10 +26,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "scene-combo-box.hpp"
 #include "settings-ui-parts.hpp"
 #include "stream-delay-controller.hpp"
+#include "trigi-widgets.hpp" // supportui::OpenWebPage, for "See plans".
 #include "ui-tasks.hpp"
 #include "update-checker.hpp"
+#include "update-dialog.hpp"
+#include "update-installer.hpp"
 
 #include <plugin-support.h>
+#include <obs-frontend-api.h>
 
 #include <algorithm>
 #include <cmath>
@@ -137,12 +141,14 @@ private:
 };
 
 TrigglowDelayDock::TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
-				     DelayRouter &router, AuthManager &authManager, QWidget *parent)
+				     DelayRouter &router, AuthManager &authManager, MultistreamLink &multistreamLink,
+				     QWidget *parent)
 	: QWidget(parent),
 	  bufferController_(bufferController),
 	  streamController_(streamController),
 	  router_(router),
 	  authManager_(authManager),
+	  multistreamLink_(multistreamLink),
 	  updateTasks_(uitasks::Registry())
 {
 	BuildUi();
@@ -280,42 +286,77 @@ void TrigglowDelayDock::BuildUi()
 	root->setContentsMargins(12, 12, 12, 12);
 	root->setSpacing(10);
 
-	// --- Update notice: hidden until/unless CheckForUpdateAsync() (fired
-	// from the constructor) actually finds a newer published release. Above
-	// even the status card -- rare and important when it does show, and
-	// costs nothing (no reserved space) while hidden. The whole banner is a
-	// single focusable button with a layout inside. ---
-	updateNoticeButton_ = new QPushButton(this);
-	updateNoticeButton_->setObjectName(QStringLiteral("tgUpdateBanner"));
-	updateNoticeButton_->setCursor(Qt::PointingHandCursor);
-	updateNoticeButton_->setFocusPolicy(Qt::TabFocus);
-	updateNoticeButton_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
-	updateNoticeButton_->setVisible(false);
+	// --- Update card (v1.1.0): hidden until/unless CheckForUpdateAsync()
+	// (fired from the constructor) finds a newer published release. Above
+	// even the status card -- rare and important when it does show, and costs
+	// nothing (no reserved space) while hidden. A card with the brand rule on
+	// top: an icon badge, "New version X", "You have Y", a full-width
+	// "Update" button that opens UpdateDialog, and an X that hides the card
+	// until OBS starts again. ---
+	updateCard_ = new QFrame(this);
+	updateCard_->setObjectName(QStringLiteral("tgUpdateCard"));
+	updateCard_->setProperty("tgCard", QStringLiteral("true"));
+	updateCard_->setVisible(false);
 	{
-		auto *bannerLayout = new QHBoxLayout(updateNoticeButton_);
-		bannerLayout->setContentsMargins(10, 8, 10, 8);
-		bannerLayout->setSpacing(10);
-		updateIcon_ = MakeIconLabel(updateNoticeButton_, kAccountIconSize);
+		auto *cardLayout = new QVBoxLayout(updateCard_);
+		cardLayout->setContentsMargins(0, 0, 0, 0);
+		cardLayout->setSpacing(0);
+		auto *rule = new QFrame(updateCard_);
+		rule->setFixedHeight(2);
+		rule->setProperty("tgRule", QStringLiteral("active"));
+		cardLayout->addWidget(rule);
+
+		auto *body = new QVBoxLayout();
+		body->setContentsMargins(12, 10, 8, 12);
+		body->setSpacing(10);
+		auto *top = new QHBoxLayout();
+		top->setSpacing(10);
+		auto *badge = new QFrame(updateCard_);
+		badge->setObjectName(QStringLiteral("tgUpdateBadge"));
+		badge->setFixedSize(30, 30);
+		auto *badgeLayout = new QVBoxLayout(badge);
+		badgeLayout->setContentsMargins(0, 0, 0, 0);
+		updateIcon_ = MakeIconLabel(badge, kAccountIconSize);
+		badgeLayout->addWidget(updateIcon_, 0, Qt::AlignCenter);
+		top->addWidget(badge, 0, Qt::AlignTop);
 		auto *texts = new QVBoxLayout();
 		texts->setSpacing(1);
-		updateTitle_ = new QLabel(T("Dock.Update.Title"), updateNoticeButton_);
+		texts->addWidget(MakeEyebrow(T("Dock.Update.Title"), nullptr, updateCard_));
+		updateTitle_ = new QLabel(updateCard_);
+		updateTitle_->setWordWrap(true);
 		SetRole(updateTitle_, "strong", ui::FontRole::Strong);
-		updateVersion_ = new QLabel(updateNoticeButton_);
+		updateVersion_ = new QLabel(updateCard_);
+		updateVersion_->setWordWrap(true);
 		SetRole(updateVersion_, "dataHint", ui::FontRole::DataHint);
 		texts->addWidget(updateTitle_);
 		texts->addWidget(updateVersion_);
-		updateExternalIcon_ = MakeIconLabel(updateNoticeButton_, kInlineIconSize);
-		bannerLayout->addWidget(updateIcon_, 0, Qt::AlignTop);
-		bannerLayout->addLayout(texts, 1);
-		bannerLayout->addWidget(updateExternalIcon_, 0, Qt::AlignVCenter);
-		for (QLabel *label : {updateIcon_, updateTitle_, updateVersion_, updateExternalIcon_})
-			label->setAttribute(Qt::WA_TransparentForMouseEvents);
+		top->addLayout(texts, 1);
+		updateDismiss_ = new QPushButton(updateCard_);
+		updateDismiss_->setProperty("tgVariant", QStringLiteral("icon"));
+		updateDismiss_->setFocusPolicy(Qt::TabFocus);
+		updateDismiss_->setCursor(Qt::PointingHandCursor);
+		updateDismiss_->setFixedSize(24, 24);
+		updateDismiss_->setIconSize(QSize(kInlineIconSize, kInlineIconSize));
+		updateDismiss_->setToolTip(T("Dock.Update.Dismiss"));
+		updateDismiss_->setAccessibleName(T("Dock.Update.Dismiss"));
+		top->addWidget(updateDismiss_, 0, Qt::AlignTop);
+		body->addLayout(top);
+
+		updateButton_ = new QPushButton(updateCard_);
+		updateButton_->setProperty("tgVariant", QStringLiteral("primary"));
+		SetRole(updateButton_, "button", ui::FontRole::Button);
+		updateButton_->setFocusPolicy(Qt::TabFocus);
+		updateButton_->setCursor(Qt::PointingHandCursor);
+		updateButton_->setIconSize(kButtonIconBox);
+		auto *buttonRow = new QHBoxLayout();
+		buttonRow->setContentsMargins(0, 0, 4, 0);
+		buttonRow->addWidget(updateButton_);
+		body->addLayout(buttonRow);
+		cardLayout->addLayout(body);
 	}
-	root->addWidget(updateNoticeButton_);
-	connect(updateNoticeButton_, &QPushButton::clicked, this, [this] {
-		if (!updateReleaseUrl_.isEmpty())
-			QDesktopServices::openUrl(QUrl(updateReleaseUrl_));
-	});
+	root->addWidget(updateCard_);
+	connect(updateButton_, &QPushButton::clicked, this, [this] { OpenUpdateDialog(); });
+	connect(updateDismiss_, &QPushButton::clicked, this, [this] { updateCard_->setVisible(false); });
 
 	// --- Status card: rule, eyebrow + chip, icon + headline, detail, then
 	// what only one mode has (the fill progress and the degradation notice
@@ -747,6 +788,7 @@ QFrame *TrigglowDelayDock::BuildDelayCard()
 		});
 		return button;
 	};
+	delayCardLayout_ = layout;
 	lessButton_ = makeStep(QStringLiteral("-5"), "Dock.Delay.Less", -5);
 	moreButton_ = makeStep(QStringLiteral("+5"), "Dock.Delay.More", 5);
 	layout->addLayout(row);
@@ -871,7 +913,11 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 	layout->addWidget(switchBlock_);
 
 	layout->addSpacing(7);
-	loadingSceneCombo_ = new SceneComboBox(card);
+	loadingBlock_ = new QWidget(card);
+	auto *loadingLayout = new QVBoxLayout(loadingBlock_);
+	loadingLayout->setContentsMargins(0, 0, 0, 0);
+	loadingLayout->setSpacing(layout->spacing());
+	loadingSceneCombo_ = new SceneComboBox(loadingBlock_);
 	loadingSceneCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
 	loadingSceneCombo_->setMinimumContentsLength(8);
 	loadingSceneCombo_->setToolTip(T("Dock.Scene.Loading.Tooltip"));
@@ -885,15 +931,33 @@ QFrame *TrigglowDelayDock::BuildScenesCard()
 		// when a narrow dock (240 px) leaves no room between them.
 		auto *row = new QHBoxLayout();
 		row->setSpacing(8);
-		row->addWidget(MakeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_, card), 0, Qt::AlignBottom);
+		row->addWidget(MakeEyebrow(T("Dock.Scene.Loading"), loadingSceneCombo_, loadingBlock_), 0,
+			       Qt::AlignBottom);
 		row->addStretch(1);
-		auto *optional = new QLabel(T("Dock.Optional"), card);
+		auto *optional = new QLabel(T("Dock.Optional"), loadingBlock_);
 		SetRole(optional, "hint", ui::FontRole::Hint);
 		row->addWidget(optional, 0, Qt::AlignBottom);
-		layout->addLayout(row);
+		loadingLayout->addLayout(row);
 	}
-	layout->addWidget(loadingSceneCombo_);
+	loadingLayout->addWidget(loadingSceneCombo_);
 	AddFieldLock(loadingSceneCombo_);
+	// v1.1.0: choosing the loading scene is for Starter and Pro; on Free
+	// viewers see Trigglow's video, and this line and "See plans" say so.
+	loadingLockRow_ = MakeNoteRow(loadingBlock_, loadingLockIcon_, T("Dock.Scene.Loading.Locked"));
+	loadingLayout->addWidget(loadingLockRow_);
+	loadingPlansButton_ = new QPushButton(T("Dock.Overlay.SeePlans"), loadingBlock_);
+	loadingPlansButton_->setProperty("tgVariant", QStringLiteral("secondary"));
+	loadingPlansButton_->setFocusPolicy(Qt::TabFocus);
+	loadingPlansButton_->setCursor(Qt::PointingHandCursor);
+	loadingPlansButton_->setToolTip(T("Dock.Overlay.SeePlans.Tooltip"));
+	loadingPlansButton_->setIconSize(kButtonIconBox);
+	loadingPlansButton_->setLayoutDirection(Qt::RightToLeft);
+	SetRole(loadingPlansButton_, "button", ui::FontRole::Button);
+	loadingPlansButton_->setVisible(false);
+	loadingLayout->addWidget(loadingPlansButton_, 0, Qt::AlignLeft);
+	connect(loadingPlansButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kPricing); });
+	layout->addWidget(loadingBlock_);
+	scenesCardLayout_ = layout;
 	RefreshSceneCombo(loadingSceneCombo_, bufferController_.GetStatus().loadingSceneName, true);
 
 	// While the delay runs (Filling, Active) the scenes and the quality are
@@ -1278,12 +1342,30 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 		streamController_.SetDrainOnStop(on);
 		SettingsChanged();
 	});
+	multiBlock_ = BuildMultistreamBlock(host);
+	body->addWidget(multiBlock_);
 
 	// --- The delay badge: one check box and one corner for both modes. ---
 	body->addSpacing(2);
 	body->addWidget(MakeDivider(host));
 	body->addSpacing(2);
 	body->addWidget(MakeCheckRow(host, overlayCheck_, overlayText_, T("Dock.Overlay.Label")));
+	// v1.1.0: the badge is part of the free plan (Starter and Pro can hide
+	// it): the box locks with this line and a link to the plans.
+	overlayLockRow_ = MakeNoteRow(host, overlayLockIcon_, T("Dock.Overlay.Locked"));
+	overlayLockRow_->setContentsMargins(24, 0, 0, 0);
+	body->addWidget(overlayLockRow_);
+	plansButton_ = new QPushButton(T("Dock.Overlay.SeePlans"), host);
+	plansButton_->setProperty("tgVariant", QStringLiteral("secondary"));
+	plansButton_->setFocusPolicy(Qt::TabFocus);
+	plansButton_->setCursor(Qt::PointingHandCursor);
+	plansButton_->setToolTip(T("Dock.Overlay.SeePlans.Tooltip"));
+	plansButton_->setIconSize(kButtonIconBox);
+	plansButton_->setLayoutDirection(Qt::RightToLeft); // Icon after the text: it opens the browser.
+	SetRole(plansButton_, "button", ui::FontRole::Button);
+	plansButton_->setVisible(false);
+	body->addWidget(plansButton_);
+	connect(plansButton_, &QPushButton::clicked, this, [] { supportui::OpenWebPage(api::web::kPricing); });
 	body->addWidget(MakeCheckRow(host, overlaySecondsCheck_, overlaySecondsText_, T("Dock.Overlay.Seconds.Label")));
 	overlaySecondsCheck_->setToolTip(T("Dock.Overlay.Seconds.Tooltip"));
 	overlaySecondsCheck_->setAccessibleDescription(T("Dock.Overlay.Seconds.Tooltip"));
@@ -1332,7 +1414,23 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 	body->addSpacing(2);
 	body->addWidget(MakeDivider(host));
 	body->addSpacing(2);
-	body->addWidget(MakeEyebrow(T("Dock.Advanced"), nullptr, host));
+	{
+		// The eyebrow with an (i): multistream and vertical plugins with each
+		// mode live in its tooltip (v1.1.0), not in a paragraph.
+		auto *eyebrowRow = new QWidget(host);
+		auto *eyebrowLayout = new QHBoxLayout(eyebrowRow);
+		eyebrowLayout->setContentsMargins(0, 0, 0, 0);
+		eyebrowLayout->setSpacing(6);
+		eyebrowLayout->addWidget(MakeEyebrow(T("Dock.Advanced"), nullptr, eyebrowRow), 0, Qt::AlignVCenter);
+		multistreamInfo_ = MakeIconLabel(eyebrowRow, kInlineIconSize);
+		multistreamInfo_->setToolTip(T("Dock.Multistream.Tooltip"));
+		multistreamInfo_->setAccessibleName(T("Dock.Multistream.Title"));
+		multistreamInfo_->setAccessibleDescription(T("Dock.Multistream.Tooltip"));
+		multistreamInfo_->setCursor(Qt::WhatsThisCursor);
+		eyebrowLayout->addWidget(multistreamInfo_, 0, Qt::AlignVCenter);
+		eyebrowLayout->addStretch(1);
+		body->addWidget(eyebrowRow);
+	}
 	body->addWidget(MakeCheckRow(host, applyCheck_, applyText_, T("Dock.ApplyTo.Stream")));
 	applyCheck_->setToolTip(T("Dock.ApplyTo.Tooltip"));
 	applyText_->setToolTip(T("Dock.ApplyTo.Tooltip"));
@@ -1440,10 +1538,13 @@ QImage TrigglowDelayDock::RenderForTest(int width, bool sectionsOpen, int minHei
 void TrigglowDelayDock::Detach()
 {
 	detached_ = true;
-	for (QTimer *timer : {fillTimer_, fillProgressTimer_, healthTimer_}) {
+	for (QTimer *timer : {fillTimer_, fillProgressTimer_, healthTimer_, promptTimer_}) {
 		if (timer)
 			timer->stop();
 	}
+	// The update window's code lives in this module: it goes before the
+	// module does (its download, if any, is aborted and waited for).
+	delete updateDialog_.data();
 	setEnabled(false);
 }
 
@@ -1469,20 +1570,8 @@ void TrigglowDelayDock::ApplyTheme(bool force)
 		}
 		ApplyStaticIcons();
 		RefreshAccountUi(); // Re-tints every state-dependent icon (cascades into RefreshFromStatus).
-		FitUpdateBanner();
 	}
 	applyingTheme_ = false;
-}
-
-void TrigglowDelayDock::FitUpdateBanner()
-{
-	if (!updateNoticeButton_ || !updateNoticeButton_->layout())
-		return;
-	updateNoticeButton_->ensurePolished();
-	for (QLabel *label : {updateTitle_, updateVersion_})
-		label->ensurePolished();
-	updateNoticeButton_->setMinimumHeight(updateNoticeButton_->layout()->sizeHint().height());
-	updateNoticeButton_->setMaximumHeight(QWIDGETSIZE_MAX);
 }
 
 void TrigglowDelayDock::changeEvent(QEvent *event)
@@ -1517,6 +1606,8 @@ bool TrigglowDelayDock::eventFilter(QObject *watched, QEvent *event)
 			check = overlaySecondsCheck_;
 		else if (watched == drainText_)
 			check = drainCheck_;
+		else if (watched == multiText_)
+			check = multiCheck_;
 		else if (watched == applyText_)
 			check = applyCheck_;
 		if (check) {
@@ -1568,14 +1659,22 @@ void TrigglowDelayDock::SetButtonIcon(QPushButton *button, ui::IconId icon, cons
 void TrigglowDelayDock::ApplyStaticIcons()
 {
 	const uitokens::Tokens &t = theme_.tokens;
-	SetIcon(updateIcon_, ui::IconId::Download, QStringLiteral("warning"), kAccountIconSize);
-	SetIcon(updateExternalIcon_, ui::IconId::ExternalLink, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(updateIcon_, ui::IconId::Download, QStringLiteral("accent"), kAccountIconSize);
+	SetButtonIcon(updateDismiss_, ui::IconId::X, ToneColor(QStringLiteral("muted")), Qt::AlignCenter);
+	SetButtonIcon(updateButton_, updateInstaller_ ? ui::IconId::Download : ui::IconId::ExternalLink,
+		      ui::ToQColor(t.onGradient));
 	SetIcon(delayLockedIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(sceneSwitchIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(healthIcon_, ui::IconId::Sliders, QStringLiteral("warning"), kInlineIconSize);
 	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(overlayLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(loadingLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
+	SetIcon(multistreamInfo_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
+	SetButtonIcon(plansButton_, ui::IconId::ExternalLink, ui::ToQColor(t.text), Qt::AlignRight);
+	SetButtonIcon(loadingPlansButton_, ui::IconId::ExternalLink, ui::ToQColor(t.text), Qt::AlignRight);
 	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
 	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
+	SetIcon(multiNoteIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(canvasIcon_, ui::IconId::AlertTriangle, QStringLiteral("warning"), kAccountIconSize);
 	for (const auto &[field, lock] : fieldLocks_)
 		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
@@ -1717,7 +1816,14 @@ void TrigglowDelayDock::Refresh()
 	// values (the dock writes both, plugin-main.cpp aligns them at load).
 	const bool showOverlay = streamOnly ? stream.showOverlay : scene.showOverlay;
 	const uint32_t corner = streamOnly ? stream.overlayCorner : scene.overlayCorner;
+	// v1.1.0: locked on Free (and signed out): the box stays ticked and
+	// disabled, the line under it says why, "See plans" opens the pricing.
+	const bool badgeLocked = streamOnly ? stream.badgeLocked : scene.badgeLocked;
 	overlayCheck_->setChecked(showOverlay);
+	overlayCheck_->setEnabled(!badgeLocked);
+	overlayText_->setEnabled(!badgeLocked);
+	overlayLockRow_->setVisible(badgeLocked);
+	plansButton_->setVisible(badgeLocked && authManager_.IsLoggedIn());
 	const int cornerIndex = overlayCornerCombo_->findData(static_cast<int>(corner));
 	if (cornerIndex >= 0)
 		overlayCornerCombo_->setCurrentIndex(cornerIndex);
@@ -1732,6 +1838,7 @@ void TrigglowDelayDock::Refresh()
 	if (streamOnly) {
 		drainCheck_->setChecked(stream.drainOnStop);
 		RefreshBuffer(stream);
+		RefreshMultistream(stream);
 		RefreshDestination(stream);
 		RefreshWarnings(stream);
 	}
@@ -1757,15 +1864,39 @@ void TrigglowDelayDock::ApplyModeVisibility(bool streamOnly)
 	// Delay by scene, the delay buffer and sending the rest.
 	scenesCard_->setVisible(!streamOnly);
 	qualityBlock_->setVisible(!streamOnly);
+	// The loading scene goes where it shows (both modes use it).
+	QVBoxLayout *loadingHome = streamOnly ? delayCardLayout_ : scenesCardLayout_;
+	if (loadingBlock_ && loadingHome && loadingHome->indexOf(loadingBlock_) < 0) {
+		if (QLayout *from = loadingBlock_->parentWidget() ? loadingBlock_->parentWidget()->layout() : nullptr)
+			from->removeWidget(loadingBlock_);
+		if (scenesCardLayout_)
+			scenesCardLayout_->removeWidget(loadingBlock_);
+		if (delayCardLayout_)
+			delayCardLayout_->removeWidget(loadingBlock_);
+		// In the delay card it sits under the presets, 7 px apart like the
+		// scenes card's own spacing.
+		if (QLayout *own = loadingBlock_->layout())
+			own->setContentsMargins(0, 0, 0, 0);
+		if (streamOnly) {
+			delayCardLayout_->addWidget(loadingBlock_);
+		} else {
+			const int at = scenesCardLayout_->indexOf(delayLockedRow_);
+			scenesCardLayout_->insertWidget(at >= 0 ? at - 1 : scenesCardLayout_->count(), loadingBlock_);
+		}
+		loadingBlock_->setVisible(true);
+	}
 	bufferBlock_->setVisible(streamOnly);
 	drainRow_->setVisible(streamOnly);
+	multiBlock_->setVisible(streamOnly);
 	rulesSection_->box->setVisible(streamOnly);
 	rulesDivider_->setVisible(streamOnly);
 	sendsRow_->setVisible(streamOnly);
 	if (!streamOnly) {
-		for (QWidget *widget : std::initializer_list<QWidget *>{statsLabel_, ruleRow_, noticeRow_,
-									warningsCard_, dumpButton_, cutButton_})
+		for (QWidget *widget : std::initializer_list<QWidget *>{
+			     statsLabel_, ruleRow_, noticeRow_, multiNoteRow_, warningsCard_, dumpButton_, cutButton_})
 			widget->setVisible(false);
+		for (const SinkRow &sink : sinkRows_)
+			sink.row->setVisible(false);
 	} else {
 		fillRow_->setVisible(false);
 		hintLabel_->setVisible(false);
@@ -1890,14 +2021,21 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 	// lock inside each (ui-theme.cpp, tgLocked), and the line under the
 	// pickers says how to unlock them -- also what screen readers hear.
 	const bool busy = status.state == BufferModeState::Filling || status.state == BufferModeState::Active;
+	// v1.1.0: on Free the loading scene is Trigglow's (its own lock line).
+	const bool loadingLocked = status.loadingLocked;
 	liveSceneCombo_->setEnabled(!busy);
-	loadingSceneCombo_->setEnabled(!busy);
+	loadingSceneCombo_->setEnabled(!busy && !loadingLocked);
 	minResolutionCombo_->setEnabled(!busy);
 	for (const auto &[field, lock] : fieldLocks_) {
-		ui::SetStyleProperty(field, "tgLocked", busy ? QStringLiteral("true") : QStringLiteral("false"));
-		lock->setVisible(busy);
-		field->setAccessibleDescription(busy ? T("Dock.Delay.Locked") : QString());
+		const bool locked = busy || (field == loadingSceneCombo_ && loadingLocked);
+		ui::SetStyleProperty(field, "tgLocked", locked ? QStringLiteral("true") : QStringLiteral("false"));
+		lock->setVisible(locked);
+		field->setAccessibleDescription(busy     ? T("Dock.Delay.Locked")
+						: locked ? T("Dock.Scene.Loading.Locked")
+							 : QString());
 	}
+	loadingLockRow_->setVisible(loadingLocked);
+	loadingPlansButton_->setVisible(loadingLocked && authManager_.IsLoggedIn());
 	delayLockedRow_->setVisible(busy);
 	sceneSwitchRow_->setVisible(busy);
 
@@ -1916,7 +2054,7 @@ void TrigglowDelayDock::RefreshSceneFields(const BufferModeStatus &status)
 
 	const QSignalBlocker blockLoading(loadingSceneCombo_);
 	const int loadingIndex =
-		status.loadingSceneName.empty()
+		status.loadingSceneName.empty() || loadingLocked
 			? 0
 			: loadingSceneCombo_->findText(QString::fromStdString(status.loadingSceneName));
 	loadingSceneCombo_->setCurrentIndex(loadingIndex >= 0 ? loadingIndex : 0);
@@ -2130,6 +2268,13 @@ void TrigglowDelayDock::RefreshAccountUi()
 {
 	using LoginError = AuthManager::LoginError;
 	const LoginError error = authManager_.LastError();
+	// v1.1.0: the plan decides whether the delay badge may be hidden (Starter
+	// and Pro); both engines lock their box from the one answer. Each
+	// controller ignores the call when nothing changes.
+	const bool badgeLocked = !authManager_.HideBadgeAllowed();
+	bufferController_.SetBadgeLocked(badgeLocked);
+	streamController_.SetBadgeLocked(badgeLocked);
+	bufferController_.SetLoadingLocked(!authManager_.CustomLoadingAllowed());
 	ui::IconId icon = ui::IconId::Lock;
 	QString iconTone = QStringLiteral("muted");
 	QString text;
@@ -2156,6 +2301,11 @@ void TrigglowDelayDock::RefreshAccountUi()
 						.toHtmlEscaped()
 						.arg(QStringLiteral("<span style=\"font-weight:600;\">%1</span>")
 							     .arg(name.toHtmlEscaped()));
+		// The plan after the name ("Starter plan"), once the server said it.
+		const QString plan = QString::fromStdString(authManager_.Account().planName);
+		if (!plan.isEmpty())
+			text += QStringLiteral(" · ") +
+				T("Dock.Account.Plan").toHtmlEscaped().arg(plan.toHtmlEscaped());
 		inlineText = T("Dock.Account.SignOut");
 	} else if (authManager_.IsLoggingIn()) {
 		inlineText = T("Dock.Account.Cancel");
@@ -2335,22 +2485,125 @@ void TrigglowDelayDock::CheckForUpdateAsync()
 			// is a nice-to-have notice, never an error surfaced to the
 			// user, and staying quiet when there's nothing to say is the
 			// correct "no news" case, not a bug.
-			if (!self || !result.checked || !result.updateAvailable)
+			if (!self || self->detached_ || !result.checked || !result.updateAvailable)
 				return;
 			self->ShowUpdateNotice(result);
+			self->PromptAtStartOnce();
 		});
 }
 
 void TrigglowDelayDock::ShowUpdateNotice(const UpdateCheckResult &result)
 {
-	const QString latest = QString::fromUtf8(result.latestVersion.c_str());
-	updateVersion_->setText(T("Dock.Update.Version").arg(latest, QString::fromUtf8(PLUGIN_VERSION)));
-	const QString action = T("Dock.Update.Action").arg(latest);
-	updateNoticeButton_->setAccessibleName(action);
-	updateNoticeButton_->setToolTip(action);
-	updateReleaseUrl_ = QString::fromUtf8(result.releaseUrl.c_str());
-	updateNoticeButton_->setVisible(true);
-	FitUpdateBanner();
+	updateLatest_ = result.latestVersion;
+	// In place only from the installer's own folder (update-installer.hpp);
+	// otherwise the card and the window offer the download page.
+	updateInstaller_ = updater::CanInstallInPlace() ? result.windowsInstaller : std::nullopt;
+	const QString latest = QString::fromStdString(result.latestVersion);
+	updateTitle_->setText(T("Dock.Update.NewVersion").arg(latest));
+	updateVersion_->setText(T("Dock.Update.Have").arg(QString::fromStdString(api::ClientVersion(PLUGIN_VERSION))));
+	updateButton_->setText(updateInstaller_ ? T("Dock.Update.Button") : T("Dock.Update.Download"));
+	const QString action = T(updateInstaller_ ? "Dock.Update.ButtonName" : "Dock.Update.DownloadName").arg(latest);
+	updateButton_->setAccessibleName(action);
+	updateButton_->setToolTip(action);
+	ApplyStaticIcons();
+	updateCard_->setVisible(true);
+}
+
+QString TrigglowDelayDock::UpdateBusyReason() const
+{
+	// Updating closes OBS: never while that would cut what viewers see or
+	// what is being recorded.
+	if (obs_frontend_streaming_active())
+		return T("Update.Busy.Stream");
+	if (obs_frontend_recording_active())
+		return T("Update.Busy.Recording");
+	if (detached_)
+		return QString();
+	const BufferModeState scene = bufferController_.GetStatus().state;
+	if (scene == BufferModeState::Filling || scene == BufferModeState::Active)
+		return T("Update.Busy.Delay");
+	const StreamDelayStatus stream = streamController_.GetStatus();
+	if (stream.engaged || stream.state != StreamDelayState::Idle)
+		return T("Update.Busy.Delay");
+	return QString();
+}
+
+void TrigglowDelayDock::OpenUpdateDialog()
+{
+	if (updateLatest_.empty() || detached_)
+		return;
+	if (updateDialog_) {
+		updateDialog_->show();
+		updateDialog_->raise();
+		updateDialog_->activateWindow();
+		return;
+	}
+	UpdateDialog::Options options;
+	options.currentVersion = PLUGIN_VERSION;
+	options.latestVersion = updateLatest_;
+	options.installer = updateInstaller_;
+	options.configDir = authManager_.ConfigDir();
+	QPointer<TrigglowDelayDock> self(this);
+	options.busyReason = [self]() {
+		return self ? self->UpdateBusyReason() : QString();
+	};
+	options.closeObs = [] {
+		// OBS's own close, as File > Exit: it saves the scene collection
+		// and settings, then Setup (waiting for it) installs and opens it
+		// again.
+		if (auto *main = static_cast<QWidget *>(obs_frontend_get_main_window()))
+			QMetaObject::invokeMethod(main, "close", Qt::QueuedConnection);
+	};
+	// The dock is its parent (deleted with the dock, and in Detach() before
+	// the plugin unloads); a window of its own, centered over OBS.
+	auto *dialog = new UpdateDialog(std::move(options), this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	updateDialog_ = dialog;
+	if (auto *main = static_cast<QWidget *>(obs_frontend_get_main_window())) {
+		const QRect frame = main->frameGeometry();
+		dialog->adjustSize();
+		dialog->move(frame.center() - QPoint(dialog->width() / 2, dialog->height() / 2));
+	}
+	dialog->show();
+	dialog->raise();
+	dialog->activateWindow();
+}
+
+void TrigglowDelayDock::PromptAtStartOnce()
+{
+	// The window opens by itself once per published version: the first time
+	// OBS starts after it's out. Nothing is remembered when it couldn't show
+	// (OBS live or recording right away): it tries again next start.
+	if (updateLatest_.empty() || updater::LoadPromptedVersion(authManager_.ConfigDir()) == updateLatest_)
+		return;
+	if (!promptTimer_) {
+		promptTimer_ = new QTimer(this);
+		promptTimer_->setInterval(1000);
+		connect(promptTimer_, &QTimer::timeout, this, [this] {
+			auto *main = static_cast<QWidget *>(obs_frontend_get_main_window());
+			const bool mainShown = main && main->isVisible() && !main->isMinimized();
+			// OBS finished starting (its window is up), plus a moment so the
+			// window doesn't land on top of OBS's own start-up dialogs.
+			promptTicks_ = mainShown ? promptTicks_ + 1 : 0;
+			if (++promptWaited_ > 120) { // Two minutes without OBS's window: next start.
+				promptTimer_->stop();
+				return;
+			}
+			if (promptTicks_ < 3)
+				return;
+			promptTimer_->stop();
+			if (detached_ || !UpdateBusyReason().isEmpty() || QApplication::activeModalWidget())
+				return;
+			updater::SavePromptedVersion(authManager_.ConfigDir(), updateLatest_);
+			TRIGGLOW_LOG_INFO(kComponent,
+					  "showing the update window for v%s (first start since it was published)",
+					  updateLatest_.c_str());
+			OpenUpdateDialog();
+		});
+	}
+	promptTicks_ = 0;
+	promptWaited_ = 0;
+	promptTimer_->start();
 }
 
 } // namespace trigglow

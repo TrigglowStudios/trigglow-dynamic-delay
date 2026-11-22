@@ -28,7 +28,7 @@ stream y el modo escena, y aún no se ha usado en un directo (alpha).
 
 ## 1. Descarga
 
-Consigue `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe` desde la
+Consigue `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe` desde la
 [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest). ¿Prefieres
 instalarlo a mano? El `.zip` de esa misma release solo trae los archivos del plugin — ver
 "Instalar el plugin" en `README-es.md`.
@@ -73,19 +73,23 @@ Es un asistente estándar de siguiente-siguiente-siguiente:
 
    ![Selector de idioma](images/installer-1-language.png)
 
-2. Pantalla de bienvenida — confirma la versión que se va a instalar (esta captura muestra la
-   0.2.0 y el estilo genérico de Inno Setup; desde v0.3.1 verás el icono y el banner de Trigglow en
-   su lugar, además de la versión actual, pero con la misma disposición y botones):
+2. Pantalla de bienvenida — confirma la versión que se va a instalar:
 
-   ![Pantalla de bienvenida, versión 0.2.0](images/installer-2-welcome.png)
+   ![Pantalla de bienvenida, versión 1.1.0](images/installer-2-welcome.png)
 
 3. Desde la v0.7.1 no hay carpeta que elegir: el plugin va siempre a la carpeta de plugins de OBS,
    `C:\ProgramData\obs-studio\plugins\obs-trigglow-dynamic-delay` (ver "Dónde quedan los
    archivos en Windows" más abajo). El instalador encuentra OBS por la clave del registro que
    escribe el instalador oficial de OBS y comprueba que sea OBS 31.1.0 o posterior; con un OBS más
-   antiguo se detiene y te pide actualizar OBS antes.
+   antiguo se detiene y te pide actualizar OBS antes. Mientras lo hace muestra "Preparándose para
+   instalar":
 
-4. Si OBS sigue abierto, el instalador te pide cerrarlo (Archivo → Salir) y pulsar **Reintentar**.
+   ![Preparándose para instalar](images/installer-3-destination.png)
+
+4. Si OBS sigue abierto, el instalador te pide cerrarlo (Archivo → Salir) y pulsar **Reintentar**
+   (justo después del idioma, antes de la pantalla de bienvenida):
+
+   ![OBS Studio está abierto: ciérralo y pulsa Reintentar](images/installer-4-close-obs.png)
 
 5. Instalando:
 
@@ -110,10 +114,18 @@ esté marcado en ese mismo menú:
 El panel aparece: un solo panel con el estado, un solo botón **Activar delay**, el delay y tus
 escenas. Por defecto el delay se aplica a todo OBS (directo y grabación): elige tu **escena en
 directo** y listo. Para retrasar solo la emisión y dejar la grabación en directo, marca **Aplicar el
-delay solo a la emisión** en Opciones > Avanzado. La captura de abajo es de una versión anterior.
+delay solo a la emisión** en Opciones > Avanzado.
 Ver "Usar el plugin" en `README-es.md` para qué configurar a continuación.
 
 ![Panel de Trigglow Dynamic Delay, estado Inactive](images/obs-panel-3-dock.png)
+
+En **Opciones** (v1.1.0): la insignia que ven tus espectadores forma parte del plan gratuito, así
+que en Free "Mostrar la insignia de delay a los espectadores" queda marcada (sigues eligiendo su
+esquina y si muestra los segundos) y **Ver planes** abre trigglow.com/pricing; Starter y Pro pueden
+desmarcarla. La (i) junto a **Avanzado** dice qué cubre cada opción con Aitum Multistream, Multiple
+RTMP Outputs y Aitum Vertical (`docs/STREAM_MODE-es.md`, "Salidas de stream de otros plugins").
+
+![Opciones: la casilla de la insignia bloqueada en Free, Ver planes y la (i) junto a Avanzado](images/obs-options-badge.png)
 
 ## 6. Inicia sesión una vez
 
@@ -155,9 +167,9 @@ otro sitio.
 Instalación, con OBS cerrado:
 
 ```bash
-sudo apt install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
-sudo dnf install ./obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
-sudo pacman -U obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
+sudo apt install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb   # Debian, Ubuntu
+sudo dnf install ./obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.rpm   # Fedora, openSUSE (zypper install)
+sudo pacman -U obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.pkg.tar.zst  # Arch
 ```
 
 Los paquetes dejan el plugin en la ubicación del sistema de OBS 33,

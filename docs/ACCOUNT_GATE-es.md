@@ -2,10 +2,13 @@
 
 # Puerta de cuenta gratuita
 
-Trigglow Dynamic Delay es, y seguirá siendo, 100% gratis: sin suscripción, sin versión de pago y sin
-ninguna función bloqueada tras un pago. Desde la v0.3.3, activar el delay (los botones del dock, los
+Trigglow Dynamic Delay es, y seguirá siendo, gratis: sin suscripción ni versión de pago para el
+delay en sí. Desde la v0.3.3, activar el delay (los botones del dock, los
 atajos, Stream Deck y obs-websocket, en el modo stream y en el modo escena) exige haber iniciado
-sesión al menos una vez con una cuenta gratuita de trigglow.com. El objetivo es que se conozca
+sesión al menos una vez con una cuenta gratuita de trigglow.com. Lo único que cambia según el plan
+de Trigglow (v1.1.0) es la insignia de delay que ven los espectadores: forma parte del plan
+gratuito y en Free siempre se muestra (la esquina y los segundos siguen siendo elección del
+streamer); las cuentas Starter y Pro pueden ocultarla. Ver "El plan y la insignia" más abajo. El objetivo es que se conozca
 Trigglow, no monetizar ni captar leads: Trigglow tiene otros productos gratuitos (con límites) para
 streamers, y la mayoría de quienes instalan este plugin desde el directorio de recursos de OBS
 nunca sabrían que existen.
@@ -90,6 +93,27 @@ El inicio de sesión (y con él activar el delay y Trigi) solo funcionó en Wind
 `.rpm` la toma de lo que necesita el binario; la libcurl 7.79 de macOS 12 está contemplada). Este
 camino lo compila la CI, pero aún no se ha ejecutado en un Mac o un Linux reales. El guardado
 previsto en el llavero o el almacén de secretos del sistema no se hizo: ver el paso 6.
+
+## El plan y la insignia (v1.1.0)
+
+`GET /auth/plugin/me` responde, además del nombre y Trigi, el plan de la cuenta y lo que permite:
+`account.plan {id, name}` y `account.features.hideBadge` (true para Starter y Pro, `plus`; false
+para Free y para el plan sin anuncios solo de espectador). `auth::CheckSession()` lo lee en
+`MeResult::account` (`auth-client.hpp`, `AccountFeatures`) y `AuthManager::HideBadgeAllowed()`
+solo es true con una sesión válida en un plan que el servidor dijo que puede ocultarla. El dock
+(`RefreshAccountUi()`) pasa `!HideBadgeAllowed()` al `SetBadgeLocked()` de los dos motores:
+bloqueada, "Mostrar la insignia de delay a los espectadores" queda marcada y desactivada, una línea
+debajo explica por qué, **Ver planes** abre `trigglow.com/pricing` (página permitida,
+`api::web::kPricing`) y cualquier `SetShowOverlay(false)` (también desde un archivo de ajustes
+editado a mano) se ignora. La esquina, los segundos en la insignia y todo lo demás siguen siendo
+gratis.
+
+Entre el arranque de OBS y la respuesta del servidor, y en un arranque sin conexión, el plugin usa
+la última respuesta, guardada como `badge_hide_allowed` en `stream-mode-settings.json` (sembrada en
+`AuthManager::SeedHideBadge()` por `plugin-main.cpp`). Un archivo de ajustes anterior a la 1.1.0 no
+tiene esa clave: no se bloquea nada hasta que el servidor haya contestado una vez, para no pisar la
+elección de nadie con una suposición. Cerrar sesión la bloquea (sin cuenta no hay plan); volver a
+iniciar sesión la desbloquea en cuanto el servidor responde.
 
 ## Puntos de control
 

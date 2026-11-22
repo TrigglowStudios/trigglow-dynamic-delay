@@ -22,13 +22,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace trigglow::relay {
 
-namespace {
-bool IsVideoKey(const Packet &p)
-{
-	return p.kind == MediaKind::Video && p.keyframe;
-}
-} // namespace
-
 // ---------------------------------------------------------------- history --
 
 uint64_t PacketHistory::Push(Packet packet, const PayloadStore::Span *parts, size_t partCount)
@@ -36,8 +29,10 @@ uint64_t PacketHistory::Push(Packet packet, const PayloadStore::Span *parts, siz
 	const uint64_t seq = nextSeq_++;
 	if (packets_.empty())
 		frontSeq_ = seq;
-	if (packet.kind == MediaKind::Video)
+	if (packet.kind == MediaKind::Video) {
 		sawVideo_ = true;
+		primaryVideo_ = std::min(primaryVideo_, packet.stream);
+	}
 	size_t recordBytes = 0;
 	for (size_t i = 0; i < partCount; ++i)
 		recordBytes += parts[i].bytes;
@@ -62,8 +57,8 @@ void PacketHistory::Trim(int64_t nowNs, int64_t retentionNs, uint64_t minKeepSeq
 			const Packet &p = packets_[i];
 			if (p.arrivalNs > cutoff || frontSeq_ + i > minKeepSeq)
 				break;
-			if (IsVideoKey(p))
-				drop = i;
+			if (IsSpliceKey(p))
+				drop = SpliceStart(i);
 		}
 	} else {
 		while (drop < packets_.size() && packets_[drop].arrivalNs <= cutoff && frontSeq_ + drop < minKeepSeq)
@@ -104,10 +99,10 @@ bool PacketHistory::FindSplicePoint(int64_t atNs, uint64_t &seqOut) const
 		const Packet &p = packets_[i];
 		if (p.arrivalNs < spliceFloorNs_)
 			break;
-		if (!IsVideoKey(p))
+		if (!IsSpliceKey(p))
 			continue;
 		if (p.arrivalNs <= atNs) {
-			seqOut = frontSeq_ + i;
+			seqOut = frontSeq_ + SpliceStart(i);
 			return true;
 		}
 		oldest = i;
@@ -115,8 +110,45 @@ bool PacketHistory::FindSplicePoint(int64_t atNs, uint64_t &seqOut) const
 	}
 	if (!haveOldest)
 		return false;
-	seqOut = frontSeq_ + oldest;
+	seqOut = frontSeq_ + SpliceStart(oldest);
 	return true;
+}
+
+bool PacketHistory::FindKeyAtOrBefore(uint64_t seq, uint64_t &seqOut) const
+{
+	if (packets_.empty() || !sawVideo_ || seq < frontSeq_)
+		return false;
+	size_t i = static_cast<size_t>(std::min<uint64_t>(seq, EndSeq() - 1) - frontSeq_) + 1;
+	while (i-- > 0) {
+		const Packet &p = packets_[i];
+		if (p.arrivalNs < spliceFloorNs_)
+			return false;
+		if (IsSpliceKey(p)) {
+			seqOut = frontSeq_ + SpliceStart(i);
+			return true;
+		}
+	}
+	return false;
+}
+
+size_t PacketHistory::SpliceStart(size_t i) const
+{
+	// Multitrack: the other tracks' keyframes of that frame may have arrived
+	// just before the primary's (the encoders run in parallel). A handful of
+	// packets back is plenty; it stops at an older video frame.
+	const Packet &key = packets_[i];
+	size_t start = i;
+	for (size_t k = i, steps = 0; k-- > 0 && steps < 64; ++steps) {
+		const Packet &p = packets_[k];
+		if (p.arrivalNs < spliceFloorNs_)
+			break;
+		if (p.kind != MediaKind::Video)
+			continue;
+		if (p.dtsMs != key.dtsMs || !p.keyframe)
+			break;
+		start = k;
+	}
+	return start;
 }
 
 uint64_t PacketHistory::OffsetAtArrival(int64_t atNs) const
@@ -164,7 +196,7 @@ void PacketHistory::DropLost()
 		++drop;
 	// What is kept still starts at a keyframe.
 	if (sawVideo_) {
-		while (drop < packets_.size() && !IsVideoKey(packets_[drop]))
+		while (drop < packets_.size() && !IsSpliceKey(packets_[drop]))
 			++drop;
 	}
 	for (size_t i = 0; i < drop; ++i)
@@ -195,7 +227,7 @@ double PacketHistory::KeyframeIntervalSeconds() const
 	size_t count = 0;
 	for (size_t i = 0; i < packets_.size(); ++i) {
 		const Packet &p = packets_[i];
-		if (!IsVideoKey(p))
+		if (!IsSpliceKey(p))
 			continue;
 		if (count == 0)
 			first = p.dtsMs;
@@ -222,15 +254,204 @@ void PacketHistory::Clear()
 	bytes_ = 0;
 	frontSeq_ = nextSeq_;
 	sawVideo_ = false;
+	primaryVideo_ = 0xFF;
 	spliceFloorNs_ = INT64_MIN;
 }
 
 // -------------------------------------------------------------- scheduler --
 
+namespace {
+// A raise this small (the resume keyframe is due within it) just replays.
+constexpr int64_t kMinFillNs = 700LL * 1000000;
+} // namespace
+
 SpliceInfo SinkScheduler::SetDelay(int64_t delayNs, int64_t nowNs, const PacketHistory &history)
 {
+	const int64_t before = delayNs_;
 	delayNs_ = std::max<int64_t>(0, delayNs);
+	if (filling_) {
+		// Raised again: the clip goes on, the resume point comes later.
+		if (delayNs_ >= before) {
+			SpliceInfo info;
+			info.spliced = true;
+			info.filling = true;
+			return info;
+		}
+		// Lowered while the clip plays: back to the stream at the new delay.
+		filling_ = false;
+		++sourceGen_;
+	}
+	if (started_ && !needSplice_ && delayNs_ > before && CanFill(history)) {
+		uint64_t seq = 0;
+		if (history.FindKeyAtOrBefore(cursor_, seq)) {
+			const Packet *key = history.At(seq);
+			if (key && key->arrivalNs + delayNs_ > nowNs + kMinFillNs) {
+				cursor_ = seq;
+				StartFill(nowNs);
+				SpliceInfo info;
+				info.spliced = true;
+				info.filling = true;
+				return info;
+			}
+		}
+	}
 	return TrySplice(nowNs, history);
+}
+
+void SinkScheduler::SetFiller(std::shared_ptr<const Filler> filler)
+{
+	if (filling_ && !filler) {
+		// The clip went away mid-play: the stream resumes when due (Due()).
+		filling_ = false;
+		++sourceGen_;
+		needSplice_ = true;
+	}
+	filler_ = std::move(filler);
+	fillPos_.assign(filler_ ? filler_->tracks.size() : 0, FillPos{});
+}
+
+bool SinkScheduler::CanFill(const PacketHistory &history) const
+{
+	if (!filler_ || filler_->tracks.empty() || !history.HasVideo())
+		return false;
+	for (const FillerTrack &t : filler_->tracks) {
+		if (t.packets.empty() || t.loopMs <= 0)
+			return false;
+	}
+	return true;
+}
+
+void SinkScheduler::StartFill(int64_t nowNs)
+{
+	filling_ = true;
+	fillStartNs_ = nowNs;
+	fillPos_.assign(filler_->tracks.size(), FillPos{});
+	++sourceGen_;
+	// The clip continues the timeline: its first frame one frame interval
+	// after the last one sent, in decode and display order.
+	int64_t firstPts = 0;
+	bool haveFirst = false;
+	for (const FillerTrack &t : filler_->tracks) {
+		if (t.kind != MediaKind::Video || t.packets.empty())
+			continue;
+		firstPts = haveFirst ? std::min(firstPts, t.packets.front().ptsMs) : t.packets.front().ptsMs;
+		haveFirst = true;
+	}
+	int64_t base = (haveVideoOut_ || haveAudioOut_) ? lastAnyDtsOut_ + frameMs_ : 0;
+	for (const VideoOut &v : video_) {
+		if (v.have)
+			base = std::max({base, v.lastDts + frameMs_, v.maxPts + frameMs_ - firstPts});
+	}
+	if (haveAudioOut_)
+		base = std::max(base, lastAudioDtsOut_ + 1);
+	fillBaseMs_ = base;
+	// Every clip track starts on its keyframe.
+	++spliceGen_;
+}
+
+void SinkScheduler::EndFill(const Packet &resume)
+{
+	filling_ = false;
+	++sourceGen_;
+	// The stream resumes one frame after the clip, like a splice.
+	bool first = true;
+	for (const VideoOut &v : video_) {
+		if (!v.have)
+			continue;
+		const int64_t need = std::max(v.lastDts + frameMs_ - resume.dtsMs, v.maxPts + frameMs_ - resume.ptsMs);
+		offsetMs_ = first ? need : std::max(offsetMs_, need);
+		first = false;
+	}
+	if (first)
+		offsetMs_ = lastAnyDtsOut_ + frameMs_ - resume.dtsMs;
+	// Each stream track waits for its own keyframe.
+	++spliceGen_;
+	started_ = true;
+	needSplice_ = false;
+}
+
+bool SinkScheduler::Account(const Packet &p, int64_t &dts, int64_t &pts, bool &newSource)
+{
+	if (p.kind == MediaKind::Audio) {
+		// Right after a splice the audio around the keyframe can land
+		// before what was already sent: it is skipped, never reordered.
+		if (haveAudioOut_ && dts <= lastAudioDtsOut_)
+			return false;
+		lastAudioDtsOut_ = dts;
+		haveAudioOut_ = true;
+	} else if (p.kind == MediaKind::Video) {
+		VideoOut &v = VideoState(p.stream);
+		if (v.keyGen != spliceGen_) {
+			// This track hasn't had its keyframe since the splice: its
+			// frames would not decode.
+			if (!p.keyframe)
+				return false;
+			v.keyGen = spliceGen_;
+		}
+		if (v.have && dts <= v.lastDts) {
+			const int64_t shift = v.lastDts + 1 - dts;
+			dts += shift;
+			pts += shift;
+		}
+		if (v.have) {
+			const int64_t step = dts - v.lastDts;
+			if (step >= 1 && step <= 200)
+				frameMs_ = (frameMs_ * 7 + step + 4) / 8;
+		}
+		v.lastDts = dts;
+		v.maxPts = v.have ? std::max(v.maxPts, pts) : pts;
+		v.have = true;
+		haveVideoOut_ = true;
+	} else {
+		if (dts < lastAnyDtsOut_)
+			dts = lastAnyDtsOut_;
+		if (pts < dts)
+			pts = dts;
+	}
+	lastAnyDtsOut_ = std::max(lastAnyDtsOut_, dts);
+	if (p.stream >= streamSourceGen_.size())
+		streamSourceGen_.resize(static_cast<size_t>(p.stream) + 1, 0);
+	newSource = streamSourceGen_[p.stream] != sourceGen_;
+	streamSourceGen_[p.stream] = sourceGen_;
+	return true;
+}
+
+void SinkScheduler::EmitFiller(int64_t nowNs, std::vector<OutPacket> &out, size_t maxPackets)
+{
+	const size_t first = out.size();
+	for (size_t t = 0; t < filler_->tracks.size() && t < fillPos_.size(); ++t) {
+		const FillerTrack &track = filler_->tracks[t];
+		FillPos &pos = fillPos_[t];
+		while (out.size() - first < maxPackets) {
+			const Packet &p = track.packets[pos.index];
+			const int64_t atMs = pos.loop * track.loopMs + p.dtsMs;
+			if (fillStartNs_ + atMs * 1000000 > nowNs)
+				break;
+			OutPacket o;
+			o.packet = &p;
+			o.filler = &track;
+			o.dtsMs = fillBaseMs_ + atMs;
+			o.ptsMs = fillBaseMs_ + pos.loop * track.loopMs + p.ptsMs;
+			if (++pos.index >= track.packets.size()) {
+				pos.index = 0;
+				++pos.loop;
+			}
+			out.push_back(o);
+		}
+	}
+	// In time order across the tracks, then the per-stream bookkeeping.
+	std::stable_sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end(),
+			 [](const OutPacket &a, const OutPacket &b) { return a.dtsMs < b.dtsMs; });
+	size_t kept = first;
+	for (size_t i = first; i < out.size(); ++i) {
+		OutPacket o = out[i];
+		bool newSource = false;
+		if (!Account(*o.packet, o.dtsMs, o.ptsMs, newSource))
+			continue;
+		o.newSource = newSource;
+		out[kept++] = o;
+	}
+	out.resize(kept);
 }
 
 SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
@@ -256,8 +477,18 @@ SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
 		// The keyframe follows the last frame sent by one frame interval, in
 		// decode order (dts) and in display order (pts): with B-frames the
 		// frames sent last can show up to a few frames after their dts, and a
-		// keyframe shown before them would play the stream backwards.
-		offsetMs_ = std::max(lastVideoDtsOut_ + frameMs_ - key->dtsMs, maxVideoPtsOut_ + frameMs_ - key->ptsMs);
+		// keyframe shown before them would play the stream backwards. Every
+		// video track gets the same offset (multitrack: they stay in sync), so
+		// it is the one the track furthest ahead needs.
+		bool first = true;
+		for (const VideoOut &v : video_) {
+			if (!v.have)
+				continue;
+			const int64_t need =
+				std::max(v.lastDts + frameMs_ - key->dtsMs, v.maxPts + frameMs_ - key->ptsMs);
+			offsetMs_ = first ? need : std::max(offsetMs_, need);
+			first = false;
+		}
 	} else if (haveAudioOut_)
 		offsetMs_ = lastAnyDtsOut_ + frameMs_ - key->dtsMs;
 	else
@@ -266,6 +497,12 @@ SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
 	cursor_ = seq;
 	started_ = true;
 	needSplice_ = false;
+	// Each video track starts again at its own keyframe of this frame.
+	++spliceGen_;
+	if (!filling_ && key->arrivalNs + delayNs_ > nowNs + kMinFillNs && CanFill(history)) {
+		StartFill(nowNs);
+		info.filling = true;
+	}
 	return info;
 }
 
@@ -273,13 +510,30 @@ std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &hi
 					  const ReadyFn &ready)
 {
 	std::vector<OutPacket> out;
-	if (!started_ && !needSplice_)
+	if (!started_ && !needSplice_ && !filling_)
 		return out;
 	// The history was trimmed past this sink (it fell far behind): start again
 	// from where the delay says it should be.
 	if (needSplice_ || cursor_ < history.FrontSeq()) {
 		if (!TrySplice(nowNs, history).spliced)
 			return out;
+	}
+
+	// The clip arrived while the sink waits for its first packet to be due
+	// (the stream started with the delay on): it plays from now.
+	if (!filling_ && !haveVideoOut_ && !haveAudioOut_ && CanFill(history)) {
+		const Packet *first = history.At(cursor_);
+		if (first && first->arrivalNs + delayNs_ > nowNs + kMinFillNs)
+			StartFill(nowNs);
+	}
+
+	if (filling_) {
+		const Packet *resume = history.At(cursor_);
+		if (!resume || resume->arrivalNs + delayNs_ > nowNs) {
+			EmitFiller(nowNs, out, maxPackets);
+			return out;
+		}
+		EndFill(*resume);
 	}
 
 	while (cursor_ < history.EndSeq() && out.size() < maxPackets) {
@@ -292,42 +546,37 @@ std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &hi
 
 		int64_t dts = p->dtsMs + offsetMs_;
 		int64_t pts = p->ptsMs + offsetMs_;
-		if (p->kind == MediaKind::Audio) {
-			// Right after a splice the audio around the keyframe can land
-			// before what was already sent: it is skipped, never reordered.
-			if (haveAudioOut_ && dts <= lastAudioDtsOut_)
-				continue;
-			lastAudioDtsOut_ = dts;
-			haveAudioOut_ = true;
-		} else if (p->kind == MediaKind::Video) {
-			if (haveVideoOut_ && dts <= lastVideoDtsOut_) {
-				const int64_t shift = lastVideoDtsOut_ + 1 - dts;
-				dts += shift;
-				pts += shift;
-			}
-			if (haveVideoOut_) {
-				const int64_t step = dts - lastVideoDtsOut_;
-				if (step >= 1 && step <= 200)
-					frameMs_ = (frameMs_ * 7 + step + 4) / 8;
-			}
-			lastVideoDtsOut_ = dts;
-			maxVideoPtsOut_ = haveVideoOut_ ? std::max(maxVideoPtsOut_, pts) : pts;
-			haveVideoOut_ = true;
-		} else {
-			if (dts < lastAnyDtsOut_)
-				dts = lastAnyDtsOut_;
-			if (pts < dts)
-				pts = dts;
-		}
-		lastAnyDtsOut_ = std::max(lastAnyDtsOut_, dts);
+		bool newSource = false;
+		if (!Account(*p, dts, pts, newSource))
+			continue;
 		lastSentArrivalNs_ = p->arrivalNs;
-		out.push_back(OutPacket{p, pts, dts});
+		OutPacket o;
+		o.packet = p;
+		o.ptsMs = pts;
+		o.dtsMs = dts;
+		o.newSource = newSource;
+		out.push_back(o);
 	}
 	return out;
 }
 
 int64_t SinkScheduler::NextDueNs(const PacketHistory &history) const
 {
+	if (filling_ && filler_) {
+		// The next clip packet (the stream's resume point is later).
+		int64_t next = -1;
+		for (size_t t = 0; t < filler_->tracks.size() && t < fillPos_.size(); ++t) {
+			const FillerTrack &track = filler_->tracks[t];
+			const FillPos &pos = fillPos_[t];
+			const int64_t at =
+				fillStartNs_ + (pos.loop * track.loopMs + track.packets[pos.index].dtsMs) * 1000000;
+			next = next < 0 ? at : std::min(next, at);
+		}
+		const Packet *resume = history.At(cursor_);
+		if (resume)
+			next = next < 0 ? resume->arrivalNs + delayNs_ : std::min(next, resume->arrivalNs + delayNs_);
+		return next;
+	}
 	if (needSplice_ || !started_)
 		return -1;
 	const Packet *p = history.At(cursor_);
@@ -338,18 +587,33 @@ int64_t SinkScheduler::NextDueNs(const PacketHistory &history) const
 
 int64_t SinkScheduler::LagNs(int64_t nowNs, const PacketHistory &history) const
 {
+	if (filling_)
+		return 0;
 	const int64_t due = NextDueNs(history);
 	if (due < 0 || due >= nowNs)
 		return 0;
 	return nowNs - due;
 }
 
+SinkScheduler::VideoOut &SinkScheduler::VideoState(uint8_t stream)
+{
+	if (stream >= video_.size())
+		video_.resize(static_cast<size_t>(stream) + 1);
+	return video_[stream];
+}
+
 void SinkScheduler::ResetTimeline()
 {
 	haveVideoOut_ = false;
 	haveAudioOut_ = false;
-	lastVideoDtsOut_ = 0;
-	maxVideoPtsOut_ = 0;
+	video_.clear();
+	// A new connection starts with the stream's codec headers: the clip's
+	// must be sent again if it plays.
+	streamSourceGen_.clear();
+	if (filling_) {
+		filling_ = false;
+		needSplice_ = true;
+	}
 	lastAudioDtsOut_ = 0;
 	lastAnyDtsOut_ = 0;
 	offsetMs_ = 0;

@@ -27,12 +27,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "background-tasks.hpp"
 #include "buffer-mode-controller.hpp"
+#include "release-info.hpp"
 #include "ui-theme.hpp"
 
 class QLabel;
@@ -83,16 +85,19 @@ class SceneComboBox;
 class AuthManager;
 class DelayRouter;
 class FieldIcon;
+class MultistreamLink;
 class StreamDelayController;
 struct StreamDelayStatus;
 struct UpdateCheckResult;
+class UpdateDialog;
 
 class TrigglowDelayDock : public QWidget {
 	Q_OBJECT
 
 public:
 	TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
-			  DelayRouter &router, AuthManager &authManager, QWidget *parent = nullptr);
+			  DelayRouter &router, AuthManager &authManager, MultistreamLink &multistreamLink,
+			  QWidget *parent = nullptr);
 
 	// Settings changed through the dock that live in stream-mode-settings.json
 	// (what the delay applies to, presets, scene rules...), to persist them.
@@ -150,6 +155,12 @@ private:
 		QSpinBox *seconds = nullptr;
 		QPushButton *remove = nullptr;
 	};
+	// v1.1.0: one more place the stream goes (a Multistream channel).
+	struct SinkRow {
+		QWidget *row = nullptr; // FitRow: the name and the state chip.
+		QLabel *name = nullptr;
+		QLabel *state = nullptr;
+	};
 
 	void BuildUi();
 	// Small builders: a field label above its control, the lock inside a
@@ -171,6 +182,7 @@ private:
 	QFrame *BuildWarningsCard();
 	void BuildRules(QVBoxLayout *body);
 	QWidget *BuildBufferBlock(QWidget *host);
+	QWidget *BuildMultistreamBlock(QWidget *host);
 	void AddRuleRow(const std::string &scene, int action, int seconds);
 	void RemoveRuleRow(QFrame *card);
 	void RulesChanged();
@@ -178,6 +190,7 @@ private:
 	void RefreshDestination(const StreamDelayStatus &status);
 	void RefreshWarnings(const StreamDelayStatus &status);
 	void RefreshBuffer(const StreamDelayStatus &status);
+	void RefreshMultistream(const StreamDelayStatus &status);
 	// Rules for components only this dock has (section headers, preset chips,
 	// the 5 s steps, icon buttons), from the same tokens.
 	QString ExtraStyleSheet() const;
@@ -217,9 +230,6 @@ private:
 	// the gap to the text is part of the icon box.
 	void SetButtonIcon(QPushButton *button, ui::IconId icon, const QColor &color,
 			   Qt::Alignment alignment = Qt::AlignLeft);
-	// OBS themes give QPushButton a fixed height; the banner takes the
-	// height of the layout inside it instead.
-	void FitUpdateBanner();
 	// Icons that don't depend on state (banner, footer, buttons).
 	void ApplyStaticIcons();
 	// On a real state change (`state` names it, per mode), announces
@@ -315,11 +325,20 @@ private:
 	// just stays silent, never shown to the user -- see
 	// UpdateCheckResult::checked's comment).
 	void ShowUpdateNotice(const UpdateCheckResult &result);
+	// v1.1.0: the update window (update-dialog.hpp), raised if already open.
+	void OpenUpdateDialog();
+	// Opens it by itself once per published version, once OBS's window is up
+	// (update-installer.hpp remembers which version it showed).
+	void PromptAtStartOnce();
+	// Why updating now would cut something (empty when it wouldn't): OBS
+	// streaming or recording, or a delay running.
+	QString UpdateBusyReason() const;
 
 	BufferModeController &bufferController_;
 	StreamDelayController &streamController_;
 	DelayRouter &router_;
 	AuthManager &authManager_;
+	MultistreamLink &multistreamLink_;
 	std::function<void()> onSettingsChanged_;
 	bool detached_ = false;
 	// Set while Refresh() writes values into the controls, so their change
@@ -358,6 +377,13 @@ private:
 	QWidget *noticeRow_ = nullptr;
 	QLabel *noticeIcon_ = nullptr;
 	QLabel *noticeLabel_ = nullptr;
+	// v1.1.0: the Multistream channels this stream also goes to (one row
+	// each, under sendsRow_), and why none were added when that is the case.
+	QVBoxLayout *sinksLayout_ = nullptr;
+	std::vector<SinkRow> sinkRows_;
+	QWidget *multiNoteRow_ = nullptr;
+	QLabel *multiNoteIcon_ = nullptr;
+	QLabel *multiNoteLabel_ = nullptr;
 	// "Status: Delay on. Viewers see..." without the degradation notice.
 	QString statusAccessibleName_;
 	// Degradation notice (see RefreshPipelineHealth()): a hairline, the
@@ -396,6 +422,15 @@ private:
 	// under the scene pickers while those are locked (Filling, Active).
 	// v1.0.0: the seconds stay editable, the delay changes live.
 	QWidget *delayLockedRow_ = nullptr;
+	// v1.1.0: the loading scene picker, its lock (Free: Trigglow's video) and
+	// "See plans". In the scenes card with all of OBS, in the delay card with
+	// only the stream (both modes show the same loading scene).
+	QWidget *loadingBlock_ = nullptr;
+	QVBoxLayout *scenesCardLayout_ = nullptr;
+	QVBoxLayout *delayCardLayout_ = nullptr;
+	QWidget *loadingLockRow_ = nullptr;
+	QLabel *loadingLockIcon_ = nullptr;
+	QPushButton *loadingPlansButton_ = nullptr;
 	QLabel *delayLockedIcon_ = nullptr;
 	// v1.0.0: while the delay runs, that switching scenes needs stream mode
 	// (scene mode delays the live scene only).
@@ -432,6 +467,14 @@ private:
 	// "Show the seconds on the badge": off leaves only the mark and the name.
 	QCheckBox *overlaySecondsCheck_ = nullptr;
 	QLabel *overlaySecondsText_ = nullptr;
+	// v1.1.0: the badge box locked (Free plan, or signed out): the lock line
+	// under it and "See plans" (opens trigglow.com/pricing).
+	QWidget *overlayLockRow_ = nullptr;
+	QLabel *overlayLockIcon_ = nullptr;
+	QPushButton *plansButton_ = nullptr;
+	// v1.1.0: the (i) next to the Advanced eyebrow: multistream and vertical
+	// plugins with each mode, in its tooltip.
+	QLabel *multistreamInfo_ = nullptr;
 	// Rows that reflow to a column when the dock is narrow -- see ApplyNarrowLayout().
 	QBoxLayout *accountLayout_ = nullptr; // Text | inline button; stacked when narrow.
 	QBoxLayout *buttonRow_ = nullptr;
@@ -496,6 +539,14 @@ private:
 	QWidget *drainRow_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
 	QLabel *drainText_ = nullptr;
+	// v1.1.0, only the stream: "Also send to my Trigglow Multistream
+	// channels", its hint (what is ready, or why not) and the link shown when
+	// the account's plan doesn't include it.
+	QWidget *multiBlock_ = nullptr;
+	QCheckBox *multiCheck_ = nullptr;
+	QLabel *multiText_ = nullptr;
+	QLabel *multiHint_ = nullptr;
+	QPushButton *multiPlanButton_ = nullptr;
 
 	// Options > Advanced: "Apply the delay only to the stream", its hint, and
 	// the lock line while a delay runs.
@@ -520,14 +571,20 @@ private:
 
 	// See CheckForUpdateAsync()/ShowUpdateNotice(). Hidden (setVisible(false))
 	// until/unless a real update is found -- Qt layouts skip hidden widgets
-	// entirely, so this reserves no space while empty. updateReleaseUrl_ is
-	// what its click handler opens. The whole banner is one button.
-	QPushButton *updateNoticeButton_ = nullptr;
+	// entirely, so this reserves no space while empty. v1.1.0: a card whose
+	// button opens the update window; the X hides it until OBS starts again.
+	QFrame *updateCard_ = nullptr;
 	QLabel *updateIcon_ = nullptr;
 	QLabel *updateTitle_ = nullptr;
 	QLabel *updateVersion_ = nullptr;
-	QLabel *updateExternalIcon_ = nullptr;
-	QString updateReleaseUrl_;
+	QPushButton *updateButton_ = nullptr;
+	QPushButton *updateDismiss_ = nullptr;
+	std::string updateLatest_;                          // The newer version found, empty until then.
+	std::optional<release::Installer> updateInstaller_; // Set when it can install in place.
+	QPointer<UpdateDialog> updateDialog_;
+	QTimer *promptTimer_ = nullptr;
+	int promptTicks_ = 0;  // Seconds OBS's window has been up in a row.
+	int promptWaited_ = 0; // Seconds waited in all.
 
 	// See UpdateFillProgress()'s comment. fillElapsed_ is armed alongside
 	// fillTimer_ in ArmFillTimer(); fillTotalSeconds_ is what the countdown

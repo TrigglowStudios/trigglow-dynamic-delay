@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <vector>
 
 using namespace trigglow::relay;
@@ -596,8 +597,256 @@ void TestRetentionPolicy()
 	}
 }
 
+// v1.1.0 loading screen: a 2 s clip (video on stream 0, silence on 1).
+std::shared_ptr<Filler> MakeFiller()
+{
+	auto f = std::make_shared<Filler>();
+	FillerTrack v;
+	v.stream = 0;
+	v.kind = MediaKind::Video;
+	for (int i = 0; i < 120; ++i) {
+		Packet p;
+		p.kind = MediaKind::Video;
+		p.dtsMs = p.ptsMs = i * 1000LL / 60;
+		p.keyframe = i == 0;
+		p.recordOffset = static_cast<uint64_t>(i);
+		v.packets.push_back(p);
+	}
+	v.loopMs = 2000;
+	FillerTrack a;
+	a.stream = 1;
+	a.kind = MediaKind::Audio;
+	for (int i = 0; i < 96; ++i) {
+		Packet p;
+		p.kind = MediaKind::Audio;
+		p.stream = 1;
+		p.dtsMs = p.ptsMs = i * 21LL;
+		p.keyframe = true;
+		a.packets.push_back(p);
+	}
+	a.loopMs = 96 * 21;
+	f->tracks.push_back(v);
+	f->tracks.push_back(a);
+	return f;
+}
+
+void TestLoadingClipOnRaise()
+{
+	g_currentTest = "loading clip on raise";
+	FakeStream s;
+	SinkScheduler sink;
+	sink.SetFiller(MakeFiller());
+	s.RunUntil(0);
+	sink.SetDelay(0, 0, s.history);
+	OutLog log;
+	Run(s, sink, log, 0, 10000);
+	const size_t before = log.packets.size();
+	const int64_t lastArrivalBefore = log.newestArrivalMs;
+	const SpliceInfo info = sink.SetDelay(5000 * kMs, 10005 * kMs, s.history);
+	CHECK(info.spliced && info.filling);
+	CHECK(sink.Filling());
+	Run(s, sink, log, 10010, 30000);
+	CHECK(log.monotonic);
+	CHECK(log.maxVideoGap <= 40);
+	CHECK(!sink.Filling());
+	// The clip right after the raise, then the stream from the keyframe at or
+	// before where it stopped: nothing skipped, at most a GOP seen again.
+	size_t clip = 0;
+	bool firstClipKey = false;
+	bool resumeKey = false;
+	bool clipVideoNewSource = false;
+	bool streamVideoNewSource = false;
+	int64_t resumeArrivalMs = -1;
+	for (size_t i = before; i < log.packets.size(); ++i) {
+		const OutPacket &o = log.packets[i];
+		if (o.filler) {
+			if (clip == 0)
+				firstClipKey = o.packet->kind == MediaKind::Video ? o.packet->keyframe : true;
+			if (o.packet->kind == MediaKind::Video && o.newSource)
+				clipVideoNewSource = true;
+			++clip;
+			continue;
+		}
+		if (resumeArrivalMs < 0) {
+			resumeArrivalMs = o.packet->arrivalNs / kMs;
+			resumeKey = o.packet->kind != MediaKind::Video || o.packet->keyframe;
+		}
+		if (o.packet->kind == MediaKind::Video && o.newSource && o.packet->keyframe)
+			streamVideoNewSource = true;
+	}
+	CHECK(clip > 250); // ~5 s of 60 fps video plus audio.
+	CHECK(firstClipKey);
+	CHECK(clipVideoNewSource);
+	CHECK(streamVideoNewSource);
+	CHECK(resumeKey || resumeArrivalMs >= 0);
+	CHECK(resumeArrivalMs <= lastArrivalBefore && resumeArrivalMs >= lastArrivalBefore - 2100);
+	// No clip packet after the stream resumed.
+	bool resumed = false;
+	bool clipAfter = false;
+	for (size_t i = before; i < log.packets.size(); ++i) {
+		resumed = resumed || !log.packets[i].filler;
+		clipAfter = clipAfter || (resumed && log.packets[i].filler);
+	}
+	CHECK(!clipAfter);
+	// And the delay holds at 5 s from then on.
+	OutLog tail;
+	const int64_t minDelay = Run(s, sink, tail, 30005, 40000);
+	CHECK(minDelay >= 4900 && minDelay <= 7200);
+	CHECK(tail.monotonic);
+}
+
+void TestLoadingClipAtStart()
+{
+	g_currentTest = "loading clip at start";
+	FakeStream s;
+	SinkScheduler sink;
+	sink.SetFiller(MakeFiller());
+	s.RunUntil(0);
+	sink.SetDelay(8000 * kMs, 0, s.history);
+	OutLog log;
+	Run(s, sink, log, 5, 20000);
+	CHECK(log.monotonic);
+	CHECK(!log.packets.empty() && log.packets.front().filler != nullptr);
+	// The clip from the start until the stream is 8 s old, then the stream.
+	int64_t firstStreamDts = -1;
+	for (const OutPacket &o : log.packets) {
+		if (!o.filler) {
+			firstStreamDts = o.dtsMs;
+			CHECK(o.packet->arrivalNs / kMs == 0);
+			break;
+		}
+	}
+	CHECK(firstStreamDts >= 7900 && firstStreamDts <= 8200);
+	// The clip arriving while the stream waits for the delay plays at once.
+	{
+		FakeStream s3;
+		SinkScheduler sink3;
+		s3.RunUntil(0);
+		sink3.SetDelay(8000 * kMs, 0, s3.history);
+		OutLog log3;
+		Run(s3, sink3, log3, 5, 3000);
+		CHECK(log3.packets.empty());
+		sink3.SetFiller(MakeFiller());
+		Run(s3, sink3, log3, 3005, 12000);
+		CHECK(!log3.packets.empty() && log3.packets.front().filler != nullptr);
+		CHECK(log3.monotonic);
+		CHECK(!log3.packets.back().filler);
+	}
+	// Lowering the delay while the clip plays goes straight to the stream.
+	FakeStream s2;
+	SinkScheduler sink2;
+	sink2.SetFiller(MakeFiller());
+	s2.RunUntil(0);
+	sink2.SetDelay(10000 * kMs, 0, s2.history);
+	OutLog log2;
+	Run(s2, sink2, log2, 5, 3000);
+	CHECK(sink2.Filling());
+	sink2.SetDelay(0, 3005 * kMs, s2.history);
+	CHECK(!sink2.Filling());
+	Run(s2, sink2, log2, 3010, 6000);
+	CHECK(log2.monotonic);
+	CHECK(!log2.packets.back().filler);
+}
+
+// v1.1.0 Enhanced Broadcasting: OBS sends several video tracks (multitrack
+// E-RTMP), GOP-aligned, with the primary (lowest index) not always first.
+void TestMultitrackVideo()
+{
+	g_currentTest = "multitrack video";
+	PacketHistory h;
+	// Per frame: tracks 3 and 2 first, then the primary 0; audio is stream 1.
+	const uint8_t kOrder[3] = {3, 2, 0};
+	int64_t nextAudioMs = 0;
+	auto pushUntil = [&](int64_t untilMs, int &frame) {
+		for (;;) {
+			const int64_t videoMs = frame * 1000LL / 60;
+			if (videoMs > untilMs && nextAudioMs > untilMs)
+				return;
+			if (nextAudioMs < videoMs) {
+				Packet a;
+				a.kind = MediaKind::Audio;
+				a.stream = 1;
+				a.dtsMs = a.ptsMs = nextAudioMs;
+				a.arrivalNs = nextAudioMs * kMs;
+				h.Push(a);
+				nextAudioMs += 21;
+				continue;
+			}
+			for (uint8_t track : kOrder) {
+				Packet v;
+				v.kind = MediaKind::Video;
+				v.stream = track;
+				v.dtsMs = v.ptsMs = videoMs;
+				v.arrivalNs = videoMs * kMs;
+				v.keyframe = frame % 120 == 0;
+				h.Push(v);
+			}
+			++frame;
+		}
+	};
+
+	int frame = 0;
+	pushUntil(0, frame);
+	CHECK(h.PrimaryVideoStream() == 0);
+	SinkScheduler sink;
+	sink.SetDelay(0, 0, h);
+	std::map<uint8_t, std::vector<OutPacket>> byTrack;
+	auto drain = [&](int64_t t) {
+		for (const OutPacket &o : sink.Due(t * kMs, h, 100000))
+			if (o.packet->kind == MediaKind::Video)
+				byTrack[o.packet->stream].push_back(o);
+	};
+	for (int64_t t = 0; t <= 5000; t += 5) {
+		pushUntil(t, frame);
+		drain(t);
+	}
+	// Turn a 3 s delay on mid-GOP: every track rewinds to the same keyframe.
+	const size_t before = byTrack[0].size();
+	std::map<uint8_t, size_t> mark;
+	for (auto &kv : byTrack)
+		mark[kv.first] = kv.second.size();
+	SpliceInfo info = sink.SetDelay(3000 * kMs, 5000 * kMs, h);
+	CHECK(info.spliced);
+	for (int64_t t = 5005; t <= 12000; t += 5) {
+		pushUntil(t, frame);
+		drain(t);
+		h.Trim(t * kMs, RetentionNs(3, 10, h.KeyframeIntervalSeconds()), sink.CursorSeq());
+	}
+	CHECK(byTrack.size() == 3);
+	CHECK(byTrack[0].size() > before);
+	CHECK(h.KeyframeIntervalSeconds() > 1.9 && h.KeyframeIntervalSeconds() < 2.1);
+	for (auto &kv : byTrack) {
+		const std::vector<OutPacket> &v = kv.second;
+		bool monotonic = true;
+		for (size_t i = 1; i < v.size(); ++i)
+			monotonic = monotonic && v[i].dtsMs > v[i - 1].dtsMs;
+		CHECK(monotonic);
+		// Each track starts on a keyframe, and again right after the splice.
+		CHECK(!v.empty() && v.front().packet->keyframe);
+		CHECK(v.size() > mark[kv.first] && v[mark[kv.first]].packet->keyframe);
+		// Same source frame on every track gets the same timestamp.
+		CHECK(v[mark[kv.first]].dtsMs == byTrack[0][mark[0]].dtsMs);
+		CHECK(v[mark[kv.first]].packet->dtsMs == byTrack[0][mark[0]].packet->dtsMs);
+	}
+	// The tracks stay frame for frame together.
+	const size_t n = std::min({byTrack[0].size(), byTrack[2].size(), byTrack[3].size()});
+	CHECK(n + 2 >= byTrack[0].size());
+	bool aligned = true;
+	for (size_t i = 0; i < n; ++i)
+		aligned = aligned && byTrack[0][i].dtsMs == byTrack[2][i].dtsMs &&
+			  byTrack[0][i].dtsMs == byTrack[3][i].dtsMs;
+	CHECK(aligned);
+	// After trimming, the history still starts at the first track's keyframe of
+	// a frame (3, 2, 0 order), never between them.
+	const Packet *front = h.At(h.FrontSeq());
+	CHECK(front && front->kind == MediaKind::Video && front->keyframe && front->stream == 3);
+}
+
 int main()
 {
+	TestLoadingClipOnRaise();
+	TestLoadingClipAtStart();
+	TestMultitrackVideo();
 	TestBFramesSpliceKeepsDisplayOrder();
 	TestHistoryRecords();
 	TestSpillHooks();

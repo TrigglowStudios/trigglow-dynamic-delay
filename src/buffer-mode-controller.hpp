@@ -100,6 +100,13 @@ struct BufferModeStatus {
 	std::string loadingSceneName; // Optional; shown during Filling. Empty = no scene switch while filling.
 	// Show a "Delay Ns" text overlay on the delayed output while Active.
 	bool showOverlay = true;
+	// v1.1.0: it can't be switched off (Free plan, or signed out): showOverlay
+	// is then always true and the dock's box is locked.
+	bool badgeLocked = false;
+	// v1.1.0: the plan doesn't let the streamer choose the loading scene:
+	// Trigglow's video shows whatever loadingSceneName says (kept, so an
+	// upgrade brings the choice back).
+	bool loadingLocked = false;
 	// Canvas corner for the overlay: 0 top-left (default), 1 top-right, 2 bottom-left, 3 bottom-right.
 	uint32_t overlayCorner = 0;
 	std::string message; // Human-readable (Spanish), empty outside Error/info states.
@@ -170,6 +177,11 @@ public:
 	// The same by position in the list (0-based): the hotkeys' "delayed scene N".
 	bool SelectDelayedSceneSlot(size_t slot);
 	void SetLoadingScene(std::string sceneName);
+	// v1.1.0: see BufferModeStatus::loadingLocked (set with the badge's lock).
+	void SetLoadingLocked(bool locked);
+	// The scene shown while the delay builds up, in both modes: the chosen
+	// one when the plan allows it, else Trigglow's (created when missing).
+	std::string EffectiveLoadingScene() const { return LoadingSceneToShow(); }
 	// Clamped to [kMinDelaySeconds, kMaxDelaySeconds]. v1.0.0: while
 	// Filling/Active the delay changes in place, the buffer is never emptied
 	// (VideoDelayFilter::ApplyLiveDelay(), AudioDelayLine): lowered, viewers
@@ -180,6 +192,12 @@ public:
 	void SetMinResolutionHeight(uint32_t heightPixels);
 	// Toggles the "Delay Ns" overlay; takes effect immediately if Active.
 	void SetShowOverlay(bool show);
+	// v1.1.0: the badge is part of the free plan. Locked (Free, or no
+	// sign-in), SetShowOverlay(false) is ignored and the badge stays on; the
+	// corner and the seconds stay the streamer's choice (see
+	// StreamDelayController::SetBadgeLocked, set from the same place).
+	void SetBadgeLocked(bool locked);
+	bool BadgeLocked() const { return badgeLocked_; }
 	void SetOverlayCorner(uint32_t corner);
 	// Asks for the badge image again (with or without the seconds changed);
 	// keeps where the streamer placed it.
@@ -430,6 +448,7 @@ private:
 	bufferfit::RingClass NextCycleRingClass() const;
 	bufferfit::RingClass cycleRingClass_ = bufferfit::RingClass::Intra; // Fixed at Enable(), pushed to the filter.
 	bool bufferCodecAuto_ = true; // Hidden buffer_codec setting, see LoadSettings().
+	bool badgeLocked_ = false;    // See SetBadgeLocked().
 	// An output is starting: the filter yields an NVENC session it may hold,
 	// waiting up to 100 ms only near the old session limits (OBS's NVENC
 	// encoders + the starting one + the buffer's >= 4).

@@ -2,6 +2,85 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.1.0 — 2026-11-22
+
+Dynamic Delay en 16 idiomas, Enhanced Broadcasting y la pantalla de carga con "solo a la
+emisión", y actualizaciones desde el propio OBS.
+
+**Antes de actualizar:** nada que hacer. Se instala como la v1.0.0; tus escenas, ajustes, atajos e
+inicio de sesión se mantienen. A partir de esta versión, las nuevas se instalan desde OBS (Windows).
+
+**Novedades:**
+- **16 idiomas.** El panel, los ajustes y los mensajes están ahora también en catalán, valenciano,
+  alemán, euskera, francés, gallego, hindi, italiano, japonés, coreano, ruso y ucraniano, además de
+  inglés, español, portugués de Brasil y chino simplificado: el plugin sigue el idioma de OBS. El
+  vídeo de carga "poniendo delay" que ve tu audiencia viene en los mismos 16, horizontal y vertical.
+- **Actualiza desde OBS.** Cuando sale una versión nueva, el dock la enseña en una tarjeta con un
+  botón **Actualizar**, y la primera vez que abres OBS después de publicarse una ventana te avisa
+  (una sola vez). En Windows, **Actualizar ahora** descarga el instalador, lo comprueba con el
+  SHA-256 que GitHub publica para él y lo ejecuta: Windows pide permiso una vez, OBS se cierra, la
+  actualización se instala en unos segundos y OBS se vuelve a abrir solo. Tus escenas, ajustes,
+  atajos y sesión se conservan. Espera mientras estás en directo, grabando o con el delay activo
+  (cerrar OBS los cortaría) y te dice por qué. **Novedades** abre el historial de cambios en
+  trigglow.com. En macOS, Linux o una instalación manual, el botón abre la página de descarga de
+  trigglow.com; ya nada te manda a GitHub.
+- La tarjeta de actualización tiene un diseño nuevo: la franja de la marca, la versión nueva y la
+  tuya, y una X que la oculta hasta que vuelvas a abrir OBS.
+- **Envía a tus canales de Trigglow Multistream desde OBS.** En el modo stream, Opciones tiene
+  "Enviar también a mis canales de Trigglow Multistream": el directo con delay sale directamente de
+  OBS a cada canal que tengas activado en trigglow.com (Directo > Multistream), además de a tu
+  servicio de OBS. Cada canal es una subida más de tu bitrate. Las claves de emisión se leen de tu
+  cuenta cuando hacen falta y se guardan solo en memoria. Si ya emites a Trigglow Multistream, no se
+  añade nada: la nube ya lo reenvía. Depende de tu plan de Trigglow.
+- **El delay en la página de Multistream.** Con la sesión iniciada, trigglow.com muestra si el delay
+  está activo, sus segundos y adónde va el directo, y puede activarlo o quitarlo, cambiar los segundos
+  o borrar lo que aún no se ha emitido. Se aplica en unos segundos, como un atajo.
+- Un directo a Trigglow Multistream aparece como "Trigglow Multistream" en el dock.
+- **La insignia de delay forma parte del plan gratuito.** En Free, los espectadores siempre ven la
+  insignia "Delay 30 s" mientras el delay está activo: sigues eligiendo su esquina y si muestra los
+  segundos, pero "Mostrar la insignia de delay a los espectadores" queda bloqueada, con una línea
+  que explica por qué y un botón **Ver planes**. Las cuentas Starter y Pro pueden desmarcarla como
+  antes. El dock muestra tu plan junto a tu nombre ("Conectado como X · Plan Starter"). El plugin lo
+  pregunta a trigglow.com en cada arranque de OBS y guarda la última respuesta para un arranque sin
+  conexión; un archivo de ajustes de una versión anterior no bloquea nada hasta que el servidor
+  haya contestado una vez.
+- **Multistream y vertical, revisados.** Con el delay en todo OBS (lo predeterminado), todas las
+  salidas de tu lienzo principal también van con delay: Aitum Multistream, Multiple RTMP Outputs y
+  cualquier cosa que codifique lo que muestra OBS. Un lienzo de Aitum Vertical ahora recibe el delay
+  en **la escena que muestra, se llame como se llame**: la 1.0 solo retrasaba una escena vertical
+  con el mismo nombre que una de tus escenas con delay, así que la mayoría de directos verticales
+  salían en directo con el sonido retrasado. Una escena a la que el lienzo vertical cambie con el
+  delay activo también lo recibe (negro durante el delay mientras se llena su búfer, como antes).
+  Con "Aplicar el delay solo a la emisión", solo el stream propio de OBS pasa por el delay: las
+  salidas que arrancan esos plugins salen en directo, y el panel ahora lo dice mientras funcionan,
+  con el nombre del plugin y cuántas salidas ("Aitum Multistream está enviando 2 salidas en directo,
+  sin el delay..."). Una (i) junto a **Avanzado** lo resume. Los servicios que reciben un stream y lo
+  reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con los dos.
+- **Aitum Vertical con "solo a la emisión".** Su stream vertical ahora también pasa por el delay,
+  con los mismos segundos que el de OBS, Borrar y la insignia incluidos, y el dock lo lista con tus
+  otros destinos. La primera vez que arranca en una sesión de OBS sale directo una fracción de
+  segundo y el plugin lo reinicia a través del delay. Usa una clave de emisión propia para el
+  vertical: Restream y la mayoría de plataformas aceptan un solo emisor por clave.
+- **La pantalla de carga con "solo a la emisión".** Mientras se acumula el delay, tu audiencia ve
+  ahora la escena de carga, como a todo OBS, en lugar de volver a ver los últimos segundos (al
+  subirlo en directo) o no ver nada (cuando el directo empieza con el delay activo). El plugin
+  prepara un clip corto con tu propio encoder al empezar cada directo (unos segundos de codificación
+  extra, una vez) y el dock muestra "Pantalla de carga" en el destino mientras tanto. Funciona
+  también con Enhanced Broadcasting: las pistas verticales reciben el vídeo de carga de Trigglow en
+  una versión hecha para vertical (una escena elegida por ti se encaja dentro). Directos H.264.
+- **Elegir la escena de carga es para Starter y Pro.** En Free, tu audiencia ve el vídeo "poniendo
+  delay" de Trigglow en los dos modos; el selector se bloquea con una línea que explica por qué y un
+  botón **Ver planes**. La escena que tenías elegida se guarda y vuelve si mejoras de plan.
+- **Enhanced Broadcasting funciona con "solo a la emisión".** Todas las pistas que envía (cada
+  calidad y el lienzo vertical si lo envías) pasan juntas por el delay, sincronizadas, con Borrar,
+  la insignia y los últimos segundos enviados al parar. Tus canales de Multistream reciben la
+  pista principal como un stream normal. No hay que cambiar nada: activar o no Enhanced
+  Broadcasting es cosa tuya.
+- **El delay está desactivado por defecto con "solo a la emisión".** Ya no se activa solo: las
+  reglas de Delay por escena solo actúan en directo (cambiar de escena en OBS antes de empezar no
+  lo arma), una regla nueva no hace nada hasta que eliges qué hace, y al terminar un directo el
+  delay se quita, así que el siguiente empieza sin él salvo que lo actives.
+
 ## v1.0.0 — 2026-11-17
 
 Dynamic Delay sale de beta en Windows: versión 1.0, con la nueva imagen de Trigglow. Las versiones

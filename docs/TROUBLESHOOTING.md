@@ -72,7 +72,6 @@ output. The log has `this stream can't use stream mode (<reason>: output …, pr
 
 | Dock says | Why | What to do |
 |---|---|---|
-| "This stream uses Enhanced Broadcasting…" | Enhanced Broadcasting sends several tracks on one multitrack output | Turn Enhanced Broadcasting off in `Settings → Stream`, or delay all of OBS |
 | "Your service doesn't stream over RTMP or RTMPS (SRT, WHIP...)" | SRT, RIST and WHIP aren't relayed yet | Use an RTMP or RTMPS server if your platform has one, or delay all of OBS |
 | "This stream doesn't use OBS's RTMP output" | another output plugin streams | Delay all of OBS |
 | "Your stream server isn't an rtmp:// or rtmps:// address" | the server in `Settings → Stream` can't be read as one | Check the server address |

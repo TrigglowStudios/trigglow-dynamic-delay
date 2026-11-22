@@ -142,9 +142,18 @@ en RAM solo lo que está a punto de enviarse.
 
 1. Con `OBS_FRONTEND_EVENT_STREAMING_STARTING` (después de que OBS cree la salida de emisión y
    antes de que arranque), si se ha elegido "solo a la emisión", `StreamDelayController` comprueba que el directo es apto: el
-   `rtmp_output` de OBS, protocolo RTMP o RTMPS, sin Enhanced Broadcasting (multipista). Lee el
-   servidor y la clave con `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto,
-   incluido "auto").
+   `rtmp_output` de OBS, protocolo RTMP o RTMPS. Lee el servidor y la clave con
+   `obs_service_get_connect_info()` (el servidor de ingesta ya resuelto, incluido "auto"). Con
+   Enhanced Broadcasting (v1.1.0) OBS emite por su propia salida multipista ("rtmp multitrack
+   video"), que para entonces ya tiene un servicio privado con la ingesta que le dio la plataforma:
+   ese servicio es el destino, y la salida recibe un servicio loopback nuevo en cada directo (libobs
+   deja el anterior "activo" más allá del cierre de esa salida, y el cambio se comprueba al
+   momento). El relay toma todas las pistas de vídeo (una por calidad y lienzo, con los GOP
+   alineados) y el audio: el historial empalma y recorta en los keyframes de la primera pista de
+   vídeo y empieza en el primer keyframe de ese fotograma en cualquier pista, y el programador
+   mantiene los timestamps de cada pista y espera el keyframe propio de cada una tras un empalme
+   (`packet-delay-core.hpp`). El servicio del streamer recibe todas las pistas, como Enhanced RTMP;
+   los canales de Multistream reciben la primera pista de vídeo, como un stream normal.
 2. Arranca `StreamRelay` (avformat de FFmpeg): un listener en `127.0.0.1:<puerto libre>` y un
    emisor hacia el servicio del propio streamer.
 3. Apunta **esa salida** al relay con un servicio `rtmp_custom` privado. El servicio guardado del
@@ -221,10 +230,42 @@ directo en ~2 s, el delay vuelve, timestamps continuos y la salida se decodifica
 
 ### Reglas por escena y presets
 
+El delay está desactivado por defecto (v1.1.0): las reglas por escena solo actúan mientras un stream
+sale por el delay (cambiar de escena en OBS sin estar en directo nunca lo activa ni lo arma), una
+regla nueva no hace nada hasta que el streamer elige qué hace, y cuando ya no sale nada por el delay
+se quita, así que el siguiente directo empieza sin él salvo que se active.
+
 Las reglas asocian una escena a "activar delay (con sus segundos)" o "quitar delay", y se aplican
 con `OBS_FRONTEND_EVENT_SCENE_CHANGED` y al empezar un directo. Tres presets (10/30/60 s por
 defecto) fijan los segundos y activan el delay, cada uno con su atajo y con `ApplyPreset {index}`
 por obs-websocket.
+
+## La pantalla de carga (v1.1.0)
+
+El modo stream retrasa paquetes que OBS ya ha codificado, así que lo que ve tu audiencia mientras
+se acumula el delay no puede salir del directo de OBS. Hasta la v1.1.0, subir el delay repetía los
+últimos segundos, y un directo que empezaba con el delay activo no enviaba nada hasta tener edad
+suficiente. Ahora, en cuanto un directo llega al relay, `LoadingClipMaker` (`src/loading-clip.*`)
+prepara un clip de 8 s de la escena de carga (el vídeo "poniendo delay" de Trigglow, o la escena que
+haya elegido en el dock un streamer Starter o Pro, la misma que usa a todo OBS): por cada encoder de
+vídeo de la salida de emisión, un lienzo privado al tamaño y frame rate de ese encoder muestra la
+escena encajada (una pista vertical recibe el vídeo de Trigglow hecho para vertical,
+`data/videos/adding-delay-vertical-*.mp4`, o la escena elegida con bandas) y una copia del encoder (mismo id y
+ajustes) la codifica en una salida de captura. Todo se libera en cuanto el clip está capturado; el
+clip se guarda para los siguientes directos mientras la escena y los encoders no cambien. Solo
+H.264 (con HEVC o AV1, subir el delay repite, como antes).
+
+El relay (`SetLoadingClip`) lo pasa de Annex B a paquetes FLV con su propia cabecera avcC y añade
+silencio AAC para cada pista de audio. El programador (`SinkScheduler::SetFiller`) lo reproduce: al
+subir el delay, cada destino se para en el keyframe en o antes de lo que había enviado, reproduce
+el clip (en bucle, con los timestamps continuando) hasta que ese keyframe toca con el nuevo delay y
+sigue desde él, así que no se salta nada y como mucho se vuelve a ver un intervalo de keyframes;
+un directo que empieza con menos historial que el delay lo reproduce desde el principio. Cada
+cambio entre el clip y el directo pone el SPS y el PPS de esa fuente dentro de su primer keyframe
+(no un sequence header de FLV nuevo: MediaMTX, detrás de Trigglow Multistream, rechaza un segundo
+en sus primeros 2 s y lo ignora después). Cada destino usa un búfer de envío de 8 MB: el fijo de
+64 KB de FFmpeg limitaba una conexión a unos 17 Mbps, que las pistas de Enhanced Broadcasting juntas
+superan. Mientras tanto, el dock muestra el destino como "cargando".
 
 ## Lo que sigue en directo
 
@@ -240,7 +281,52 @@ PNG que en el modo escena, hasta 600 s) se dibuja en el canal de salida 61 de li
 Programa de OBS, después de la escena. Los espectadores la reciben con la imagen retrasada. Como está
 en el Programa, la grabación (y todo lo que tome el Programa) también la muestra mientras el delay
 está activo. Activarla o no ("Mostrar la insignia de delay a los espectadores") y la esquina están en
-las Opciones del dock, un solo control para los dos motores, y se guardan.
+las Opciones del dock, un solo control para los dos motores, y se guardan. Desde la v1.1.0 la
+insignia forma parte del plan gratuito: en Free la casilla queda bloqueada y la insignia siempre se
+muestra (`SetBadgeLocked()`, según el plan de la cuenta; `docs/ACCOUNT_GATE-es.md`, "El plan y la
+insignia"); Starter y Pro pueden desmarcarla.
+
+## Salidas de stream de otros plugins (v1.1.0)
+
+El modo stream retiene **la salida de stream propia de OBS** y nada más. Los plugins de multistream
+(Aitum Multistream, Multiple RTMP Outputs) y Aitum Vertical arrancan salidas propias, cada una con
+su propio servicio `rtmp_custom`, y se conectan ellas mismas a su plataforma: crean la salida, le
+ponen el servicio y la arrancan en una sola llamada, y la señal "starting" de libobs solo salta
+después de `obs_output_actual_start()`, así que no hay ningún momento en que el relay pueda
+quedarse con su destino antes de que conecten. Esas salidas, por tanto, salen **en directo**,
+mientras el stream propio de OBS va con delay. Aitum Vertical es la excepción (abajo). Lo que hace
+el plugin:
+
+- **Aitum Vertical también pasa por el delay** (`src/vertical-taps.*`). Aitum crea cada salida de
+  stream una vez y después solo actualiza su propio servicio antes de cada arranque; solo llama a
+  `obs_output_set_service()` al crearla. Así que `VerticalTaps` le da a cada salida
+  `vertical_canvas_stream[_<nombre>]` (solo destinos RTMP o RTMPS) un servicio loopback privado
+  hacia un relay propio, cuyo destino es lo que tiene el servicio de Aitum; la salida lo conserva
+  entre paradas y arranques, y los ajustes, el dock y la config guardada de Aitum nunca ven el
+  relay. El primer arranque de una salida en una sesión de OBS sale directo un momento (Aitum la crea
+  y la arranca en la misma llamada): el siguiente `Tick()`, como mucho 0,5 s después, la para con el
+  proc `aitum_vertical_stop_stream_output` de Aitum, la toma en reposo y la vuelve a arrancar
+  (`aitum_vertical_start_stream_output`). El delay, Borrar, la ventana guardada y el envío final
+  siguen los del modo stream; la insignia también se pinta en el lienzo de Aitum Vertical (canal 61,
+  colocada para su tamaño). Comprobado en un OBS 33.0.1 portable con Aitum Vertical 1.6.8 y dos
+  servidores RTMP locales (2026-11-22): en el primer arranque la salida directa envió 13 fotogramas
+  antes de tomarla; después el vertical (1080x1920) llegó a su servidor 11 s tras empezar con 10 s de
+  delay, a la vez que el de OBS, y los dos enviaron sus últimos 10 s tras parar; los arranques
+  siguientes pasaron por el relay desde el principio.
+
+- `StreamDelayController::RefreshOtherOutputs()` (una vez por segundo, desde `Tick()`) lista las
+  salidas activas cuyo tipo envía un stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
+  `ftl_output`; `src/other-outputs.*`), saltándose la propia de OBS, y distingue los plugins por
+  los nombres que dan a sus salidas: `aitum_multi_output_<nombre>` (Aitum Multistream), el literal
+  `multi-output` (Multiple RTMP Outputs), `vertical_canvas...` (Aitum Vertical); cualquier otra es
+  "otro plugin". Con "solo a la emisión", los avisos del dock las listan mientras funcionan
+  (`Stream.Warn.other_*`, con el recuento), cada uno diciendo que se desmarque la opción para
+  retrasar todo OBS.
+- Con todo OBS (modo escena) esas salidas codifican el programa retrasado igual que la propia de
+  OBS, así que van con delay, y el lienzo vertical recibe un espejo del delay en la escena que
+  muestra (`docs/SPEC.md` §3.13). La (i) junto a **Avanzado** en el dock dice qué cubre cada modo.
+- Un servicio que recibe un stream RTMP y lo reparte (Restream.io, Streamlabs Multistream, Trigglow Multistream, Castr y similares) es solo un
+  destino de la salida propia de OBS: funciona con los dos modos.
 
 ## Comprobación de ajustes
 
@@ -270,12 +356,54 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 
 La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
 
+## Con Trigglow Multistream (v1.1.0, aún sin publicar)
+
+Tres formas en que el plugin funciona con Trigglow Multistream (trigglow.com, Directo > Multistream):
+
+- **Emitir al ingest de Trigglow.** El modo stream no necesita nada especial: en `Ajustes > Emisión`
+  de OBS, un servidor personalizado (el ingest de Trigglow) con la clave `tgms_...` del streamer es
+  un servicio RTMP normal, así que el relay lo retrasa y la nube de Trigglow reenvía el directo ya
+  retrasado a todos los canales. El dock llama a ese destino "Trigglow Multistream" en vez de mostrar
+  el host.
+- **"Enviar también a mis canales de Trigglow Multistream"** (Opciones, solo a la emisión; desmarcada
+  por defecto, guardada como `send_to_multistream`, solo ese booleano). El relay envía el directo con
+  delay a cada canal horizontal activado en Multistream directamente desde OBS, además de al servicio
+  de OBS, sin la nube en medio: cada canal es una subida más del bitrate del directo. Los canales se
+  leen de `GET /api/multistream/plugin/destinations` (en segundo plano: al marcar la casilla, al
+  cargar, al iniciar sesión y otra vez al empezar un directo si la copia tiene más de 60 s; un
+  directo que empieza antes de la primera respuesta va solo al servicio de OBS y el dock dice por
+  qué). Sus claves de emisión se quedan solo en memoria: nunca en disco, en el archivo de ajustes, en
+  el log, en un reporte ni en los diagnósticos, y se borran al cerrar sesión, al desmarcar la casilla
+  y al descargar el plugin. Un canal igual al servicio de OBS (mismo host y clave) se salta, y no se
+  añade ninguno cuando OBS ya emite al ingest de Trigglow (clave `tgms_`), para no enviar nada dos
+  veces. Cada canal tiene su fila en el dock con su estado. El plan decide si se ofrece: `403
+  plan_required` hace que el dock diga que el plan no lo incluye, y un `404` lo oculta sin más.
+- **Estado y control desde el panel.** Con la sesión iniciada, el plugin informa del delay (activado
+  o no, segundos, qué motor, si OBS emite y, en el modo stream, el nombre y el estado de cada
+  destino; nunca una clave ni una URL) a `POST /api/multistream/dynamic-delay/status`: cada 5 s
+  mientras OBS emite o el delay está activo, cada 30 s si no, ~1 s después de un cambio y una vez por
+  minuto tras tres fallos seguidos. La respuesta puede traer una orden de la página de Multistream
+  (`enable`, `disable`, `set_delay` de 1 a 600 s, `dump`), que se aplica por `DelayRouter` igual que
+  un atajo: al motor elegido en el dock y con la puerta de cuenta gratuita en Activar. Los fallos no
+  se muestran.
+
+El delay por canal (un canal más retrasado que los demás) es una función del servidor en la página de
+Multistream, encima de lo que retrase este plugin.
+
+Probado: el protocolo (`tests/multistream_link_tests.cpp`, con un transporte simulado) y la
+compilación completa del plugin en Windows. Aún sin probar en un OBS real con plataformas reales.
+
 ## Lo que aún no cubre
 
-- Enhanced Broadcasting (vídeo multipista) y los servicios SRT, RIST y WHIP: el dock dice que ese
-  directo no puede usarlo; a todo OBS (lo predeterminado) funciona con ellos.
+- Los servicios SRT, RIST y WHIP: el dock dice que ese directo no puede usarlo; a todo OBS (lo
+  predeterminado) funciona con ellos. Enhanced Broadcasting está cubierto desde la v1.1.0.
 - El delay por escena solo existe con "solo a la emisión": a todo OBS sigue retrasando la única
   escena en directo elegida en el dock.
+- Las salidas que arrancan los plugins de multistream (Aitum Multistream, Multiple RTMP Outputs):
+  salen en directo, y el dock lo dice (ver "Salidas de stream de otros plugins"); a todo OBS las
+  retrasa. Las de Aitum Vertical van con delay en los dos modos.
+- El primer arranque de una salida de Aitum Vertical en una sesión de OBS envía una fracción de
+  segundo directa antes de tomarla y reiniciarla a través del delay.
 
 ## Estado de la verificación
 

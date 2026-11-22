@@ -8,7 +8,7 @@ Stream Deck, **sin que tu directo se reconecte nunca.** Sin app externa, sin pan
 aparte: todo vive dentro del propio proceso de OBS, y tu stream va directamente de tu ordenador a tu
 plataforma.
 
-**Estado: 1.0.0. Estable en Windows. Las versiones de macOS y Linux están en alpha: compilan y
+**Estado: 1.1.0. Estable en Windows. Las versiones de macOS y Linux están en alpha: compilan y
 pasan la CI, pero aún no se han usado en un directo.**
 
 ## A qué se aplica el delay
@@ -52,8 +52,12 @@ YouTube, Kick, TikTok, servidores personalizados). Con Enhanced Broadcasting, SR
 dock dice que ese directo no puede usarlo: desmarca la opción para retrasar todo OBS. Detalles:
 `docs/STREAM_MODE-es.md`.
 
-Las dos tienen la insignia de delay para los espectadores, tres presets, atajos, obs-websocket y
-Stream Deck.
+Multistream: a todo OBS, las salidas que arrancan otros plugins (Aitum Multistream, Multiple RTMP
+Outputs) y un lienzo de Aitum Vertical también van con delay; solo a la emisión salen en directo y
+el dock lo dice (`docs/STREAM_MODE-es.md`, "Salidas de stream de otros plugins").
+
+Las dos tienen la insignia de delay para los espectadores (siempre visible en el plan Free; Starter
+y Pro pueden ocultarla), tres presets, atajos, obs-websocket y Stream Deck.
 
 ## Cómo funciona
 
@@ -126,6 +130,7 @@ ha probado en directo. El mínimo se define en un único sitio, el `obsCompat` d
 
 | Plugin | OBS mínimo | Probado hasta | Win | macOS | Linux |
 |---|---|---|---|---|---|
+| 1.1.0 | 31.1.0 | 33.0.1 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 1.0.0 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.2 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
 | 0.7.1 | 31.1.0 | 32.2.2 | Instalador, `.zip` (ubicación de OBS 33) | `.pkg` | `.deb`, `.rpm`, `.pkg.tar.zst`, `.tar.xz` |
@@ -275,7 +280,7 @@ sudo .github/scripts/linux/install-build-deps.sh   # paquetes de Ubuntu 24.04
 
 ## Instalar el plugin
 
-**Windows: usa el instalador.** Descarga `obs-trigglow-dynamic-delay-1.0.0-windows-x64-setup.exe`
+**Windows: usa el instalador.** Descarga `obs-trigglow-dynamic-delay-1.1.0-windows-x64-setup.exe`
 desde la [última release](https://github.com/TrigglowStudios/trigglow-dynamic-delay/releases/latest) y
 ejecútalo — instala el plugin en la carpeta de plugins de OBS para todos los usuarios y saca de la
 carpeta de OBS una instalación de la v0.7.0 o anterior. Todavía no
@@ -284,7 +289,7 @@ completa con capturas de cada paso, incluido el aviso de SmartScreen: `docs/INST
 Instálalo antes de salir en directo, no a mitad de un stream — necesita OBS cerrado para
 sobrescribir sus archivos.
 
-**Linux: usa el paquete de tu distribución.** `obs-trigglow-dynamic-delay-1.0.0-x86_64-linux-gnu.deb`
+**Linux: usa el paquete de tu distribución.** `obs-trigglow-dynamic-delay-1.1.0-x86_64-linux-gnu.deb`
 (Debian, Ubuntu, Mint, Pop!_OS: `sudo apt install ./<archivo>.deb`), `.rpm` (Fedora, openSUSE:
 `sudo dnf install ./<archivo>.rpm`) o `.pkg.tar.zst` (Arch, Manjaro, EndeavourOS:
 `sudo pacman -U <archivo>.pkg.tar.zst`), que instalan lo que necesitan. En cualquier otra
@@ -525,7 +530,7 @@ src/
   settings-ui.{hpp,cpp}            → el dock Qt, un solo panel para los dos modos (estado, el
                                      único botón, delay, escena en directo/de carga, opciones con
                                      calidad, estimación de ajuste y la casilla avanzada, cuenta
-                                     atrás de llenado, aviso de degradación, aviso de actualización)
+                                     atrás de llenado, aviso de degradación, tarjeta de actualización)
   ui-tokens.{hpp,cpp}              → tokens de color puros derivados de la paleta de OBS, con el
                                      contrato WCAG AA probado en tests/
   ui-theme.{hpp,cpp}               → la hoja de estilo única de la UI, las fuentes de marca
@@ -560,6 +565,14 @@ src/
   log-redact.{hpp,cpp}             → redacción pura, línea a línea, del log de OBS, con tests
   update-checker.{hpp,cpp}         → compara la última release de GitHub de este repositorio contra
                                      la versión en ejecución
+  release-info.{hpp,cpp}           → lectura pura de esa release: versión, ruta, tamaño y SHA-256
+                                     del instalador de Windows y el redirect de descarga permitido,
+                                     con tests
+  update-installer.{hpp,cpp}       → v1.1.0, actualizar desde OBS (Windows): descarga, comprobación
+                                     de tamaño + SHA-256, abrir el instalador y esperar su señal de
+                                     permisos de administrador
+  update-dialog.{hpp,cpp}          → la ventana de "nueva versión" (una vez por versión al abrir
+                                     OBS, y desde la tarjeta de actualización del dock)
   background-tasks.{hpp,cpp}       → trabajos en segundo plano cancelables (inicio de sesión, Trigi,
   cancel-token.{hpp,cpp}             tickets, comprobación de actualizaciones) con un cierre acotado
   ui-tasks.{hpp,cpp}                 cuando OBS descarga el plugin, con tests; ui-tasks los une al

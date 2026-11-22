@@ -98,6 +98,20 @@ RelayStatus StreamRelay::GetStatus() const
 {
 	return {};
 }
+std::vector<std::pair<uint32_t, uint32_t>> StreamRelay::VideoSizes(bool &allH264) const
+{
+	allH264 = false;
+	return {};
+}
+bool StreamRelay::SetLoadingClip(std::vector<LoadingVideoTrack>, std::string &why)
+{
+	why = "stream mode is not available on this system yet";
+	return false;
+}
+bool StreamRelay::HasLoadingClip() const
+{
+	return false;
+}
 void StreamRelay::SetEventCallback(EventCallback) {}
 
 #else
@@ -319,6 +333,195 @@ struct Outgoing {
 	int64_t ptsMs = 0;
 	int64_t dtsMs = 0;
 	int64_t arrivalNs = 0;
+	// v1.1.0 loading clip: the bytes are the payload itself (not a record),
+	// and the codec header to send before it when the source changed.
+	bool raw = false;
+	bool keyframe = false;
+	size_t headerAt = 0;
+	size_t headerBytes = 0;
+};
+
+// The NAL units of an Annex B buffer (00 00 01 / 00 00 00 01 start codes).
+std::vector<std::pair<const uint8_t *, size_t>> AnnexBUnits(const uint8_t *data, size_t size)
+{
+	std::vector<std::pair<const uint8_t *, size_t>> units;
+	size_t i = 0;
+	auto startCode = [&](size_t at) -> size_t {
+		if (at + 3 <= size && data[at] == 0 && data[at + 1] == 0 && data[at + 2] == 1)
+			return 3;
+		if (at + 4 <= size && data[at] == 0 && data[at + 1] == 0 && data[at + 2] == 0 && data[at + 3] == 1)
+			return 4;
+		return 0;
+	};
+	size_t begin = SIZE_MAX;
+	while (i < size) {
+		const size_t sc = startCode(i);
+		if (sc) {
+			if (begin != SIZE_MAX && i > begin)
+				units.emplace_back(data + begin, i - begin);
+			i += sc;
+			begin = i;
+			continue;
+		}
+		++i;
+	}
+	if (begin != SIZE_MAX && size > begin)
+		units.emplace_back(data + begin, size - begin);
+	// Trailing zero bytes belong to the next start code, not the unit.
+	for (auto &u : units) {
+		while (u.second > 1 && u.first[u.second - 1] == 0)
+			--u.second;
+	}
+	return units;
+}
+
+// Annex B -> length-prefixed (what FLV carries), 4-byte lengths.
+std::vector<uint8_t> AnnexBToAvcc(const std::vector<uint8_t> &in)
+{
+	std::vector<uint8_t> out;
+	out.reserve(in.size() + 16);
+	for (const auto &[unit, size] : AnnexBUnits(in.data(), in.size())) {
+		out.push_back(static_cast<uint8_t>(size >> 24));
+		out.push_back(static_cast<uint8_t>(size >> 16));
+		out.push_back(static_cast<uint8_t>(size >> 8));
+		out.push_back(static_cast<uint8_t>(size));
+		out.insert(out.end(), unit, unit + size);
+	}
+	return out;
+}
+
+// The avcC record (ISO 14496-15) from Annex B SPS/PPS; empty without them.
+std::vector<uint8_t> AvccHeader(const std::vector<uint8_t> &annexB)
+{
+	std::vector<std::pair<const uint8_t *, size_t>> sps;
+	std::vector<std::pair<const uint8_t *, size_t>> pps;
+	for (const auto &unit : AnnexBUnits(annexB.data(), annexB.size())) {
+		const int type = unit.first[0] & 0x1F;
+		if (type == 7 && unit.second >= 4)
+			sps.push_back(unit);
+		else if (type == 8)
+			pps.push_back(unit);
+	}
+	if (sps.empty() || pps.empty())
+		return {};
+	std::vector<uint8_t> out{1,
+				 sps[0].first[1],
+				 sps[0].first[2],
+				 sps[0].first[3],
+				 0xFF,
+				 static_cast<uint8_t>(0xE0 | (sps.size() & 0x1F))};
+	auto put = [&out](const std::pair<const uint8_t *, size_t> &unit) {
+		out.push_back(static_cast<uint8_t>(unit.second >> 8));
+		out.push_back(static_cast<uint8_t>(unit.second));
+		out.insert(out.end(), unit.first, unit.first + unit.second);
+	};
+	for (const auto &unit : sps)
+		put(unit);
+	out.push_back(static_cast<uint8_t>(pps.size()));
+	for (const auto &unit : pps)
+		put(unit);
+	return out;
+}
+
+// The SPS and PPS of an avcC record as length-prefixed NAL units (4-byte
+// lengths), to put in front of a keyframe; empty when it isn't one.
+std::vector<uint8_t> AvccParamNals(const uint8_t *avcc, size_t size)
+{
+	std::vector<uint8_t> out;
+	if (!avcc || size < 7 || avcc[0] != 1)
+		return out;
+	size_t at = 5;
+	auto take = [&](int count) {
+		for (int i = 0; i < count; ++i) {
+			if (at + 2 > size)
+				return false;
+			const size_t len = (static_cast<size_t>(avcc[at]) << 8) | avcc[at + 1];
+			at += 2;
+			if (at + len > size)
+				return false;
+			out.push_back(static_cast<uint8_t>(len >> 24));
+			out.push_back(static_cast<uint8_t>(len >> 16));
+			out.push_back(static_cast<uint8_t>(len >> 8));
+			out.push_back(static_cast<uint8_t>(len));
+			out.insert(out.end(), avcc + at, avcc + at + len);
+			at += len;
+		}
+		return true;
+	};
+	if (!take(avcc[5] & 0x1F) || at >= size) {
+		out.clear();
+		return out;
+	}
+	const int pps = avcc[at++];
+	if (!take(pps))
+		out.clear();
+	return out;
+}
+
+// Silence in AAC for an audio stream like `par`: one encoded frame repeated
+// (silence encodes the same every frame), enough of them that the loop is a
+// whole number of milliseconds. False when FFmpeg's AAC encoder can't.
+bool SilentAac(const AVCodecParameters *par, std::vector<uint8_t> &frameOut, std::vector<uint8_t> &headerOut,
+	       int &frameSamples)
+{
+	if (!par || par->codec_id != AV_CODEC_ID_AAC || par->sample_rate <= 0)
+		return false;
+	const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+	if (!codec)
+		return false;
+	AVCodecContext *ctx = avcodec_alloc_context3(codec);
+	if (!ctx)
+		return false;
+	ctx->sample_rate = par->sample_rate;
+	if (av_channel_layout_copy(&ctx->ch_layout, &par->ch_layout) < 0 || ctx->ch_layout.nb_channels <= 0)
+		av_channel_layout_default(&ctx->ch_layout, 2);
+	ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+	ctx->bit_rate = 64000;
+	ctx->time_base = AVRational{1, par->sample_rate};
+	ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+	bool ok = false;
+	AVFrame *frame = av_frame_alloc();
+	AVPacket *pkt = av_packet_alloc();
+	if (frame && pkt && avcodec_open2(ctx, codec, nullptr) >= 0) {
+		frame->nb_samples = ctx->frame_size > 0 ? ctx->frame_size : 1024;
+		frame->format = ctx->sample_fmt;
+		av_channel_layout_copy(&frame->ch_layout, &ctx->ch_layout);
+		frame->sample_rate = ctx->sample_rate;
+		if (av_frame_get_buffer(frame, 0) >= 0) {
+			// Past the encoder's priming: the frames after are steady.
+			for (int i = 0; i < 8 && !ok; ++i) {
+				av_frame_make_writable(frame);
+				for (int c = 0; c < frame->ch_layout.nb_channels; ++c)
+					std::memset(frame->extended_data[c], 0,
+						    static_cast<size_t>(frame->nb_samples) * sizeof(float));
+				frame->pts = static_cast<int64_t>(i) * frame->nb_samples;
+				if (avcodec_send_frame(ctx, frame) < 0)
+					break;
+				while (avcodec_receive_packet(ctx, pkt) >= 0) {
+					if (i >= 5 && pkt->size > 0 && !ok) {
+						frameOut.assign(pkt->data, pkt->data + pkt->size);
+						ok = true;
+					}
+					av_packet_unref(pkt);
+				}
+			}
+			frameSamples = frame->nb_samples;
+		}
+		if (ok && ctx->extradata && ctx->extradata_size > 0)
+			headerOut.assign(ctx->extradata, ctx->extradata + ctx->extradata_size);
+	}
+	av_packet_free(&pkt);
+	av_frame_free(&frame);
+	avcodec_free_context(&ctx);
+	return ok;
+}
+
+// The loading clip in the history's terms (packet-delay-core.hpp Filler),
+// with the bytes and codec header of each track.
+struct LoadingStore {
+	Filler filler;
+	std::vector<std::vector<uint8_t>> payloads; // Packet::recordOffset indexes these.
+	std::vector<std::vector<uint8_t>> headers;  // One per filler track.
 };
 
 } // namespace
@@ -366,6 +569,8 @@ struct StreamRelay::Impl {
 	std::string spillNote; // Why the spill is off or stopped (status).
 	EventCallback callback;
 	std::string listenUrl;
+	// v1.1.0 loading screen (SetLoadingClip).
+	std::shared_ptr<const LoadingStore> loading;
 
 	void Event(const std::string &message)
 	{
@@ -452,9 +657,9 @@ struct StreamRelay::Impl {
 				info.timeBase = st->time_base;
 				streams.push_back(info);
 				if (info.kind == MediaKind::Video)
-					TRIGGLOW_LOG_INFO(kComponent, "OBS stream: video %s %dx%d",
+					TRIGGLOW_LOG_INFO(kComponent, "OBS stream: video %s %dx%d (track %u)",
 							  avcodec_get_name(st->codecpar->codec_id), st->codecpar->width,
-							  st->codecpar->height);
+							  st->codecpar->height, i);
 				else if (info.kind == MediaKind::Audio)
 					TRIGGLOW_LOG_INFO(kComponent, "OBS stream: audio %s %d Hz",
 							  avcodec_get_name(st->codecpar->codec_id),
@@ -599,9 +804,18 @@ struct StreamRelay::Impl {
 		oc->interrupt_callback.callback = &Impl::InterruptSink;
 		oc->interrupt_callback.opaque = &ictx;
 		map.assign(streams.size(), -1);
+		bool videoMapped = false;
 		for (size_t i = 0; i < streams.size(); ++i) {
 			if (streams[i].kind == MediaKind::Other)
 				continue;
+			// Enhanced Broadcasting sends several video tracks; only the
+			// streamer's own service (the platform that asked for them) gets
+			// them all. Multistream channels get the first (main) one, as a
+			// regular stream.
+			if (streams[i].kind == MediaKind::Video && videoMapped && !sink.dest.primary)
+				continue;
+			if (streams[i].kind == MediaKind::Video)
+				videoMapped = true;
 			AVStream *st = avformat_new_stream(oc, nullptr);
 			if (!st || avcodec_parameters_copy(st->codecpar, streams[i].par) < 0) {
 				error = "couldn't set up the stream";
@@ -617,7 +831,25 @@ struct StreamRelay::Impl {
 		if (!app.empty())
 			av_dict_set(&io, "rtmp_app", app.c_str(), 0);
 		av_dict_set(&io, "rtmp_playpath", sink.dest.key.c_str(), 0);
+		// v1.1.0 Enhanced Broadcasting: several video tracks (or HEVC/AV1) go
+		// as Enhanced RTMP, announced in the connect like OBS does.
+		size_t videoTracks = 0;
+		bool enhancedCodec = false;
+		for (const StreamInfo &info : streams) {
+			if (info.kind != MediaKind::Video || !info.par)
+				continue;
+			++videoTracks;
+			enhancedCodec = enhancedCodec || info.par->codec_id == AV_CODEC_ID_HEVC ||
+					info.par->codec_id == AV_CODEC_ID_AV1;
+		}
+		if ((videoTracks > 1 && sink.dest.primary) || enhancedCodec)
+			av_dict_set(&io, "rtmp_enhanced_codecs", "hvc1,av01,avc1", 0);
 		av_dict_set(&io, "rw_timeout", "15000000", 0);
+		// A fixed 64 KB socket buffer caps one TCP connection at about
+		// 64 KB / RTT (17 Mbps at 30 ms): Enhanced Broadcasting's tracks
+		// together fell behind on a real uplink. OBS's own output grows its
+		// buffer with Windows' ideal send backlog; 8 MB is plenty here.
+		av_dict_set(&io, "send_buffer_size", "8388608", 0);
 		av_dict_set(&io, "tcp_nodelay", "1", 0);
 		ret = avio_open2(&oc->pb, server.c_str(), AVIO_FLAG_WRITE, &oc->interrupt_callback, &io);
 		av_dict_free(&io);
@@ -680,7 +912,12 @@ struct StreamRelay::Impl {
 			if (sink.appliedGen != delayGen) {
 				const SpliceInfo info = sink.sched.SetDelay(delayNs, NowNs(), history);
 				sink.appliedGen = delayGen;
-				if (info.spliced && info.jumpSeconds != 0.0)
+				if (info.filling)
+					TRIGGLOW_LOG_INFO(
+						kComponent,
+						"%s: delay now %us (the loading screen shows while it builds up)",
+						host.c_str(), delaySeconds);
+				else if (info.spliced && info.jumpSeconds != 0.0)
 					TRIGGLOW_LOG_INFO(kComponent, "%s: delay now %us (%s %.1f s)", host.c_str(),
 							  delaySeconds, info.jumpSeconds > 0 ? "replays" : "skips",
 							  info.jumpSeconds > 0 ? info.jumpSeconds : -info.jumpSeconds);
@@ -719,12 +956,58 @@ struct StreamRelay::Impl {
 			}
 			scratch.clear();
 			out.clear();
+			sink.status.loading = sink.sched.Filling();
 			for (const OutPacket &o : due) {
-				const size_t at = scratch.size();
-				if (!history.CopyRecord(*o.packet, scratch))
-					continue;
-				out.push_back(Outgoing{at, o.packet->recordBytes, o.packet->stream, o.ptsMs, o.dtsMs,
-						       o.packet->arrivalNs});
+				Outgoing g;
+				g.stream = o.packet->stream;
+				g.ptsMs = o.ptsMs;
+				g.dtsMs = o.dtsMs;
+				g.arrivalNs = o.packet->arrivalNs;
+				g.recordAt = scratch.size();
+				if (o.filler) {
+					// A loading-clip packet: its payload as is.
+					if (!loading || o.packet->recordOffset >= loading->payloads.size())
+						continue;
+					const std::vector<uint8_t> &bytes = loading->payloads[o.packet->recordOffset];
+					scratch.insert(scratch.end(), bytes.begin(), bytes.end());
+					g.recordBytes = bytes.size();
+					g.raw = true;
+					g.keyframe = o.packet->keyframe;
+					g.arrivalNs = NowNs() - delayNs;
+				} else {
+					if (!history.CopyRecord(*o.packet, scratch))
+						continue;
+					g.recordBytes = o.packet->recordBytes;
+				}
+				if (o.newSource && o.packet->kind == MediaKind::Video && o.packet->keyframe) {
+					// The source changed (stream <-> loading clip): its SPS and
+					// PPS go in front of this keyframe, in band. Not a new FLV
+					// sequence header: MediaMTX (Trigglow Multistream) rejects a
+					// second one in its first 2 s and ignores it after, and
+					// every decoder takes in-band parameters.
+					const std::vector<uint8_t> *header = nullptr;
+					std::vector<uint8_t> streamHeader;
+					if (o.filler && loading) {
+						const size_t track =
+							static_cast<size_t>(o.filler - loading->filler.tracks.data());
+						if (track < loading->headers.size())
+							header = &loading->headers[track];
+					} else if (static_cast<size_t>(g.stream) < streams.size() &&
+						   streams[g.stream].par && streams[g.stream].par->extradata_size > 0) {
+						const AVCodecParameters *par = streams[g.stream].par;
+						streamHeader.assign(par->extradata,
+								    par->extradata + par->extradata_size);
+						header = &streamHeader;
+					}
+					if (header && !header->empty()) {
+						const std::vector<uint8_t> nals =
+							AvccParamNals(header->data(), header->size());
+						g.headerAt = scratch.size();
+						g.headerBytes = nals.size();
+						scratch.insert(scratch.end(), nals.begin(), nals.end());
+					}
+				}
+				out.push_back(g);
 			}
 			if (out.empty())
 				continue;
@@ -754,8 +1037,23 @@ struct StreamRelay::Impl {
 							   : -1;
 				if (target < 0)
 					continue;
-				if (!PacketFromRecord(scratch.data() + o.recordAt, o.recordBytes, pk))
+				if (o.raw) {
+					if (av_new_packet(pk, static_cast<int>(o.recordBytes)) < 0)
+						continue;
+					std::memcpy(pk->data, scratch.data() + o.recordAt, o.recordBytes);
+					pk->flags = o.keyframe ? AV_PKT_FLAG_KEY : 0;
+				} else if (!PacketFromRecord(scratch.data() + o.recordAt, o.recordBytes, pk)) {
 					continue;
+				}
+				if (o.headerBytes > 0) {
+					// The source's SPS/PPS in front of the keyframe's NAL units.
+					const int before = pk->size;
+					if (av_grow_packet(pk, static_cast<int>(o.headerBytes)) >= 0) {
+						std::memmove(pk->data + o.headerBytes, pk->data,
+							     static_cast<size_t>(before));
+						std::memcpy(pk->data, scratch.data() + o.headerAt, o.headerBytes);
+					}
+				}
 				const AVRational tb = oc->streams[target]->time_base;
 				pk->time_base = streams[o.stream].timeBase;
 				pk->stream_index = target;
@@ -868,6 +1166,7 @@ bool StreamRelay::Start(const std::vector<Destination> &destinations, const Rela
 	Impl &d = *impl_;
 	d.stop.store(false);
 	d.history.Clear();
+	d.loading.reset();
 	d.history.Store().SetSpill(nullptr, 0);
 	d.spill.reset();
 	d.spillNote.clear();
@@ -1083,16 +1382,144 @@ RelayStatus StreamRelay::GetStatus() const
 	status.instantRaiseSeconds = std::max(d.delaySeconds, d.KeepSecondsLocked());
 	status.bitrateMbps = d.history.BytesPerSecond() * 8.0 / 1e6;
 	status.keyframeIntervalSeconds = d.keyframeInterval;
+	// The first video track (Enhanced Broadcasting sends several: the first
+	// is the main quality).
 	for (const StreamInfo &info : d.streams) {
 		if (info.kind == MediaKind::Video && info.par) {
 			status.videoCodec = avcodec_get_name(info.par->codec_id);
 			status.width = info.par->width;
 			status.height = info.par->height;
+			break;
 		}
 	}
 	for (const auto &sink : d.sinks)
 		status.sinks.push_back(sink->status);
 	return status;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> StreamRelay::VideoSizes(bool &allH264) const
+{
+	std::lock_guard<std::mutex> lock(impl_->m);
+	std::vector<std::pair<uint32_t, uint32_t>> sizes;
+	allH264 = impl_->streamsReady;
+	for (const StreamInfo &info : impl_->streams) {
+		if (info.kind != MediaKind::Video || !info.par)
+			continue;
+		sizes.emplace_back(static_cast<uint32_t>(info.par->width), static_cast<uint32_t>(info.par->height));
+		allH264 = allH264 && info.par->codec_id == AV_CODEC_ID_H264;
+	}
+	return sizes;
+}
+
+bool StreamRelay::SetLoadingClip(std::vector<LoadingVideoTrack> tracks, std::string &why)
+{
+	Impl &d = *impl_;
+	std::vector<StreamInfo> streams;
+	{
+		std::lock_guard<std::mutex> lock(d.m);
+		if (!d.streamsReady) {
+			why = "OBS's stream hasn't reached the relay yet";
+			return false;
+		}
+		streams = d.streams; // The parameters live as long as the relay runs.
+	}
+	auto store = std::make_shared<LoadingStore>();
+	size_t videoIndex = 0;
+	for (size_t s = 0; s < streams.size(); ++s) {
+		const StreamInfo &info = streams[s];
+		if (info.kind == MediaKind::Video) {
+			if (!info.par || info.par->codec_id != AV_CODEC_ID_H264) {
+				why = "the stream isn't H.264";
+				return false;
+			}
+			if (videoIndex >= tracks.size()) {
+				why = "no loading clip for every video track";
+				return false;
+			}
+			const LoadingVideoTrack &in = tracks[videoIndex++];
+			if (in.width != static_cast<uint32_t>(info.par->width) ||
+			    in.height != static_cast<uint32_t>(info.par->height)) {
+				why = "the loading clip's size doesn't match the stream's";
+				return false;
+			}
+			FillerTrack track;
+			track.stream = static_cast<uint8_t>(s);
+			track.kind = MediaKind::Video;
+			track.loopMs = in.loopMs;
+			for (const LoadingVideoTrack::Frame &frame : in.frames) {
+				Packet p;
+				p.kind = MediaKind::Video;
+				p.stream = track.stream;
+				p.dtsMs = frame.dtsMs;
+				p.ptsMs = frame.ptsMs;
+				p.keyframe = frame.keyframe;
+				p.recordOffset = store->payloads.size();
+				store->payloads.push_back(AnnexBToAvcc(frame.data));
+				p.bytes = static_cast<uint32_t>(store->payloads.back().size());
+				track.packets.push_back(p);
+			}
+			std::vector<uint8_t> header = AvccHeader(in.header);
+			if (track.packets.empty() || !track.packets.front().keyframe || track.loopMs <= 0 ||
+			    header.empty()) {
+				why = "the loading clip is incomplete";
+				return false;
+			}
+			store->filler.tracks.push_back(std::move(track));
+			store->headers.push_back(std::move(header));
+		} else if (info.kind == MediaKind::Audio) {
+			std::vector<uint8_t> frame;
+			std::vector<uint8_t> header;
+			int samples = 1024;
+			if (!SilentAac(info.par, frame, header, samples)) {
+				why = "couldn't make silence for the audio";
+				return false;
+			}
+			// A loop of whole milliseconds: n frames of `samples` at the rate.
+			const int64_t rate = info.par->sample_rate;
+			int64_t n = 1;
+			while (n < 512 && (n * samples * 1000) % rate != 0)
+				++n;
+			n = std::max<int64_t>(n, (2000 * rate) / (samples * 1000LL) / n * n);
+			FillerTrack track;
+			track.stream = static_cast<uint8_t>(s);
+			track.kind = MediaKind::Audio;
+			track.loopMs = n * samples * 1000 / rate;
+			const uint64_t payload = store->payloads.size();
+			store->payloads.push_back(frame);
+			for (int64_t i = 0; i < n; ++i) {
+				Packet p;
+				p.kind = MediaKind::Audio;
+				p.stream = track.stream;
+				p.dtsMs = p.ptsMs = i * samples * 1000 / rate;
+				p.keyframe = true;
+				p.recordOffset = payload;
+				p.bytes = static_cast<uint32_t>(frame.size());
+				track.packets.push_back(p);
+			}
+			store->filler.tracks.push_back(std::move(track));
+			store->headers.push_back(std::move(header));
+		}
+	}
+	if (videoIndex != tracks.size() || store->filler.tracks.empty()) {
+		why = "the loading clip's tracks don't match the stream's";
+		return false;
+	}
+	std::shared_ptr<const LoadingStore> shared = store;
+	const std::shared_ptr<const Filler> filler(shared, &shared->filler);
+	{
+		std::lock_guard<std::mutex> lock(d.m);
+		d.loading = shared;
+		for (auto &sink : d.sinks)
+			sink->sched.SetFiller(filler);
+	}
+	d.cv.notify_all();
+	return true;
+}
+
+bool StreamRelay::HasLoadingClip() const
+{
+	std::lock_guard<std::mutex> lock(impl_->m);
+	return impl_->loading != nullptr;
 }
 
 void StreamRelay::SetEventCallback(EventCallback callback)

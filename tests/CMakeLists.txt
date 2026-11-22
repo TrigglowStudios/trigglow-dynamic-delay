@@ -9,7 +9,8 @@
 # background jobs' lifecycle (src/cancel-token.*, src/background-tasks.*), and
 # the account, Trigi and ticket client: src/json.*, src/log-redact.*,
 # src/chat-text.*, src/support-diagnostics.*, src/api-client.*,
-# src/token-store.*, src/auth-client.*, src/support-client.*) and the support
+# src/token-store.*, src/auth-client.*, src/support-client.*, since v1.1.0
+# src/multistream-link.*) and the support
 # dialog's Trigi states (src/trigi-states.*). No libobs, no Qt, no FFmpeg (but
 # for hw_storage_codec_tests, Windows only, when .deps has the plugin's FFmpeg),
 # no test framework, no network (a scripted transport stands in for it). Two
@@ -150,6 +151,19 @@ add_executable(
 target_include_directories(apply_to_tests PRIVATE "${_src}")
 set_target_properties(apply_to_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME apply_to_tests COMMAND apply_to_tests)
+
+# v1.1.0: which other plugins' stream outputs stream mode names as live
+# without the delay (src/other-outputs.*).
+add_executable(
+  other_outputs_tests
+  other_outputs_tests.cpp
+  check.hpp
+  "${_src}/other-outputs.cpp"
+  "${_src}/other-outputs.hpp"
+)
+target_include_directories(other_outputs_tests PRIVATE "${_src}")
+set_target_properties(other_outputs_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME other_outputs_tests COMMAND other_outputs_tests)
 
 # v0.6.0 codec workers: the payload arena, the ring's slot state machine, the
 # degradation policy and a concurrency stress test of ring + arena + pipeline
@@ -402,6 +416,16 @@ set(
 )
 
 trigglow_add_client_test(json_tests json_tests.cpp "${_src}/json.cpp" "${_src}/json.hpp")
+# v1.1.0: what the update check reads from GitHub's latest release, and the
+# checks on its installer URL, redirect and SHA-256 (src/release-info.hpp).
+trigglow_add_client_test(
+  release_info_tests
+  release_info_tests.cpp
+  "${_src}/release-info.cpp"
+  "${_src}/release-info.hpp"
+  "${_src}/json.cpp"
+  "${_src}/json.hpp"
+)
 # Redaction of OBS's log before it is attached to a ticket (src/log-redact.hpp).
 trigglow_add_client_test(log_redact_tests log_redact_tests.cpp "${_src}/log-redact.cpp" "${_src}/log-redact.hpp")
 # Safe rendering of Trigi's replies (src/chat-text.hpp).
@@ -429,4 +453,16 @@ trigglow_add_client_test(
   "${_src}/trigi-states.hpp"
   "${_src}/chat-text.cpp"
   "${_src}/chat-text.hpp"
+)
+# v1.1.0 Multistream link: reading the streamer's channels, which of them stream
+# mode also sends to, the status report, the dashboard's commands and how
+# often the report goes out (src/multistream-link.*). stream-relay.hpp is only
+# used for its types.
+trigglow_add_client_test(
+  multistream_link_tests
+  multistream_link_tests.cpp
+  "${_src}/multistream-link.cpp"
+  "${_src}/multistream-link.hpp"
+  "${_src}/stream-relay.hpp"
+  ${_client_sources}
 )

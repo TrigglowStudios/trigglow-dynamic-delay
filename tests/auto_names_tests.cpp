@@ -200,7 +200,17 @@ void TestDefaultLoadingScene()
 	CHECK(DefaultLoadingVideoFile("es-MX") == "videos/adding-delay-es.mp4");
 	CHECK(DefaultLoadingVideoFile("es") == "videos/adding-delay-es.mp4");
 	CHECK(DefaultLoadingVideoFile("en-US") == "videos/adding-delay-en.mp4");
-	CHECK(DefaultLoadingVideoFile("pt-BR") == "videos/adding-delay-en.mp4");
+	// v1.1.0: one per language the plugin is translated to.
+	CHECK(DefaultLoadingVideoFile("pt-BR") == "videos/adding-delay-pt.mp4");
+	CHECK(DefaultLoadingVideoFile("pt-PT") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("zh-CN") == "videos/adding-delay-zh.mp4");
+	CHECK(DefaultLoadingVideoFile("zh-TW") == "videos/adding-delay-en.mp4");
+	CHECK(DefaultLoadingVideoFile("val-ES") == "videos/adding-delay-val.mp4");
+	CHECK(DefaultLoadingVideoFile("ca-ES") == "videos/adding-delay-ca.mp4");
+	CHECK(DefaultLoadingVideoFile("de_DE") == "videos/adding-delay-de.mp4");
+	CHECK(DefaultLoadingVideoFile("ja-JP") == "videos/adding-delay-ja.mp4");
+	CHECK(DefaultLoadingVideoFile("uk-UA") == "videos/adding-delay-uk.mp4");
+	CHECK(DefaultLoadingVideoFile("nl-NL") == "videos/adding-delay-en.mp4");
 	CHECK(DefaultLoadingVideoFile("est") == "videos/adding-delay-en.mp4");
 	CHECK(DefaultLoadingVideoFile("") == "videos/adding-delay-en.mp4");
 	// v1.0.0: the still under the video follows the same rule.
@@ -209,6 +219,14 @@ void TestDefaultLoadingScene()
 	CHECK(DefaultLoadingStillFile("en-US") == "images/adding-delay-en.jpg");
 	CHECK(DefaultLoadingStillFile("est") == "images/adding-delay-en.jpg");
 	CHECK(DefaultLoadingStillFile("") == "images/adding-delay-en.jpg");
+	// v1.1.0: the vertical ones.
+	CHECK(DefaultVerticalLoadingVideoFile("es-ES") == "videos/adding-delay-vertical-es.mp4");
+	CHECK(DefaultVerticalLoadingVideoFile("en-US") == "videos/adding-delay-vertical-en.mp4");
+	CHECK(DefaultVerticalLoadingVideoFile("") == "videos/adding-delay-vertical-en.mp4");
+	CHECK(DefaultVerticalLoadingStillFile("es") == "images/adding-delay-vertical-es.jpg");
+	CHECK(DefaultVerticalLoadingStillFile("pt-BR") == "images/adding-delay-vertical-pt.jpg");
+	CHECK(DefaultVerticalLoadingVideoFile("hi-IN") == "videos/adding-delay-vertical-hi.mp4");
+	CHECK(DefaultLoadingStillFile("ko-KR") == "images/adding-delay-ko.jpg");
 }
 
 void TestRenamePlan()
