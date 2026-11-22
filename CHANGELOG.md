@@ -52,8 +52,9 @@
   loading scene, as with all of OBS, instead of the last seconds again (when you raise it live) or
   nothing (when the stream starts with the delay on). The plugin makes a short clip of it with your
   own stream encoder when each stream starts (a few seconds of extra encoding, once) and the dock
-  shows "Loading screen" on the destination meanwhile. Works with Enhanced Broadcasting too
-  (vertical tracks get it fitted). H.264 streams.
+  shows "Loading screen" on the destination meanwhile. Works with Enhanced Broadcasting too:
+  vertical tracks get Trigglow's loading video in a version made for vertical (a scene you chose
+  is fitted inside). H.264 streams.
 - **Choosing the loading scene is for Starter and Pro.** On Free, viewers see Trigglow's "adding
   delay" video in both modes; the picker is locked with a line that says why and a **See plans**
   button. A scene you had chosen is kept and comes back if you upgrade.

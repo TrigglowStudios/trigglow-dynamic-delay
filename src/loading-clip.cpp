@@ -135,7 +135,8 @@ LoadingClipMaker::~LoadingClipMaker()
 	Release();
 }
 
-bool LoadingClipMaker::Start(obs_output_t *output, const std::string &sceneName, int64_t loopMs, std::string &why)
+bool LoadingClipMaker::Start(obs_output_t *output, const std::string &sceneName, int64_t loopMs, std::string &why,
+			     const std::string &verticalVideo, const std::string &verticalStill)
 {
 	Release();
 	state_ = State::Idle;
@@ -188,16 +189,44 @@ bool LoadingClipMaker::Start(obs_output_t *output, const std::string &sceneName,
 			tracks_.push_back(std::move(track));
 			break;
 		}
-		// The loading scene fitted inside, centred (a vertical track gets it
-		// letterboxed instead of stretched).
+		// The loading scene fitted inside, centred (a vertical track gets a
+		// chosen scene letterboxed instead of stretched).
 		track->scene = obs_scene_create_private(name.c_str());
-		if (obs_sceneitem_t *item = obs_scene_add(track->scene, loading)) {
+		auto fit = [&](obs_source_t *source) {
+			obs_sceneitem_t *item = source ? obs_scene_add(track->scene, source) : nullptr;
+			if (!item)
+				return;
 			obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
 			obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
 			const vec2 bounds{static_cast<float>(track->width), static_cast<float>(track->height)};
 			obs_sceneitem_set_bounds(item, &bounds);
 			const vec2 pos{0.0f, 0.0f};
 			obs_sceneitem_set_pos(item, &pos);
+		};
+		if (track->height > track->width && !verticalVideo.empty()) {
+			// Trigglow's video made for vertical, its first frame under it
+			// (the video takes a few frames to open: never a black one).
+			if (!verticalVideo_) {
+				if (!verticalStill.empty()) {
+					obs_data_t *still = obs_data_create();
+					obs_data_set_string(still, "file", verticalStill.c_str());
+					verticalStill_ = obs_source_create_private(
+						"image_source", "Trigglow loading clip vertical still", still);
+					obs_data_release(still);
+				}
+				obs_data_t *video = obs_data_create();
+				obs_data_set_bool(video, "is_local_file", true);
+				obs_data_set_string(video, "local_file", verticalVideo.c_str());
+				obs_data_set_bool(video, "looping", true);
+				obs_data_set_bool(video, "restart_on_activate", true);
+				verticalVideo_ = obs_source_create_private("ffmpeg_source",
+									   "Trigglow loading clip vertical", video);
+				obs_data_release(video);
+			}
+			fit(verticalStill_);
+			fit(verticalVideo_ ? verticalVideo_ : loading);
+		} else {
+			fit(loading);
 		}
 		obs_canvas_set_channel(track->canvas, 0, obs_scene_get_source(track->scene));
 
@@ -340,6 +369,12 @@ void LoadingClipMaker::Release()
 			obs_scene_release(track->scene);
 	}
 	tracks_.clear();
+	if (verticalVideo_)
+		obs_source_release(verticalVideo_);
+	if (verticalStill_)
+		obs_source_release(verticalStill_);
+	verticalVideo_ = nullptr;
+	verticalStill_ = nullptr;
 }
 
 } // namespace trigglow

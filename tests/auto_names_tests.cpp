@@ -209,6 +209,12 @@ void TestDefaultLoadingScene()
 	CHECK(DefaultLoadingStillFile("en-US") == "images/adding-delay-en.jpg");
 	CHECK(DefaultLoadingStillFile("est") == "images/adding-delay-en.jpg");
 	CHECK(DefaultLoadingStillFile("") == "images/adding-delay-en.jpg");
+	// v1.1.0: the vertical ones.
+	CHECK(DefaultVerticalLoadingVideoFile("es-ES") == "videos/adding-delay-vertical-es.mp4");
+	CHECK(DefaultVerticalLoadingVideoFile("en-US") == "videos/adding-delay-vertical-en.mp4");
+	CHECK(DefaultVerticalLoadingVideoFile("") == "videos/adding-delay-vertical-en.mp4");
+	CHECK(DefaultVerticalLoadingStillFile("es") == "images/adding-delay-vertical-es.jpg");
+	CHECK(DefaultVerticalLoadingStillFile("pt-BR") == "images/adding-delay-vertical-en.jpg");
 }
 
 void TestRenamePlan()

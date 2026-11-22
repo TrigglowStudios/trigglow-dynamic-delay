@@ -249,7 +249,8 @@ suficiente. Ahora, en cuanto un directo llega al relay, `LoadingClipMaker` (`src
 prepara un clip de 8 s de la escena de carga (el vídeo "poniendo delay" de Trigglow, o la escena que
 haya elegido en el dock un streamer Starter o Pro, la misma que usa a todo OBS): por cada encoder de
 vídeo de la salida de emisión, un lienzo privado al tamaño y frame rate de ese encoder muestra la
-escena encajada (una pista vertical la recibe con bandas) y una copia del encoder (mismo id y
+escena encajada (una pista vertical recibe el vídeo de Trigglow hecho para vertical,
+`data/videos/adding-delay-vertical-*.mp4`, o la escena elegida con bandas) y una copia del encoder (mismo id y
 ajustes) la codifica en una salida de captura. Todo se libera en cuanto el clip está capturado; el
 clip se guarda para los siguientes directos mientras la escena y los encoders no cambien. Solo
 H.264 (con HEVC o AV1, subir el delay repite, como antes).

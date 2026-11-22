@@ -56,7 +56,8 @@
   subirlo en directo) o no ver nada (cuando el directo empieza con el delay activo). El plugin
   prepara un clip corto con tu propio encoder al empezar cada directo (unos segundos de codificación
   extra, una vez) y el dock muestra "Pantalla de carga" en el destino mientras tanto. Funciona
-  también con Enhanced Broadcasting (las pistas verticales la reciben encajada). Directos H.264.
+  también con Enhanced Broadcasting: las pistas verticales reciben el vídeo de carga de Trigglow en
+  una versión hecha para vertical (una escena elegida por ti se encaja dentro). Directos H.264.
 - **Elegir la escena de carga es para Starter y Pro.** En Free, tu audiencia ve el vídeo "poniendo
   delay" de Trigglow en los dos modos; el selector se bloquea con una línea que explica por qué y un
   botón **Ver planes**. La escena que tenías elegida se guarda y vuelve si mejoras de plan.

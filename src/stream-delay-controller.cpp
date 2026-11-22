@@ -32,6 +32,7 @@ extern "C" {
 #include <util/platform.h>
 }
 
+#include "auto-names.hpp"
 #include "logging.hpp"
 #include "multistream-link.hpp"
 #include "overlay-layout.hpp"
@@ -911,7 +912,25 @@ void StreamDelayController::StepLoadingClip()
 	}
 	obs_output_t *output = obs_frontend_get_streaming_output();
 	loadingClipKey_ = key;
-	if (!loadingClip_.Start(output, scene, 8000, why))
+	// Trigglow's own loading video has a vertical version for vertical
+	// tracks (Enhanced Broadcasting's vertical canvas); a chosen scene is
+	// fitted inside them.
+	std::string verticalVideo;
+	std::string verticalStill;
+	if (autonames::IsDefaultLoadingSceneName(scene)) {
+		const char *locale = obs_get_locale();
+		auto dataFile = [](const std::string &relative) {
+			std::string path;
+			if (char *file = obs_module_file(relative.c_str())) {
+				path = file;
+				bfree(file);
+			}
+			return path;
+		};
+		verticalVideo = dataFile(autonames::DefaultVerticalLoadingVideoFile(locale ? locale : ""));
+		verticalStill = dataFile(autonames::DefaultVerticalLoadingStillFile(locale ? locale : ""));
+	}
+	if (!loadingClip_.Start(output, scene, 8000, why, verticalVideo, verticalStill))
 		TRIGGLOW_LOG_WARN(kComponent, "no loading screen for this stream (%s): raising the delay replays",
 				  why.c_str());
 	obs_output_release(output);
