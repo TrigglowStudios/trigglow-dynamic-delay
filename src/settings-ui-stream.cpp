@@ -366,7 +366,9 @@ void TrigglowDelayDock::BuildRules(QVBoxLayout *body)
 		obs_source_t *current = obs_frontend_get_current_scene();
 		const std::string name = current ? obs_source_get_name(current) : "";
 		obs_source_release(current);
-		AddRuleRow(name, static_cast<int>(SceneAction::DelayOn), 0);
+		// v1.1.0: a new rule does nothing until the streamer picks what it does,
+		// so adding a scene never turns the delay on by itself.
+		AddRuleRow(name, static_cast<int>(SceneAction::None), 0);
 		RulesChanged();
 		if (!ruleRows_.empty())
 			ruleRows_.back().scene->setFocus(Qt::TabFocusReason);

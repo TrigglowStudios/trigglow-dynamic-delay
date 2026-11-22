@@ -59,9 +59,9 @@ delay solo a la emisión" para retrasar todo OBS.
 
 **Hago multistream con Aitum Multistream o Multiple RTMP Outputs. ¿Qué modo retrasa todas las plataformas?**
 A todo OBS, lo predeterminado. Esos plugins codifican lo que muestra OBS, así que todas las salidas
-que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", solo el
-stream propio de OBS pasa por el delay: las salidas que arrancan esos plugins salen en directo, y el
-dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
+que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", el stream
+propio de OBS y el de Aitum Vertical pasan por el delay: las salidas que arrancan los plugins de
+multistream salen en directo, y el dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
 delay..."). Los servicios que reciben un stream y lo reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con
 los dos modos, porque OBS solo les manda un stream. La (i) junto a Avanzado en el dock lo resume.
 
@@ -70,8 +70,17 @@ A todo OBS, sí, desde la v1.1.0: la escena que muestra el lienzo vertical se re
 segundos, se llame como se llame (la 1.0 solo retrasaba una escena vertical con el mismo nombre que
 una de tus escenas con delay). El dock avisa de que el delay usa entonces el doble de recursos,
 porque ese lienzo mantiene un búfer propio. Mientras se llena ese búfer, y cada vez que el lienzo
-vertical cambia de escena, se ve en negro durante el delay. Con "solo a la emisión", el directo
-vertical sale en directo y el dock lo dice.
+vertical cambia de escena, se ve en negro durante el delay. Con "solo a la emisión", también
+(v1.1.0): el stream vertical pasa por su propio relay con el mismo delay que el de OBS. La primera vez
+que arranca en una sesión de OBS sale directo una fracción de segundo y el plugin lo reinicia a
+través del delay. Tu stream vertical necesita su propia clave de emisión: Restream y la mayoría de
+plataformas aceptan un solo emisor por clave, así que un vertical con la misma clave que tu stream
+principal lo echa ("End of file" en el dock).
+
+**¿Por qué se quita el delay al terminar el directo?**
+Desde la v1.1.0 el delay está desactivado por defecto con "solo a la emisión": solo se activa cuando
+tú lo activas (o lo armas antes de empezar), una regla de Delay por escena solo actúa en directo, y al
+terminar el directo se quita, así que el siguiente empieza sin él.
 
 **¿Se reconecta el directo al activar, quitar, subir o bajar el delay?**
 No. El relay mantiene una sola conexión con tu plataforma y empalma: activar el delay (o subirlo)

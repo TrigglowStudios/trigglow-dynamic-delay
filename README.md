@@ -50,8 +50,8 @@ TikTok, custom servers). With Enhanced Broadcasting, SRT, RIST or WHIP the dock 
 can't use it: untick the option to delay all of OBS. Details: `docs/STREAM_MODE.md`.
 
 Multistream: with all of OBS, outputs other plugins start (Aitum Multistream, Multiple RTMP
-Outputs) and an Aitum Vertical canvas are delayed too; with only the stream they go out live and
-the dock says so (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
+Outputs) and an Aitum Vertical canvas are delayed too; with only the stream, Aitum Vertical's stream
+is delayed too and the multistream plugins' outputs go out live, as the dock says (`docs/STREAM_MODE.md`, "Other plugins' stream outputs").
 
 Both have the delay badge for viewers (always shown on the Free plan; Starter and Pro can hide it),
 three presets, hotkeys, obs-websocket and the Stream Deck.

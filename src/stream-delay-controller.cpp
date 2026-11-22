@@ -77,6 +77,10 @@ StreamDelayController::StreamDelayController()
 		std::lock_guard<std::mutex> lock(eventMutex_);
 		lastEvent_ = message;
 	});
+	verticalTaps_.SetEventCallback([this](const std::string &message) {
+		std::lock_guard<std::mutex> lock(eventMutex_);
+		lastEvent_ = message;
+	});
 }
 
 StreamDelayController::~StreamDelayController()
@@ -112,6 +116,7 @@ void StreamDelayController::Shutdown()
 	timer_.reset();
 	RestoreFrontendService();
 	relay_.Stop();
+	verticalTaps_.Shutdown();
 	if (loopbackService_) {
 		obs_service_release(loopbackService_);
 		loopbackService_ = nullptr;
@@ -122,9 +127,14 @@ void StreamDelayController::Shutdown()
 
 bool StreamDelayController::Dump()
 {
-	if (!engaged_ || !delayOn_ || relay_.Delay() == 0)
+	const bool mainDelayed = engaged_ && relay_.Delay() > 0;
+	const bool verticalDelayed = verticalTaps_.AnyStreaming();
+	if (!delayOn_ || (!mainDelayed && !verticalDelayed))
 		return false;
-	relay_.Dump();
+	if (mainDelayed)
+		relay_.Dump();
+	if (verticalDelayed)
+		verticalTaps_.Dump();
 	// Back to the delay once there are its seconds of stream after the dump
 	// (plus a keyframe interval for the splice), rewinding only into them.
 	dumpRestoreAtNs_ =
@@ -142,6 +152,7 @@ void StreamDelayController::SetPreset(int index, uint32_t seconds)
 	presets_[index] = std::max<uint32_t>(1, relay::ClampDelaySeconds(seconds));
 	if (engaged_)
 		relay_.SetKeepSeconds(RamKeepSeconds());
+	verticalTaps_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
 }
 
@@ -175,12 +186,15 @@ void StreamDelayController::SetSceneRules(std::vector<SceneRule> rules)
 	sceneRules_ = std::move(rules);
 	if (engaged_)
 		relay_.SetKeepSeconds(RamKeepSeconds());
+	verticalTaps_.SetKeepSeconds(RamKeepSeconds());
 	Notify();
 }
 
 void StreamDelayController::ApplySceneRule()
 {
-	if (!HandlesControls())
+	// Only while a stream goes out through the delay: switching scenes in OBS
+	// with nothing live never turns the delay on (or arms it) by itself.
+	if (!HandlesControls() || !(engaged_ || verticalTaps_.AnyStreaming()))
 		return;
 	obs_source_t *scene = obs_frontend_get_current_scene();
 	const std::string name = scene ? obs_source_get_name(scene) : "";
@@ -253,6 +267,8 @@ void StreamDelayController::UpdateOverlay()
 {
 	constexpr uint32_t kOverlayChannel = 61;
 	const bool want = showOverlay_ && delayOn_ && overlayImage_ && (engaged_ || HandlesControls());
+	// The same badge on Aitum Vertical's canvas while its stream goes through the delay.
+	verticalTaps_.SetBadge(want, want ? overlayImage_(delaySeconds_) : std::string(), overlayCorner_);
 	if (!want) {
 		if (overlayShown_) {
 			obs_set_output_source(kOverlayChannel, nullptr);
@@ -357,8 +373,8 @@ void StreamDelayController::SetDelaySeconds(uint32_t seconds)
 	if (seconds == delaySeconds_)
 		return;
 	delaySeconds_ = seconds;
-	if (engaged_ && delayOn_)
-		relay_.SetDelay(EffectiveDelay());
+	if (delayOn_)
+		PushDelay(EffectiveDelay());
 	Notify();
 }
 
@@ -400,8 +416,7 @@ bool StreamDelayController::Enable()
 	if (delayOn_)
 		return true;
 	delayOn_ = true;
-	if (engaged_)
-		relay_.SetDelay(EffectiveDelay());
+	PushDelay(EffectiveDelay());
 	TRIGGLOW_LOG_INFO(kComponent, "delay on (%us)%s", delaySeconds_, engaged_ ? "" : ", armed for the next stream");
 	Notify();
 	return true;
@@ -413,8 +428,7 @@ void StreamDelayController::Disable()
 		return;
 	delayOn_ = false;
 	dumpRestoreAtNs_ = 0;
-	if (engaged_)
-		relay_.SetDelay(0);
+	PushDelay(0);
 	TRIGGLOW_LOG_INFO(kComponent, "delay off");
 	Notify();
 }
@@ -493,6 +507,8 @@ StreamDelayStatus StreamDelayController::GetStatus() const
 	}
 	if (engaged_ || draining_)
 		status.relay = relay_.GetStatus();
+	for (relay::SinkStatus &sink : verticalTaps_.Sinks())
+		status.relay.sinks.push_back(std::move(sink));
 	return status;
 }
 
@@ -515,6 +531,7 @@ void StreamDelayController::FrontendEvent(int event, void *param)
 	case OBS_FRONTEND_EVENT_EXIT:
 		self->RestoreFrontendService();
 		self->relay_.Stop();
+		self->verticalTaps_.Shutdown();
 		self->engaged_ = false;
 		self->draining_ = false;
 		break;
@@ -737,12 +754,14 @@ void StreamDelayController::RefreshOtherOutputs()
 {
 	struct Ctx {
 		obs_output_t *skip;
+		const VerticalTaps *taps;
 		std::vector<outputs::OtherOutput> found;
-	} ctx{obs_frontend_get_streaming_output(), {}};
+	} ctx{obs_frontend_get_streaming_output(), &verticalTaps_, {}};
 	obs_enum_outputs(
 		[](void *param, obs_output_t *output) -> bool {
 			auto *c = static_cast<Ctx *>(param);
-			if (output == c->skip || !obs_output_active(output))
+			// A tapped Aitum Vertical output goes through the delay: not "live".
+			if (output == c->skip || !obs_output_active(output) || c->taps->Owns(output))
 				return true;
 			const char *id = obs_output_get_id(output);
 			if (!id || !outputs::IsStreamOutputType(id))
@@ -767,8 +786,27 @@ void StreamDelayController::RefreshOtherOutputs()
 	Notify();
 }
 
+void StreamDelayController::PushDelay(uint32_t seconds)
+{
+	if (engaged_)
+		relay_.SetDelay(seconds);
+	verticalTaps_.SetDelay(seconds);
+}
+
+VerticalTaps::Options StreamDelayController::TapOptions() const
+{
+	VerticalTaps::Options options;
+	options.delaySeconds = EffectiveDelay();
+	options.keepSeconds = RamKeepSeconds();
+	options.drainOnStop = drainOnStop_;
+	options.spillToDisk = relay::SpillsToDisk(bufferStorage_, driveKind_);
+	return options;
+}
+
 void StreamDelayController::Tick()
 {
+	// Aitum Vertical's outputs through the delay, with "only the stream".
+	verticalTaps_.Update(applyTo_ == ApplyTo::Stream && relay::RelayAvailable(), TapOptions());
 	if ((++ticks_ % 2) == 0)
 		RefreshOtherOutputs();
 	if (draining_ && relay_.Finished()) {
@@ -778,11 +816,22 @@ void StreamDelayController::Tick()
 	}
 	if (dumpRestoreAtNs_ > 0 && static_cast<int64_t>(os_gettime_ns()) >= dumpRestoreAtNs_) {
 		dumpRestoreAtNs_ = 0;
-		if (engaged_ && delayOn_) {
-			relay_.SetDelay(delaySeconds_);
+		if (delayOn_) {
+			PushDelay(delaySeconds_);
 			TRIGGLOW_LOG_INFO(kComponent, "dump: the %us delay is back", delaySeconds_);
 		}
 	}
+	// v1.1.0: the delay is off by default. Turned on (or armed) for a stream, it
+	// turns off again once nothing goes out through the delay any more, so the
+	// next stream starts without it unless the streamer turns it on.
+	const bool streaming = engaged_ || draining_ || verticalTaps_.AnyStreaming();
+	if (wasStreaming_ && !streaming && delayOn_) {
+		delayOn_ = false;
+		dumpRestoreAtNs_ = 0;
+		PushDelay(0);
+		TRIGGLOW_LOG_INFO(kComponent, "the stream ended: delay off until you turn it on again");
+	}
+	wasStreaming_ = streaming;
 	Notify();
 }
 

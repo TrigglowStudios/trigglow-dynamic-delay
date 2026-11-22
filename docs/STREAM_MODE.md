@@ -204,6 +204,11 @@ so it only rewinds into what came after the dump. Checked with the harness: dump
 
 ### Scene rules and presets
 
+The delay is off by default (v1.1.0): scene rules act only while a stream goes out through the
+delay (switching scenes in OBS while not live never turns it on or arms it), a new rule does
+nothing until the streamer picks what it does, and when nothing goes out through the delay any
+more the delay turns off, so the next stream starts without it unless it's turned on again.
+
 Rules map a scene to "delay on (with its seconds)" or "delay off", applied on
 `OBS_FRONTEND_EVENT_SCENE_CHANGED` and when a stream starts. Three presets (default 10/30/60 s) set
 the seconds and turn the delay on, each with a hotkey and `ApplyPreset {index}` over obs-websocket.
@@ -233,7 +238,24 @@ own `rtmp_custom` service, and connect to their platform themselves: they create
 its service and start it in one call, and libobs' "starting" signal only fires after
 `obs_output_actual_start()`, so there is no moment at which the relay could take their
 destination before they connect. Those outputs therefore go out **live**, while OBS's own stream is
-delayed. What the plugin does about it:
+delayed. Aitum Vertical is the exception (below). What the plugin does about it:
+
+- **Aitum Vertical goes through the delay too** (`src/vertical-taps.*`). Aitum creates each stream
+  output once and afterwards only updates its own service before every start, calling
+  `obs_output_set_service()` only on creation. So `VerticalTaps` gives each
+  `vertical_canvas_stream[_<name>]` output (RTMP or RTMPS destinations only) a private loopback
+  service pointing at a relay of its own, whose destination is what Aitum's service holds; the
+  output keeps it across Aitum's stops and starts, and Aitum's settings, dock and saved config never
+  see the relay. The first start of an output in an OBS session goes out directly for a moment
+  (Aitum creates and starts it in one call): the next `Tick()`, at most 0.5 s later, stops it
+  through Aitum's own `aitum_vertical_stop_stream_output` proc, takes it while idle and starts it
+  again (`aitum_vertical_start_stream_output`). The delay, Dump, the keep window and drain follow
+  stream mode's; the badge is drawn on the Aitum Vertical canvas too (channel 61, placed for its
+  size). Checked in a portable OBS 33.0.1 with Aitum Vertical 1.6.8 and two local RTMP servers
+  (2026-11-22): on the first start the direct output sent 13 frames before it was taken; the
+  vertical stream (1080x1920) then reached its server 11 s after the start with a 10 s delay,
+  together with OBS's own, and both sent their last 10 s after the stop; later starts went through
+  the relay straight away.
 
 - `StreamDelayController::RefreshOtherOutputs()` (once a second, from `Tick()`) lists the active
   outputs whose type sends a stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
@@ -319,8 +341,11 @@ build on Windows. Not yet tested against a real OBS with real platforms.
   can't use it; all of OBS (the default) works with them.
 - Delay by scene only with "only the stream": all of OBS keeps delaying the one live scene chosen
   in the dock.
-- Outputs other plugins start (Aitum Multistream, Multiple RTMP Outputs, Aitum Vertical): they go
-  out live, and the dock says so (see "Other plugins' stream outputs"); all of OBS delays them.
+- Outputs multistream plugins start (Aitum Multistream, Multiple RTMP Outputs): they go out live,
+  and the dock says so (see "Other plugins' stream outputs"); all of OBS delays them. Aitum
+  Vertical's are delayed in both modes.
+- The first start of an Aitum Vertical output in an OBS session sends a fraction of a second
+  directly before it is taken and restarted through the delay.
 
 ## Verification status
 

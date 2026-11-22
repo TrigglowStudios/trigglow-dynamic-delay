@@ -43,6 +43,15 @@
   the plugin and how many outputs ("Aitum Multistream is sending 2 outputs live, without the
   delay..."). An (i) next to **Advanced** sums it up. Services that take one stream and send it on
   (Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both.
+- **Aitum Vertical with "only the stream".** Its vertical stream now goes through the delay too,
+  with the same seconds as OBS's own, Dump and the badge included, and the dock lists it with your
+  other destinations. The first time it starts in an OBS session it goes out directly for a
+  fraction of a second, then the plugin restarts it through the delay. Use a stream key of its own
+  for the vertical stream: Restream and most platforms accept one sender per key.
+- **The delay is off by default with "only the stream".** It no longer turns itself on: Delay by
+  scene rules act only while you're live (switching scenes in OBS before going live doesn't arm
+  it), a new rule does nothing until you choose what it does, and when a stream ends the delay
+  turns off, so the next one starts without it unless you turn it on.
 
 ## v1.0.0 — 2026-11-11
 

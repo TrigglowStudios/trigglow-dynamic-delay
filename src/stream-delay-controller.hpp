@@ -51,6 +51,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "apply-to.hpp"
 #include "drive-kind.hpp"
 #include "stream-relay.hpp"
+#include "vertical-taps.hpp"
 
 struct obs_service;
 typedef struct obs_service obs_service_t;
@@ -250,6 +251,10 @@ private:
 	uint32_t EffectiveDelay() const { return delayOn_ ? delaySeconds_ : 0; }
 
 	void ApplySceneRule();
+	// The delay now to every relay that carries a stream: OBS's own (while
+	// engaged) and Aitum Vertical's (vertical-taps.hpp).
+	void PushDelay(uint32_t seconds);
+	VerticalTaps::Options TapOptions() const;
 
 	uint32_t presets_[3] = {10, 30, 60};
 	std::vector<SceneRule> sceneRules_;
@@ -271,6 +276,11 @@ private:
 	unsigned ticks_ = 0;
 
 	relay::StreamRelay relay_;
+	// v1.1.0: Aitum Vertical's stream outputs through the delay too.
+	VerticalTaps verticalTaps_;
+	// Something went out through a relay at the last Tick: when that ends the
+	// delay turns off (each stream starts without it unless turned on).
+	bool wasStreaming_ = false;
 	obs_service_t *loopbackService_ = nullptr;
 	// The streamer's own service while the frontend's is swapped for the
 	// relay's (Advanced output mode, see OnStreamingStarting). Holds a ref.

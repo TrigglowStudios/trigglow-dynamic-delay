@@ -55,9 +55,9 @@ stream" to delay all of OBS.
 
 **I multistream with Aitum Multistream or Multiple RTMP Outputs. Which mode delays every platform?**
 All of OBS, the default. Those plugins encode what OBS shows, so every output they start is delayed
-like OBS's own stream. With "only the stream", only OBS's own stream goes through the delay: the
-outputs those plugins start go out live, and the dock lists them while they run ("Aitum Multistream
-is sending 2 outputs live, without the delay..."). Services that take one stream and send it on
+like OBS's own stream. With "only the stream", OBS's own stream and Aitum Vertical's go through the
+delay: the outputs the multistream plugins start go out live, and the dock lists them while they run
+("Aitum Multistream is sending 2 outputs live, without the delay..."). Services that take one stream and send it on
 (Restream.io, Streamlabs Multistream, Trigglow Multistream and the like) work with both modes, since OBS only sends them one stream. The (i) next to
 Advanced in the dock sums this up.
 
@@ -66,8 +66,17 @@ With all of OBS, yes, since v1.1.0: the scene the vertical canvas shows is delay
 seconds, whatever it is called (1.0 only delayed a vertical scene named like one of your delayed
 scenes). The dock warns that the delay then uses about twice the resources, because that canvas
 keeps a buffer of its own. While that buffer fills, and each time the vertical canvas switches
-scene, it shows black for the delay. With "only the stream", the vertical stream goes out live and
-the dock says so.
+scene, it shows black for the delay. With "only the stream", yes too (v1.1.0): the vertical stream
+goes through its own relay with the same delay as OBS's stream. The first time it starts in an OBS
+session it goes out directly for a fraction of a second, then the plugin restarts it through the
+delay. Your vertical stream needs its own stream key: Restream and most platforms accept one
+sender per key, so a vertical sent with the same key as your main stream kicks it off ("End of
+file" in the dock).
+
+**Why does the delay turn off when my stream ends?**
+Since v1.1.0 the delay is off by default with "only the stream": it turns on only when you turn it on
+(or arm it before going live), a Delay by scene rule acts only while you're live, and when the stream
+ends it turns off, so the next stream starts without it.
 
 **Does the stream reconnect when I turn the delay on, off, up or down?**
 No. The relay keeps one connection to your platform and splices: turning the delay on (or raising

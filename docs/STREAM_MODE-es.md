@@ -221,6 +221,11 @@ directo en ~2 s, el delay vuelve, timestamps continuos y la salida se decodifica
 
 ### Reglas por escena y presets
 
+El delay está desactivado por defecto (v1.1.0): las reglas por escena solo actúan mientras un stream
+sale por el delay (cambiar de escena en OBS sin estar en directo nunca lo activa ni lo arma), una
+regla nueva no hace nada hasta que el streamer elige qué hace, y cuando ya no sale nada por el delay
+se quita, así que el siguiente directo empieza sin él salvo que se active.
+
 Las reglas asocian una escena a "activar delay (con sus segundos)" o "quitar delay", y se aplican
 con `OBS_FRONTEND_EVENT_SCENE_CHANGED` y al empezar un directo. Tres presets (10/30/60 s por
 defecto) fijan los segundos y activan el delay, cada uno con su atajo y con `ApplyPreset {index}`
@@ -253,7 +258,25 @@ su propio servicio `rtmp_custom`, y se conectan ellas mismas a su plataforma: cr
 ponen el servicio y la arrancan en una sola llamada, y la señal "starting" de libobs solo salta
 después de `obs_output_actual_start()`, así que no hay ningún momento en que el relay pueda
 quedarse con su destino antes de que conecten. Esas salidas, por tanto, salen **en directo**,
-mientras el stream propio de OBS va con delay. Lo que hace el plugin:
+mientras el stream propio de OBS va con delay. Aitum Vertical es la excepción (abajo). Lo que hace
+el plugin:
+
+- **Aitum Vertical también pasa por el delay** (`src/vertical-taps.*`). Aitum crea cada salida de
+  stream una vez y después solo actualiza su propio servicio antes de cada arranque; solo llama a
+  `obs_output_set_service()` al crearla. Así que `VerticalTaps` le da a cada salida
+  `vertical_canvas_stream[_<nombre>]` (solo destinos RTMP o RTMPS) un servicio loopback privado
+  hacia un relay propio, cuyo destino es lo que tiene el servicio de Aitum; la salida lo conserva
+  entre paradas y arranques, y los ajustes, el dock y la config guardada de Aitum nunca ven el
+  relay. El primer arranque de una salida en una sesión de OBS sale directo un momento (Aitum la crea
+  y la arranca en la misma llamada): el siguiente `Tick()`, como mucho 0,5 s después, la para con el
+  proc `aitum_vertical_stop_stream_output` de Aitum, la toma en reposo y la vuelve a arrancar
+  (`aitum_vertical_start_stream_output`). El delay, Borrar, la ventana guardada y el envío final
+  siguen los del modo stream; la insignia también se pinta en el lienzo de Aitum Vertical (canal 61,
+  colocada para su tamaño). Comprobado en un OBS 33.0.1 portable con Aitum Vertical 1.6.8 y dos
+  servidores RTMP locales (2026-11-22): en el primer arranque la salida directa envió 13 fotogramas
+  antes de tomarla; después el vertical (1080x1920) llegó a su servidor 11 s tras empezar con 10 s de
+  delay, a la vez que el de OBS, y los dos enviaron sus últimos 10 s tras parar; los arranques
+  siguientes pasaron por el relay desde el principio.
 
 - `StreamDelayController::RefreshOtherOutputs()` (una vez por segundo, desde `Tick()`) lista las
   salidas activas cuyo tipo envía un stream (`rtmp_output`, `ffmpeg_mpegts_muxer`, `whip_output`,
@@ -340,9 +363,11 @@ compilación completa del plugin en Windows. Aún sin probar en un OBS real con 
   directo no puede usarlo; a todo OBS (lo predeterminado) funciona con ellos.
 - El delay por escena solo existe con "solo a la emisión": a todo OBS sigue retrasando la única
   escena en directo elegida en el dock.
-- Las salidas que arrancan otros plugins (Aitum Multistream, Multiple RTMP Outputs, Aitum
-  Vertical): salen en directo, y el dock lo dice (ver "Salidas de stream de otros plugins"); a todo
-  OBS las retrasa.
+- Las salidas que arrancan los plugins de multistream (Aitum Multistream, Multiple RTMP Outputs):
+  salen en directo, y el dock lo dice (ver "Salidas de stream de otros plugins"); a todo OBS las
+  retrasa. Las de Aitum Vertical van con delay en los dos modos.
+- El primer arranque de una salida de Aitum Vertical en una sesión de OBS envía una fracción de
+  segundo directa antes de tomarla y reiniciarla a través del delay.
 
 ## Estado de la verificación
 

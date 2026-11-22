@@ -46,6 +46,15 @@
   con el nombre del plugin y cuántas salidas ("Aitum Multistream está enviando 2 salidas en directo,
   sin el delay..."). Una (i) junto a **Avanzado** lo resume. Los servicios que reciben un stream y lo
   reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con los dos.
+- **Aitum Vertical con "solo a la emisión".** Su stream vertical ahora también pasa por el delay,
+  con los mismos segundos que el de OBS, Borrar y la insignia incluidos, y el dock lo lista con tus
+  otros destinos. La primera vez que arranca en una sesión de OBS sale directo una fracción de
+  segundo y el plugin lo reinicia a través del delay. Usa una clave de emisión propia para el
+  vertical: Restream y la mayoría de plataformas aceptan un solo emisor por clave.
+- **El delay está desactivado por defecto con "solo a la emisión".** Ya no se activa solo: las
+  reglas de Delay por escena solo actúan en directo (cambiar de escena en OBS antes de empezar no
+  lo arma), una regla nueva no hace nada hasta que eliges qué hace, y al terminar un directo el
+  delay se quita, así que el siguiente empieza sin él salvo que lo actives.
 
 ## v1.0.0 — 2026-11-11
 
