@@ -15,6 +15,16 @@
   button opens the download page on trigglow.com instead; nothing sends you to GitHub any more.
 - The update card has a new look: the brand rule, the new version and yours, and an X that hides
   it until OBS starts again.
+- **Send to your Trigglow Multistream channels from OBS.** In stream mode, Options has "Also send
+  to my Trigglow Multistream channels": the delayed stream goes straight from OBS to every channel
+  you have enabled on trigglow.com (Live > Multistream), besides your OBS service. Each channel is
+  one more upload of your bitrate. Stream keys are read from your account when needed and kept only
+  in memory. If you already stream to Trigglow Multistream, nothing is added: the cloud forwards it.
+  Depends on your Trigglow plan.
+- **The delay on the Multistream page.** While you're signed in, trigglow.com shows whether the
+  delay is on, its seconds and where the stream goes, and can turn it on or off, change the seconds
+  or drop what hasn't aired yet. It applies in a few seconds, like a hotkey.
+- A stream to Trigglow Multistream shows as "Trigglow Multistream" in the dock.
 
 ## v1.0.0 — 2026-11-11
 

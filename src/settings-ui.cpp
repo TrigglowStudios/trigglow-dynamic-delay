@@ -140,12 +140,14 @@ private:
 };
 
 TrigglowDelayDock::TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
-				     DelayRouter &router, AuthManager &authManager, QWidget *parent)
+				     DelayRouter &router, AuthManager &authManager, MultistreamLink &multistreamLink,
+				     QWidget *parent)
 	: QWidget(parent),
 	  bufferController_(bufferController),
 	  streamController_(streamController),
 	  router_(router),
 	  authManager_(authManager),
+	  multistreamLink_(multistreamLink),
 	  updateTasks_(uitasks::Registry())
 {
 	BuildUi();
@@ -1316,6 +1318,8 @@ void TrigglowDelayDock::BuildOptions(QVBoxLayout *body)
 		streamController_.SetDrainOnStop(on);
 		SettingsChanged();
 	});
+	multiBlock_ = BuildMultistreamBlock(host);
+	body->addWidget(multiBlock_);
 
 	// --- The delay badge: one check box and one corner for both modes. ---
 	body->addSpacing(2);
@@ -1546,6 +1550,8 @@ bool TrigglowDelayDock::eventFilter(QObject *watched, QEvent *event)
 			check = overlaySecondsCheck_;
 		else if (watched == drainText_)
 			check = drainCheck_;
+		else if (watched == multiText_)
+			check = multiCheck_;
 		else if (watched == applyText_)
 			check = applyCheck_;
 		if (check) {
@@ -1607,6 +1613,7 @@ void TrigglowDelayDock::ApplyStaticIcons()
 	SetIcon(applyLockIcon_, ui::IconId::Lock, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(ruleIcon_, ui::IconId::Info, QStringLiteral("accent"), kInlineIconSize);
 	SetIcon(noticeIcon_, ui::IconId::AlertTriangle, QStringLiteral("danger"), kInlineIconSize);
+	SetIcon(multiNoteIcon_, ui::IconId::Info, QStringLiteral("muted"), kInlineIconSize);
 	SetIcon(canvasIcon_, ui::IconId::AlertTriangle, QStringLiteral("warning"), kAccountIconSize);
 	for (const auto &[field, lock] : fieldLocks_)
 		lock->SetPixmap(ui::IconPixmap(ui::IconId::Lock, ToneColor(QStringLiteral("muted")), kFieldLockSize,
@@ -1763,6 +1770,7 @@ void TrigglowDelayDock::Refresh()
 	if (streamOnly) {
 		drainCheck_->setChecked(stream.drainOnStop);
 		RefreshBuffer(stream);
+		RefreshMultistream(stream);
 		RefreshDestination(stream);
 		RefreshWarnings(stream);
 	}
@@ -1790,13 +1798,16 @@ void TrigglowDelayDock::ApplyModeVisibility(bool streamOnly)
 	qualityBlock_->setVisible(!streamOnly);
 	bufferBlock_->setVisible(streamOnly);
 	drainRow_->setVisible(streamOnly);
+	multiBlock_->setVisible(streamOnly);
 	rulesSection_->box->setVisible(streamOnly);
 	rulesDivider_->setVisible(streamOnly);
 	sendsRow_->setVisible(streamOnly);
 	if (!streamOnly) {
-		for (QWidget *widget : std::initializer_list<QWidget *>{statsLabel_, ruleRow_, noticeRow_,
-									warningsCard_, dumpButton_, cutButton_})
+		for (QWidget *widget : std::initializer_list<QWidget *>{
+			     statsLabel_, ruleRow_, noticeRow_, multiNoteRow_, warningsCard_, dumpButton_, cutButton_})
 			widget->setVisible(false);
+		for (const SinkRow &sink : sinkRows_)
+			sink.row->setVisible(false);
 	} else {
 		fillRow_->setVisible(false);
 		hintLabel_->setVisible(false);

@@ -57,6 +57,7 @@ extern "C" {
 #include "hotkeys.hpp"
 #include "i18n.hpp"
 #include "logging.hpp"
+#include "multistream-service.hpp"
 #include "obs-frontend-bridge.hpp"
 #include "overlay-badge.hpp"
 #include "settings-ui.hpp"
@@ -120,6 +121,10 @@ struct PluginState {
 	std::unique_ptr<trigglow::SceneDelayTarget> sceneTarget;
 	std::unique_ptr<trigglow::StreamDelayTarget> streamTarget;
 	std::unique_ptr<trigglow::DelayRouter> router;
+	// v1.1.0: the streamer's Trigglow Multistream channels as extra
+	// destinations of stream mode, and the delay's status and remote control
+	// for the dashboard. After what it uses, so it goes first.
+	std::unique_ptr<trigglow::MultistreamLink> multistreamLink;
 	std::unique_ptr<trigglow::DelayHotkeys> hotkeys;
 	// Not owned past AddDock(): OBS's dock system takes ownership of the
 	// QWidget once obs_frontend_add_dock_by_id() returns true, and may destroy
@@ -427,9 +432,11 @@ trigglow::ApplyTo ReadApplyTo(obs_data_t *data)
 	return setting.value;
 }
 
-// Stream mode settings, and what the delay applies to. The stream goes only to
-// the streamer's own OBS service; a "destinations" array left by a 1.0
-// pre-release is ignored and dropped on the next save.
+// Stream mode settings, and what the delay applies to. A "destinations" array
+// left by a 1.0 pre-release is ignored and dropped on the next save: besides
+// the streamer's own OBS service the stream only goes to their Trigglow
+// Multistream channels (v1.1.0 "send_to_multistream"), which are never saved,
+// only that boolean.
 void LoadStreamSettings(trigglow::StreamDelayController &controller)
 {
 	const QString path = ModuleConfigPath(kStreamSettingsFile);
@@ -451,6 +458,8 @@ void LoadStreamSettings(trigglow::StreamDelayController &controller)
 		controller.SetDrainOnStop(obs_data_get_bool(data, "drain_on_stop"));
 	// Missing (settings from before the choice) or unknown: Automatic.
 	controller.SetBufferStorage(trigglow::relay::ParseBufferStorage(obs_data_get_string(data, "buffer_storage")));
+	// Missing (settings from before 1.1.0): off.
+	controller.SetSendToMultistream(obs_data_get_bool(data, "send_to_multistream"));
 	if (obs_data_has_user_value(data, "show_overlay"))
 		controller.SetShowOverlay(obs_data_get_bool(data, "show_overlay"));
 	if (obs_data_has_user_value(data, "overlay_corner"))
@@ -502,6 +511,7 @@ void SaveStreamSettings(const trigglow::StreamDelayController &controller)
 	obs_data_set_bool(data, "drain_on_stop", controller.DrainOnStop());
 	obs_data_set_string(data, "buffer_storage",
 			    trigglow::relay::BufferStorageName(controller.BufferStorageChoice()));
+	obs_data_set_bool(data, "send_to_multistream", controller.SendToMultistream());
 	obs_data_set_bool(data, "show_overlay", controller.ShowOverlay());
 	obs_data_set_int(data, "overlay_corner", controller.OverlayCorner());
 	obs_data_set_bool(data, "overlay_show_seconds", controller.OverlayShowSeconds());
@@ -883,9 +893,24 @@ bool obs_module_load(void)
 	g_state->hotkeys = std::make_unique<trigglow::DelayHotkeys>(*g_state->router);
 	g_state->hotkeys->Init();
 
+	// v1.1.0: Trigglow Multistream. The controller asks it for the extra
+	// destinations as each stream starts.
+	g_state->multistreamLink = std::make_unique<trigglow::MultistreamLink>(
+		*g_state->authManager, *g_state->streamController, *g_state->router);
+	g_state->streamController->SetExtraDestinationsProvider(
+		[link = g_state->multistreamLink.get()](const trigglow::relay::Destination &primary) {
+			return link->ForStream(primary);
+		});
+	g_state->multistreamLink->Init();
+
 	auto *dock = new trigglow::TrigglowDelayDock(*g_state->bufferController, *g_state->streamController,
-						     *g_state->router, *g_state->authManager);
+						     *g_state->router, *g_state->authManager,
+						     *g_state->multistreamLink);
 	g_state->dock = dock;
+	g_state->multistreamLink->SetChangedCallback([] {
+		if (g_state && g_state->dock)
+			g_state->dock->OnStreamStatusChanged();
+	});
 	dock->SetSettingsChanged([] {
 		if (g_state && g_state->streamController)
 			SaveStreamSettings(*g_state->streamController);
@@ -937,9 +962,14 @@ void obs_module_unload(void)
 	// back into.
 	if (g_state->hotkeys)
 		g_state->hotkeys->Shutdown();
+	// Before what it reports on and asks for goes away: no more status
+	// reports, and the channels' keys leave memory.
+	if (g_state->multistreamLink)
+		g_state->multistreamLink->Shutdown();
 	// Cuts the relay (and whatever it was still sending) and joins its threads.
 	if (g_state->streamController) {
 		SaveStreamSettings(*g_state->streamController);
+		g_state->streamController->SetExtraDestinationsProvider(nullptr);
 		g_state->streamController->SetStatusCallback(nullptr);
 		g_state->streamController->Shutdown();
 	}

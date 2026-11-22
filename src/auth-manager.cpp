@@ -515,6 +515,7 @@ void AuthManager::NotifyChanged()
 {
 	if (onStatusChanged_)
 		onStatusChanged_();
+	emit StatusChanged();
 }
 
 } // namespace trigglow

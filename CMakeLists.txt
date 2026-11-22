@@ -384,6 +384,10 @@ else()
       src/stream-delay-controller.hpp
       src/apply-to.cpp
       src/apply-to.hpp
+      src/multistream-link.cpp
+      src/multistream-link.hpp
+      src/multistream-service.cpp
+      src/multistream-service.hpp
       src/delay-router.hpp
       src/delay-targets.cpp
       src/delay-targets.hpp

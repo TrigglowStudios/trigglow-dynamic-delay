@@ -32,6 +32,7 @@ extern "C" {
 }
 
 #include "logging.hpp"
+#include "multistream-link.hpp"
 #include "overlay-layout.hpp"
 #include "packet-delay-core.hpp"
 #include "spill-file.hpp"
@@ -52,8 +53,13 @@ bool StartsWith(const char *text, const char *prefix)
 	return text && std::strncmp(text, prefix, std::strlen(prefix)) == 0;
 }
 
-std::string ServiceDisplayName(obs_service_t *service, const std::string &server)
+// Settings > Stream's service ("Twitch"), or a custom server's host. A stream
+// to Trigglow's own Multistream ingest (its keys start with "tgms_") is named
+// after it instead of its bare host.
+std::string ServiceDisplayName(obs_service_t *service, const std::string &server, const std::string &key)
 {
+	if (mslink::IsTrigglowIngestKey(key))
+		return mslink::kTrigglowIngestName;
 	obs_data_t *settings = obs_service_get_settings(service);
 	std::string name = settings ? obs_data_get_string(settings, "service") : "";
 	obs_data_release(settings);
@@ -360,6 +366,16 @@ void StreamDelayController::SetBufferStorage(relay::BufferStorage storage)
 	Notify();
 }
 
+void StreamDelayController::SetSendToMultistream(bool send)
+{
+	if (sendToMultistream_ == send)
+		return;
+	sendToMultistream_ = send;
+	TRIGGLOW_LOG_INFO(kComponent, "also send to the Multistream channels: %s (from the next stream)",
+			  send ? "on" : "off");
+	Notify();
+}
+
 bool StreamDelayController::Enable()
 {
 	if (authorized_ && !authorized_()) {
@@ -546,11 +562,20 @@ void StreamDelayController::OnStreamingStarting()
 
 	std::vector<relay::Destination> destinations;
 	relay::Destination primary;
-	primary.name = ServiceDisplayName(service, server);
+	primary.name = ServiceDisplayName(service, server, key);
 	primary.server = server;
 	primary.key = key;
 	primary.primary = true;
 	destinations.push_back(primary);
+	// v1.1.0: the streamer's Multistream channels, from memory (never fetched
+	// here: OBS is waiting). The provider leaves out the primary itself, and
+	// adds none when the primary is Trigglow's ingest, which forwards to them.
+	if (extraDestinations_) {
+		for (relay::Destination &extra : extraDestinations_(primary)) {
+			extra.primary = false;
+			destinations.push_back(std::move(extra));
+		}
+	}
 
 	relay::RelayOptions options;
 	options.delaySeconds = EffectiveDelay();
@@ -602,8 +627,9 @@ void StreamDelayController::OnStreamingStarting()
 
 	engaged_ = true;
 	dumpRestoreAtNs_ = 0;
-	TRIGGLOW_LOG_INFO(kComponent, "this stream goes through the relay to %s, delay %us", primary.name.c_str(),
-			  EffectiveDelay());
+	TRIGGLOW_LOG_INFO(kComponent,
+			  "this stream goes through the relay to %s and %zu Multistream channel(s), delay %us",
+			  primary.name.c_str(), destinations.size() - 1, EffectiveDelay());
 	// The scene the stream starts on may have a rule.
 	ApplySceneRule();
 	Notify();

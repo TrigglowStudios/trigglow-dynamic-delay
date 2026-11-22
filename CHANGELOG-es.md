@@ -16,6 +16,16 @@
   trigglow.com; ya nada te manda a GitHub.
 - La tarjeta de actualización tiene un diseño nuevo: la franja de la marca, la versión nueva y la
   tuya, y una X que la oculta hasta que vuelvas a abrir OBS.
+- **Envía a tus canales de Trigglow Multistream desde OBS.** En el modo stream, Opciones tiene
+  "Enviar también a mis canales de Trigglow Multistream": el directo con delay sale directamente de
+  OBS a cada canal que tengas activado en trigglow.com (Directo > Multistream), además de a tu
+  servicio de OBS. Cada canal es una subida más de tu bitrate. Las claves de emisión se leen de tu
+  cuenta cuando hacen falta y se guardan solo en memoria. Si ya emites a Trigglow Multistream, no se
+  añade nada: la nube ya lo reenvía. Depende de tu plan de Trigglow.
+- **El delay en la página de Multistream.** Con la sesión iniciada, trigglow.com muestra si el delay
+  está activo, sus segundos y adónde va el directo, y puede activarlo o quitarlo, cambiar los segundos
+  o borrar lo que aún no se ha emitido. Se aplica en unos segundos, como un atajo.
+- Un directo a Trigglow Multistream aparece como "Trigglow Multistream" en el dock.
 
 ## v1.0.0 — 2026-11-11
 

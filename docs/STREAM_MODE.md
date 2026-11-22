@@ -252,6 +252,42 @@ mode worse (`StreamDelayController::CheckObsSettings`):
 
 The free-account gate applies to Enable as in scene mode.
 
+## With Trigglow Multistream (v1.1.0, not released yet)
+
+Three ways the plugin works with Trigglow Multistream (trigglow.com, Live > Multistream):
+
+- **Streaming to Trigglow's ingest.** Stream mode needs nothing special for it: OBS's Settings >
+  Stream as a custom server (Trigglow's ingest) with the streamer's `tgms_...` key is an ordinary
+  RTMP service, so the relay delays it and Trigglow's cloud forwards the delayed stream to every
+  channel. The dock names that destination "Trigglow Multistream" instead of its bare host.
+- **"Also send to my Trigglow Multistream channels"** (Options, only the stream; off by default,
+  saved as `send_to_multistream`, only that boolean). The relay sends the delayed stream to each
+  enabled horizontal Multistream channel straight from OBS, besides OBS's own service, with no
+  cloud in between: each channel is one more upload of the stream's bitrate. The channels come from
+  `GET /api/multistream/plugin/destinations` (a background job: when the box is ticked, at load,
+  after sign-in, and again when a stream starts with a copy older than 60 s; a stream that starts
+  before the first answer goes to OBS's service only and the dock says why). Their stream keys stay
+  in memory only: never written to disk, the settings file, the log, a bug report or the
+  diagnostics, and wiped on sign-out, when the box is unticked and on unload. A channel that is the
+  same as OBS's service (same host and key) is skipped, and none is added when OBS already streams
+  to Trigglow's ingest (`tgms_` key), so nothing is sent twice. Each channel gets its own row in the
+  dock with its state. The plan decides whether it's offered: `403 plan_required` makes the dock
+  say the plan doesn't include it, `404` hides it quietly.
+- **Status and remote control from the dashboard.** While signed in, the plugin reports the delay
+  (on/off, seconds, which engine, whether OBS streams, and in stream mode each destination's name and
+  state; never a key or a URL) to `POST /api/multistream/dynamic-delay/status`: every 5 s while OBS
+  streams or the delay is on, every 30 s otherwise, about 1 s after a change, and once a minute
+  after three failures in a row. The answer may carry one command from the Multistream page
+  (`enable`, `disable`, `set_delay` 1-600 s, `dump`), applied through `DelayRouter` exactly like a
+  hotkey: to the engine the dock selects, with the free-account gate on Enable. Failures are
+  silent.
+
+Per-channel delay (a channel held further back than the others) is a server feature of the
+Multistream page, on top of whatever this plugin delays.
+
+Tested: the protocol (`tests/multistream_link_tests.cpp`, scripted transport) and the full plugin
+build on Windows. Not yet tested against a real OBS with real platforms.
+
 ## Not covered yet
 
 - Enhanced Broadcasting (multitrack video), SRT, RIST and WHIP services: the dock says the stream
