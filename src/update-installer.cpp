@@ -41,7 +41,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char *kComponent = "updater";
+// Only the Windows code logs (macOS and Linux open the download page).
+[[maybe_unused]] constexpr const char *kComponent = "updater";
 constexpr const char *kPrefsFile = "update.json";
 
 #ifdef _WIN32

@@ -65,12 +65,9 @@ int main()
 		const std::vector<OtherOutput> none;
 		CHECK(SummarizeOtherOutputs(none).empty());
 		const std::vector<OtherOutput> outputs = {
-			{Plugin::Other, "Source Record"},
-			{Plugin::AitumMultistream, "aitum_multi_output_Kick"},
-			{Plugin::MultiRtmp, "multi-output"},
-			{Plugin::AitumMultistream, "aitum_multi_output_YouTube"},
-			{Plugin::MultiRtmp, "multi-output"},
-			{Plugin::AitumVertical, "vertical_canvas_stream"},
+			{Plugin::Other, "Source Record"},    {Plugin::AitumMultistream, "aitum_multi_output_Kick"},
+			{Plugin::MultiRtmp, "multi-output"}, {Plugin::AitumMultistream, "aitum_multi_output_YouTube"},
+			{Plugin::MultiRtmp, "multi-output"}, {Plugin::AitumVertical, "vertical_canvas_stream"},
 		};
 		const std::vector<std::string> w = SummarizeOtherOutputs(outputs);
 		CHECK(w.size() == 4);

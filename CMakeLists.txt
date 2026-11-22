@@ -300,7 +300,10 @@ if(ENABLE_QT)
     # v1.1.0, updating from OBS (src/update-installer.cpp): bcrypt hashes the
     # downloaded installer (SHA-256), shell32 starts it and finds ProgramData,
     # ole32 frees that path.
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp crypt32 dxgi bcrypt shell32 ole32)
+    target_link_libraries(
+      ${CMAKE_PROJECT_NAME}
+      PRIVATE winhttp crypt32 dxgi bcrypt shell32 ole32
+    )
   endif()
 
   target_compile_options(

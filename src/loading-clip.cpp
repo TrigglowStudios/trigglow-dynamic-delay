@@ -192,8 +192,8 @@ bool LoadingClipMaker::Start(obs_output_t *output, const std::string &sceneName,
 		// The loading scene fitted inside, centred (a vertical track gets a
 		// chosen scene letterboxed instead of stretched).
 		track->scene = obs_scene_create_private(name.c_str());
-		auto fit = [&](obs_source_t *source) {
-			obs_sceneitem_t *item = source ? obs_scene_add(track->scene, source) : nullptr;
+		auto fit = [&](obs_source_t *layer) {
+			obs_sceneitem_t *item = layer ? obs_scene_add(track->scene, layer) : nullptr;
 			if (!item)
 				return;
 			obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);

@@ -154,7 +154,13 @@ add_test(NAME apply_to_tests COMMAND apply_to_tests)
 
 # v1.1.0: which other plugins' stream outputs stream mode names as live
 # without the delay (src/other-outputs.*).
-add_executable(other_outputs_tests other_outputs_tests.cpp check.hpp "${_src}/other-outputs.cpp" "${_src}/other-outputs.hpp")
+add_executable(
+  other_outputs_tests
+  other_outputs_tests.cpp
+  check.hpp
+  "${_src}/other-outputs.cpp"
+  "${_src}/other-outputs.hpp"
+)
 target_include_directories(other_outputs_tests PRIVATE "${_src}")
 set_target_properties(other_outputs_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_test(NAME other_outputs_tests COMMAND other_outputs_tests)
