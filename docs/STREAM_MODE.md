@@ -245,7 +245,7 @@ delayed. What the plugin does about it:
 - With all of OBS (scene mode) those outputs encode the delayed program like OBS's own, so they are
   delayed, and the vertical canvas gets a mirror of the delay on the scene it shows (`docs/SPEC.md`
   §3.13). The (i) next to **Advanced** in the dock says which mode covers what.
-- A service that takes one RTMP stream and fans it out (Trigglow Multistream, Restream, Castr and the like) is just a
+- A service that takes one RTMP stream and fans it out (Restream.io, Streamlabs Multistream, Trigglow Multistream, Castr and the like) is just a
   destination for OBS's own output: it works with both modes.
 
 ## Settings checks

@@ -45,7 +45,7 @@
   salidas que arrancan esos plugins salen en directo, y el panel ahora lo dice mientras funcionan,
   con el nombre del plugin y cuántas salidas ("Aitum Multistream está enviando 2 salidas en directo,
   sin el delay..."). Una (i) junto a **Avanzado** lo resume. Los servicios que reciben un stream y lo
-  reenvían (Trigglow Multistream, Restream y similares) funcionan con los dos.
+  reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con los dos.
 
 ## v1.0.0 — 2026-11-11
 

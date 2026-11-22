@@ -62,7 +62,7 @@ A todo OBS, lo predeterminado. Esos plugins codifican lo que muestra OBS, así q
 que arrancan van con delay igual que el stream propio de OBS. Con "solo a la emisión", solo el
 stream propio de OBS pasa por el delay: las salidas que arrancan esos plugins salen en directo, y el
 dock las lista mientras funcionan ("Aitum Multistream está enviando 2 salidas en directo, sin el
-delay..."). Los servicios que reciben un stream y lo reenvían (Trigglow Multistream, Restream y similares) funcionan con
+delay..."). Los servicios que reciben un stream y lo reenvían (Restream.io, Streamlabs Multistream, Trigglow Multistream y similares) funcionan con
 los dos modos, porque OBS solo les manda un stream. La (i) junto a Avanzado en el dock lo resume.
 
 **¿Aitum Vertical recibe el delay?**
