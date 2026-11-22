@@ -145,6 +145,11 @@ public:
 	// Fired whenever anything above may have changed.
 	void SetStatusChangedCallback(StatusChangedCallback callback) { onStatusChanged_ = std::move(callback); }
 
+signals:
+	// The same moments as the callback above (which is the dock's), for the
+	// plugin's other parts (the Multistream link).
+	void StatusChanged();
+
 private:
 	enum class Session { None, Plugin, Legacy };
 

@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -35,6 +36,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QSpinBox>
 #include <QStyleOptionComboBox>
 #include <QStylePainter>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -44,7 +46,9 @@ extern "C" {
 #include <obs-frontend-api.h>
 }
 
+#include "api-client.hpp"
 #include "auth-manager.hpp"
+#include "multistream-service.hpp"
 #include "packet-delay-core.hpp"
 #include "settings-ui-parts.hpp"
 #include "stream-delay-controller.hpp"
@@ -91,6 +95,45 @@ QString SinkStateTone(relay::SinkState state)
 	return QStringLiteral("muted");
 }
 
+// "Sending · 2.5 Mbps": a destination's chip.
+QString SinkChipText(const relay::SinkStatus &sink)
+{
+	QString state = SinkStateText(sink.state);
+	if (sink.state == relay::SinkState::Live)
+		state += QStringLiteral(" · ") + QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps");
+	return state;
+}
+
+// The line under "Also send to my Trigglow Multistream channels" (and, in the
+// status card, why a stream went out without them). Names only.
+QString MultistreamHintText(MultistreamLink::State state, const std::vector<std::string> &names)
+{
+	switch (state) {
+	case MultistreamLink::State::Off:
+		break;
+	case MultistreamLink::State::SignedOut:
+		return T("Stream.Multi.Hint.SignedOut");
+	case MultistreamLink::State::Loading:
+		return T("Stream.Multi.Hint.Loading");
+	case MultistreamLink::State::Ready: {
+		QStringList list;
+		for (const std::string &name : names)
+			list << QString::fromStdString(name);
+		return list.isEmpty() ? T("Stream.Multi.Hint.Empty")
+				      : T("Stream.Multi.Hint.Ready").arg(list.join(QStringLiteral(", ")));
+	}
+	case MultistreamLink::State::PlanRequired:
+		return T("Stream.Multi.Hint.Plan");
+	case MultistreamLink::State::Unavailable:
+		return T("Stream.Multi.Hint.Unavailable");
+	case MultistreamLink::State::RateLimited:
+		return T("Stream.Multi.Hint.RateLimited");
+	case MultistreamLink::State::Failed:
+		return T("Stream.Multi.Hint.Failed");
+	}
+	return {};
+}
+
 QString Megabytes(uint64_t bytes)
 {
 	return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1);
@@ -119,6 +162,10 @@ QString ObsServiceName()
 	QString name = QString::fromUtf8(obs_data_get_string(settings, "service"));
 	if (name.isEmpty())
 		name = QString::fromStdString(relay::HostOf(obs_data_get_string(settings, "server")));
+	// Trigglow's own Multistream ingest by its name, not its host. The key is
+	// only looked at, never shown or kept.
+	if (mslink::IsTrigglowIngestKey(obs_data_get_string(settings, "key")))
+		name = QString::fromUtf8(mslink::kTrigglowIngestName);
 	obs_data_release(settings);
 	return name;
 }
@@ -235,6 +282,12 @@ void TrigglowDelayDock::BuildStreamStatusRows(QVBoxLayout *body)
 	sendsRow_->setContentsMargins(0, 4, 0, 0);
 	sendsRow_->setVisible(false);
 	body->addWidget(sendsRow_);
+	// v1.1.0: one row per Multistream channel the stream also goes to, made
+	// when a stream has them (RefreshMultistream()).
+	sinksLayout_ = new QVBoxLayout();
+	sinksLayout_->setContentsMargins(0, 0, 0, 0);
+	sinksLayout_->setSpacing(0);
+	body->addLayout(sinksLayout_);
 
 	statsLabel_ = new QLabel(statusCard_);
 	statsLabel_->setWordWrap(true);
@@ -261,6 +314,8 @@ void TrigglowDelayDock::BuildStreamStatusRows(QVBoxLayout *body)
 	};
 	makeLine(ruleRow_, ruleIcon_, ruleLabel_, "accent");
 	makeLine(noticeRow_, noticeIcon_, noticeLabel_, "danger");
+	// v1.1.0: why this stream went out without the Multistream channels.
+	makeLine(multiNoteRow_, multiNoteIcon_, multiNoteLabel_, "muted");
 }
 
 QFrame *TrigglowDelayDock::BuildWarningsCard()
@@ -356,6 +411,48 @@ QWidget *TrigglowDelayDock::BuildBufferBlock(QWidget *host)
 		SettingsChanged();
 		Refresh();
 	});
+	return block;
+}
+
+QWidget *TrigglowDelayDock::BuildMultistreamBlock(QWidget *host)
+{
+	// v1.1.0: the check box (off by default; only the boolean is saved), what
+	// is ready or why not, and a link when the plan doesn't include it.
+	// RefreshMultistream() fills in the texts.
+	auto *block = new QWidget(host);
+	auto *layout = new QVBoxLayout(block);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(3);
+	layout->addWidget(MakeCheckRow(block, multiCheck_, multiText_, T("Stream.Multi.Check")));
+	multiCheck_->setToolTip(T("Stream.Multi.Tooltip"));
+	multiText_->setToolTip(T("Stream.Multi.Tooltip"));
+	multiHint_ = new QLabel(block);
+	multiHint_->setWordWrap(true);
+	multiHint_->setTextFormat(Qt::PlainText); // Channel names come from the account.
+	multiHint_->setToolTip(T("Stream.Multi.Tooltip"));
+	multiHint_->setContentsMargins(24, 0, 0, 0); // Under the label, past the box.
+	SetRole(multiHint_, "hint", ui::FontRole::Hint);
+	layout->addWidget(multiHint_);
+	multiPlanButton_ = new QPushButton(T("Stream.Multi.PlanLink"), block);
+	multiPlanButton_->setProperty("tgVariant", QStringLiteral("link"));
+	multiPlanButton_->setFocusPolicy(Qt::TabFocus);
+	multiPlanButton_->setCursor(Qt::PointingHandCursor);
+	SetRole(multiPlanButton_, "link", ui::FontRole::Strong);
+	auto *linkRow = new QHBoxLayout();
+	linkRow->setContentsMargins(24, 0, 0, 0);
+	linkRow->addWidget(multiPlanButton_, 0, Qt::AlignLeft);
+	linkRow->addStretch(1);
+	layout->addLayout(linkRow);
+	connect(multiCheck_, &QCheckBox::toggled, this, [this](bool on) {
+		if (refreshing_)
+			return;
+		multistreamLink_.SetEnabled(on);
+		SettingsChanged();
+		Refresh();
+	});
+	// A fixed page of trigglow.com (api::web), like every link of the plugin.
+	connect(multiPlanButton_, &QPushButton::clicked, this,
+		[] { QDesktopServices::openUrl(QUrl(QString::fromUtf8(api::web::kProduct))); });
 	return block;
 }
 
@@ -593,12 +690,82 @@ void TrigglowDelayDock::RefreshDestination(const StreamDelayStatus &status)
 		return;
 	}
 	const relay::SinkStatus &sink = status.relay.sinks.front();
-	QString state = SinkStateText(sink.state);
-	if (sink.state == relay::SinkState::Live)
-		state += QStringLiteral(" · ") + QString::number(sink.sentMbps, 'f', 1) + QStringLiteral(" Mbps");
-	sendsState_->setText(state);
+	sendsState_->setText(SinkChipText(sink));
 	ui::SetStyleProperty(sendsState_, "tgTone", SinkStateTone(sink.state));
 	row->Refit();
+}
+
+void TrigglowDelayDock::RefreshMultistream(const StreamDelayStatus &status)
+{
+	const MultistreamLink::State state = multistreamLink_.CurrentState();
+	const bool relayRunning = status.engaged || status.state == StreamDelayState::Draining;
+	multiCheck_->setChecked(streamController_.SendToMultistream());
+	// Multistream off for the account: the option stays there, locked, with a
+	// short note.
+	const bool usable = state != MultistreamLink::State::Unavailable;
+	multiCheck_->setEnabled(usable);
+	multiText_->setEnabled(usable);
+	QString hint = MultistreamHintText(state, multistreamLink_.ChannelNames());
+	// Ticked after this stream started: it has only its own service.
+	if (state == MultistreamLink::State::Ready && relayRunning &&
+	    multistreamLink_.Outcome() == MultistreamLink::StreamOutcome::None)
+		hint += QLatin1Char(' ') + T("Stream.Buffer.HintNext");
+	multiHint_->setText(hint);
+	multiHint_->setVisible(!hint.isEmpty());
+	multiCheck_->setAccessibleDescription(hint);
+	multiPlanButton_->setVisible(state == MultistreamLink::State::PlanRequired);
+
+	// In the status card, while the stream runs: why it has none of them.
+	QString note;
+	if (relayRunning && streamController_.SendToMultistream()) {
+		switch (multistreamLink_.Outcome()) {
+		case MultistreamLink::StreamOutcome::None:
+			break;
+		case MultistreamLink::StreamOutcome::CloudIngest:
+			note = T("Stream.Multi.Note.Cloud");
+			break;
+		case MultistreamLink::StreamOutcome::NotReady:
+			note = T("Stream.Multi.Note.NotReady") + QLatin1Char(' ') +
+			       MultistreamHintText(multistreamLink_.StreamReason(), {});
+			break;
+		case MultistreamLink::StreamOutcome::Added:
+			if (multistreamLink_.StreamChannelCount() == 0)
+				note = T("Stream.Multi.Note.NoneToAdd");
+			break;
+		}
+	}
+	multiNoteLabel_->setText(note.trimmed());
+	multiNoteRow_->setVisible(!note.isEmpty());
+
+	// The other places this stream goes: every sink after the primary.
+	const size_t extra = relayRunning && !status.relay.sinks.empty() ? status.relay.sinks.size() - 1 : 0;
+	while (sinkRows_.size() < extra) {
+		SinkRow added;
+		added.name = new QLabel(statusCard_);
+		added.name->setTextFormat(Qt::PlainText); // The name comes from the account.
+		SetRole(added.name, "hint", ui::FontRole::Hint);
+		added.state = new QLabel(statusCard_);
+		SetRole(added.state, "chip", ui::FontRole::Chip);
+		added.row = new FitRow(added.name, added.state, statusCard_, /*chip=*/true);
+		added.row->setContentsMargins(0, 4, 0, 0);
+		if (themeApplied_) {
+			ui::ApplyFont(added.name, ui::FontRole::Hint, theme_.basePt);
+			ui::ApplyFont(added.state, ui::FontRole::Chip, theme_.basePt);
+		}
+		sinksLayout_->addWidget(added.row);
+		sinkRows_.push_back(added);
+	}
+	for (size_t i = 0; i < sinkRows_.size(); ++i) {
+		const SinkRow &shown = sinkRows_[i];
+		shown.row->setVisible(i < extra);
+		if (i >= extra)
+			continue;
+		const relay::SinkStatus &sink = status.relay.sinks[i + 1];
+		shown.name->setText(T("Stream.SendsTo.Also").arg(QString::fromStdString(sink.name)));
+		shown.state->setText(SinkChipText(sink));
+		ui::SetStyleProperty(shown.state, "tgTone", SinkStateTone(sink.state));
+		static_cast<FitRow *>(shown.row)->Refit();
+	}
 }
 
 void TrigglowDelayDock::RefreshStreamStatus(const StreamDelayStatus &status)

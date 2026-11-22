@@ -270,6 +270,43 @@ modo stream (`StreamDelayController::CheckObsSettings`):
 
 La puerta de cuenta gratuita se aplica a Activar igual que en el modo escena.
 
+## Con Trigglow Multistream (v1.1.0, aún sin publicar)
+
+Tres formas en que el plugin funciona con Trigglow Multistream (trigglow.com, Directo > Multistream):
+
+- **Emitir al ingest de Trigglow.** El modo stream no necesita nada especial: en `Ajustes > Emisión`
+  de OBS, un servidor personalizado (el ingest de Trigglow) con la clave `tgms_...` del streamer es
+  un servicio RTMP normal, así que el relay lo retrasa y la nube de Trigglow reenvía el directo ya
+  retrasado a todos los canales. El dock llama a ese destino "Trigglow Multistream" en vez de mostrar
+  el host.
+- **"Enviar también a mis canales de Trigglow Multistream"** (Opciones, solo a la emisión; desmarcada
+  por defecto, guardada como `send_to_multistream`, solo ese booleano). El relay envía el directo con
+  delay a cada canal horizontal activado en Multistream directamente desde OBS, además de al servicio
+  de OBS, sin la nube en medio: cada canal es una subida más del bitrate del directo. Los canales se
+  leen de `GET /api/multistream/plugin/destinations` (en segundo plano: al marcar la casilla, al
+  cargar, al iniciar sesión y otra vez al empezar un directo si la copia tiene más de 60 s; un
+  directo que empieza antes de la primera respuesta va solo al servicio de OBS y el dock dice por
+  qué). Sus claves de emisión se quedan solo en memoria: nunca en disco, en el archivo de ajustes, en
+  el log, en un reporte ni en los diagnósticos, y se borran al cerrar sesión, al desmarcar la casilla
+  y al descargar el plugin. Un canal igual al servicio de OBS (mismo host y clave) se salta, y no se
+  añade ninguno cuando OBS ya emite al ingest de Trigglow (clave `tgms_`), para no enviar nada dos
+  veces. Cada canal tiene su fila en el dock con su estado. El plan decide si se ofrece: `403
+  plan_required` hace que el dock diga que el plan no lo incluye, y un `404` lo oculta sin más.
+- **Estado y control desde el panel.** Con la sesión iniciada, el plugin informa del delay (activado
+  o no, segundos, qué motor, si OBS emite y, en el modo stream, el nombre y el estado de cada
+  destino; nunca una clave ni una URL) a `POST /api/multistream/dynamic-delay/status`: cada 5 s
+  mientras OBS emite o el delay está activo, cada 30 s si no, ~1 s después de un cambio y una vez por
+  minuto tras tres fallos seguidos. La respuesta puede traer una orden de la página de Multistream
+  (`enable`, `disable`, `set_delay` de 1 a 600 s, `dump`), que se aplica por `DelayRouter` igual que
+  un atajo: al motor elegido en el dock y con la puerta de cuenta gratuita en Activar. Los fallos no
+  se muestran.
+
+El delay por canal (un canal más retrasado que los demás) es una función del servidor en la página de
+Multistream, encima de lo que retrase este plugin.
+
+Probado: el protocolo (`tests/multistream_link_tests.cpp`, con un transporte simulado) y la
+compilación completa del plugin en Windows. Aún sin probar en un OBS real con plataformas reales.
+
 ## Lo que aún no cubre
 
 - Enhanced Broadcasting (vídeo multipista) y los servicios SRT, RIST y WHIP: el dock dice que ese

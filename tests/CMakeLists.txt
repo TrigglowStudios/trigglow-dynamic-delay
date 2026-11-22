@@ -9,7 +9,8 @@
 # background jobs' lifecycle (src/cancel-token.*, src/background-tasks.*), and
 # the account, Trigi and ticket client: src/json.*, src/log-redact.*,
 # src/chat-text.*, src/support-diagnostics.*, src/api-client.*,
-# src/token-store.*, src/auth-client.*, src/support-client.*) and the support
+# src/token-store.*, src/auth-client.*, src/support-client.*, since v1.1.0
+# src/multistream-link.*) and the support
 # dialog's Trigi states (src/trigi-states.*). No libobs, no Qt, no FFmpeg (but
 # for hw_storage_codec_tests, Windows only, when .deps has the plugin's FFmpeg),
 # no test framework, no network (a scripted transport stands in for it). Two
@@ -439,4 +440,16 @@ trigglow_add_client_test(
   "${_src}/trigi-states.hpp"
   "${_src}/chat-text.cpp"
   "${_src}/chat-text.hpp"
+)
+# v1.1.0 Multistream link: reading the streamer's channels, which of them stream
+# mode also sends to, the status report, the dashboard's commands and how
+# often the report goes out (src/multistream-link.*). stream-relay.hpp is only
+# used for its types.
+trigglow_add_client_test(
+  multistream_link_tests
+  multistream_link_tests.cpp
+  "${_src}/multistream-link.cpp"
+  "${_src}/multistream-link.hpp"
+  "${_src}/stream-relay.hpp"
+  ${_client_sources}
 )

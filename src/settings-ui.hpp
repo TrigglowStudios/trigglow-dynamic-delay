@@ -85,6 +85,7 @@ class SceneComboBox;
 class AuthManager;
 class DelayRouter;
 class FieldIcon;
+class MultistreamLink;
 class StreamDelayController;
 struct StreamDelayStatus;
 struct UpdateCheckResult;
@@ -95,7 +96,8 @@ class TrigglowDelayDock : public QWidget {
 
 public:
 	TrigglowDelayDock(BufferModeController &bufferController, StreamDelayController &streamController,
-			  DelayRouter &router, AuthManager &authManager, QWidget *parent = nullptr);
+			  DelayRouter &router, AuthManager &authManager, MultistreamLink &multistreamLink,
+			  QWidget *parent = nullptr);
 
 	// Settings changed through the dock that live in stream-mode-settings.json
 	// (what the delay applies to, presets, scene rules...), to persist them.
@@ -153,6 +155,12 @@ private:
 		QSpinBox *seconds = nullptr;
 		QPushButton *remove = nullptr;
 	};
+	// v1.1.0: one more place the stream goes (a Multistream channel).
+	struct SinkRow {
+		QWidget *row = nullptr; // FitRow: the name and the state chip.
+		QLabel *name = nullptr;
+		QLabel *state = nullptr;
+	};
 
 	void BuildUi();
 	// Small builders: a field label above its control, the lock inside a
@@ -174,6 +182,7 @@ private:
 	QFrame *BuildWarningsCard();
 	void BuildRules(QVBoxLayout *body);
 	QWidget *BuildBufferBlock(QWidget *host);
+	QWidget *BuildMultistreamBlock(QWidget *host);
 	void AddRuleRow(const std::string &scene, int action, int seconds);
 	void RemoveRuleRow(QFrame *card);
 	void RulesChanged();
@@ -181,6 +190,7 @@ private:
 	void RefreshDestination(const StreamDelayStatus &status);
 	void RefreshWarnings(const StreamDelayStatus &status);
 	void RefreshBuffer(const StreamDelayStatus &status);
+	void RefreshMultistream(const StreamDelayStatus &status);
 	// Rules for components only this dock has (section headers, preset chips,
 	// the 5 s steps, icon buttons), from the same tokens.
 	QString ExtraStyleSheet() const;
@@ -328,6 +338,7 @@ private:
 	StreamDelayController &streamController_;
 	DelayRouter &router_;
 	AuthManager &authManager_;
+	MultistreamLink &multistreamLink_;
 	std::function<void()> onSettingsChanged_;
 	bool detached_ = false;
 	// Set while Refresh() writes values into the controls, so their change
@@ -366,6 +377,13 @@ private:
 	QWidget *noticeRow_ = nullptr;
 	QLabel *noticeIcon_ = nullptr;
 	QLabel *noticeLabel_ = nullptr;
+	// v1.1.0: the Multistream channels this stream also goes to (one row
+	// each, under sendsRow_), and why none were added when that is the case.
+	QVBoxLayout *sinksLayout_ = nullptr;
+	std::vector<SinkRow> sinkRows_;
+	QWidget *multiNoteRow_ = nullptr;
+	QLabel *multiNoteIcon_ = nullptr;
+	QLabel *multiNoteLabel_ = nullptr;
 	// "Status: Delay on. Viewers see..." without the degradation notice.
 	QString statusAccessibleName_;
 	// Degradation notice (see RefreshPipelineHealth()): a hairline, the
@@ -504,6 +522,14 @@ private:
 	QWidget *drainRow_ = nullptr;
 	QCheckBox *drainCheck_ = nullptr;
 	QLabel *drainText_ = nullptr;
+	// v1.1.0, only the stream: "Also send to my Trigglow Multistream
+	// channels", its hint (what is ready, or why not) and the link shown when
+	// the account's plan doesn't include it.
+	QWidget *multiBlock_ = nullptr;
+	QCheckBox *multiCheck_ = nullptr;
+	QLabel *multiText_ = nullptr;
+	QLabel *multiHint_ = nullptr;
+	QPushButton *multiPlanButton_ = nullptr;
 
 	// Options > Advanced: "Apply the delay only to the stream", its hint, and
 	// the lock line while a delay runs.

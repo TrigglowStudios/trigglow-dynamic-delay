@@ -24,7 +24,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Broadcasting -- it starts the relay (stream-relay.hpp) with the streamer's
 // own service as the first destination and points THAT stream's output at the
 // relay on 127.0.0.1. The streamer's saved service settings are never touched:
-// OBS sets its service on the output again on every start.
+// OBS sets its service on the output again on every start. v1.1.0: with "Also
+// send to my Trigglow Multistream channels" ticked, the streamer's Multistream
+// channels follow as extra destinations (multistream-service.hpp).
 //
 // From then on the delay is a number the relay applies to the encoded stream:
 // on, off, or changed while live (0-600 s), with no reconnect, no scene
@@ -149,6 +151,16 @@ public:
 	// The drive type of the spill folder, detected at Init() and again at each
 	// stream start.
 	relay::DriveKind DetectedDrive() const { return driveKind_; }
+	// v1.1.0 "send_to_multistream": also send the stream to the streamer's
+	// Trigglow Multistream channels. Only this boolean is saved; the channels
+	// and their keys come from the provider below and stay in memory.
+	void SetSendToMultistream(bool send);
+	bool SendToMultistream() const { return sendToMultistream_; }
+	// Asked once per stream, at STREAMING_STARTING, with the stream's primary
+	// destination: what to send to besides it (nothing when the option is
+	// off). Must not block.
+	using ExtraDestinations = std::function<std::vector<relay::Destination>(const relay::Destination &primary)>;
+	void SetExtraDestinationsProvider(ExtraDestinations provider) { extraDestinations_ = std::move(provider); }
 	// The "DELAY 30 s" badge, drawn over OBS's program on a free output
 	// channel while the delay is on (viewers get it with the delayed picture).
 	void SetShowOverlay(bool show);
@@ -253,6 +265,8 @@ private:
 	bool drainOnStop_ = true;
 	relay::BufferStorage bufferStorage_ = relay::BufferStorage::Auto;
 	relay::DriveKind driveKind_ = relay::DriveKind::Unknown;
+	bool sendToMultistream_ = false;
+	ExtraDestinations extraDestinations_;
 	bool streamOnDisk_ = false;
 	bool engaged_ = false;
 	bool draining_ = false;
