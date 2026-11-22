@@ -26,7 +26,7 @@ solo búfer para todas): cambia entre ellas desde el dock, los atajos u obs-webs
 activo; cualquier otra escena se ve en directo. Gasta más RAM y CPU (tabla de abajo). Detalles: `docs/SPEC-es.md`.
 
 **Solo a la emisión (avanzado: "Aplicar el delay solo a la emisión (la grabación y la vista previa
-no se retrasan)", Windows).** El modo stream, nuevo en la 1.0.0: el plugin guarda el stream que OBS
+no se retrasan)", Windows, macOS y Linux).** El modo stream, nuevo en la 1.0.0: el plugin guarda el stream que OBS
 ya ha codificado y lo envía a tu plataforma más tarde. No se decodifica ni se vuelve a codificar
 nada, así que casi no gasta CPU, y tú eliges dónde esperan los segundos retenidos: en RAM (lo
 predeterminado en un SSD, sin escribir nada en disco) o en un archivo temporal cifrado en tu disco
@@ -84,7 +84,7 @@ Solo a la emisión (modo stream, avanzado)
   OBS. Si has elegido "solo a la emisión", cuando un directo va a empezar y es apto (el `rtmp_output` de OBS, RTMP o RTMPS, sin Enhanced
   Broadcasting), lee el servidor y la clave de tu servicio, arranca el relay y apunta **esa salida**
   al relay con un servicio privado. Tus ajustes de emisión guardados no cambian nunca.
-- **`StreamRelay`** (`src/stream-relay.*`, avformat de FFmpeg, solo Windows) escucha solo en
+- **`StreamRelay`** (`src/stream-relay.*`, avformat de FFmpeg) escucha solo en
   `127.0.0.1`, guarda los paquetes FLV según llegan, sin decodificarlos, y lleva el emisor
   hacia tu servicio de OBS, con su conexión, sus reintentos y su estado.
 - **`PacketHistory` / `SinkScheduler`** (`src/packet-delay-core.*`, puros y con tests) deciden qué
@@ -221,7 +221,7 @@ Broadcasting desactivado. Se recomienda un intervalo de fotogramas clave de 2 s
   guardarlos en ningún otro sitio, y no hay ningún servidor de Trigglow por medio. Los segundos más
   antiguos del directo esperan en tu ordenador en un archivo temporal cifrado (su clave solo existe
   en la memoria de OBS), que se borra al terminar el directo.
-- **Trigi** recibe lo que escribes y, solo si lo marcas, un pequeño conjunto de cifras y estados
+- **Trigi** recibe lo que escribes y, si dejas marcada la casilla (viene marcada por defecto), un pequeño conjunto de cifras y estados
   técnicos de OBS (nunca nombres, rutas, URLs ni claves), que ves antes de enviarlo. **El log de
   OBS nunca se envía a la IA**; solo se adjunta a un ticket si marcas su casilla, cosa que puedes
   hacer después de verlo en **Ver qué se envía**. Tu usuario de Windows, URLs, claves, emails e IPs
@@ -366,7 +366,7 @@ escalar en OBS y se queda donde la pongas; los demás no los renombres ni los bo
 emisión no añade nada a tu colección de escenas (su insignia es una fuente privada en un canal de
 salida de OBS).
 
-### Solo a la emisión (avanzado; Windows)
+### Solo a la emisión (avanzado; todas las plataformas)
 
 Marca **Aplicar el delay solo a la emisión (la grabación y la vista previa no se retrasan)** en
 **Opciones → Avanzado**. Se bloquea mientras hay un delay activo ("Desactiva el delay para
@@ -447,7 +447,7 @@ Dos formas:
 
 - **El plugin de Stream Deck de Trigglow** habla con OBS por obs-websocket (el vendor de arriba) y
   muestra el estado del delay en sus teclas. Sus teclas de Dynamic Delay (activar/desactivar,
-  volver al directo, presets, +/-) se están añadiendo a ese plugin; ver `docs/STREAM_DECK-es.md`.
+  volver al directo, fijar delay, +/-) están incluidas desde la v1.9.0 de ese plugin; ver `docs/STREAM_DECK-es.md`.
 - **Cualquier Stream Deck, sin plugin:** añade la acción **"System" → "Hotkey"** y haz que envíe la
   combinación de teclas que asignaste a uno de los atajos de arriba. OBS tiene que estar abierto y
   escuchando el atajo global (con algunas configuraciones, también con el foco).
@@ -466,7 +466,7 @@ src/
                                      apuntar la salida de emisión al relay, activar o quitar el
                                      delay y sus segundos, borrar, presets, reglas por escena, la
                                      insignia, las comprobaciones de ajustes
-  stream-relay.{hpp,cpp}           → el relay (avformat de FFmpeg, Windows): escucha RTMP en
+  stream-relay.{hpp,cpp}           → el relay (avformat de FFmpeg): escucha RTMP en
                                      127.0.0.1, el emisor hacia tu servicio de OBS, reintentos, envío al parar
   packet-delay-core.{hpp,cpp}      → puro: PacketHistory y SinkScheduler (empalmes, reescritura de
                                      timestamps, recorte, suelo del borrado), con tests
@@ -669,7 +669,7 @@ distribuirlos junto a un binario GPL-2.0):
 | **Figtree** (SemiBold, Bold), subconjunto | `data/fonts/Figtree-*.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-Figtree.txt` |
 | **Geist Mono** (Medium), subconjunto | `data/fonts/GeistMono-Medium.ttf` | SIL Open Font License 1.1, `data/fonts/OFL-GeistMono.txt` |
 | Iconos de la interfaz (trazados de Lucide, como en la web de Trigglow) | compilados desde `src/resources/icons/` | ISC (partes MIT, Feather), `data/licenses/LICENSE-lucide.txt` |
-| Bibliotecas de **FFmpeg** (avcodec, avutil, swresample, y avformat para el modo stream), build LGPL de BtbN fijada en `buildspec.json`, solo Windows | DLL junto a la del plugin (`bin/64bit` en el paquete), sin modificar | LGPL 3.0 o posterior, con componentes MIT/BSD/Apache (libvpl, AMF, ffnvcodec); `data/licenses/LICENSE-ffmpeg.txt`, con la etiqueta de la build y su código fuente |
+| Bibliotecas de **FFmpeg** (avcodec, avutil, swresample, y avformat para el modo stream): build LGPL de BtbN en Windows, compilación estática LGPL desde `ffmpeg-source` (`n9.0.2`) en Linux y macOS, ambas fijadas en `buildspec.json` | Windows: DLL junto a la del plugin (`bin/64bit` en el paquete), sin modificar; Linux y macOS: enlazadas en el binario del plugin | Windows: LGPL 3.0 o posterior (con componentes MIT/BSD/Apache: libvpl, AMF, ffnvcodec); Linux y macOS: LGPL 2.1 o posterior; `data/licenses/LICENSE-ffmpeg.txt`, con la etiqueta de la build y su código fuente |
 
 Las fuentes son instancias estáticas, en subconjunto, de las fuentes variables originales de
 [google/fonts](https://github.com/google/fonts) (`ofl/archivo`, `ofl/geistmono`); `tools/fonts/`

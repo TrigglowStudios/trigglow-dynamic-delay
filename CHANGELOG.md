@@ -2,7 +2,13 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
-## Unreleased
+## v1.1.0 — 2026-11-22
+
+Dynamic Delay in 16 languages, Enhanced Broadcasting and the loading screen with "only the stream",
+and updates from OBS itself.
+
+**Before you update:** nothing to do. Install it like v1.0.0; your scenes, settings, hotkeys and
+sign-in are kept. From this version on, new versions install from OBS (Windows).
 
 **What's new:**
 - **16 languages.** The panel, the settings and the messages are now in Catalan, Valencian, German,
@@ -72,7 +78,7 @@
   it), a new rule does nothing until you choose what it does, and when a stream ends the delay
   turns off, so the next one starts without it unless you turn it on.
 
-## v1.0.0 — 2026-11-11
+## v1.0.0 — 2026-11-17
 
 Dynamic Delay comes out of beta on Windows: version 1.0, in Trigglow's new look. The macOS and Linux
 builds are still alpha (they build and pass CI, but haven't been run on a live stream yet).
