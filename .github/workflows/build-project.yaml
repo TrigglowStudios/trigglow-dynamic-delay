@@ -1,6 +1,11 @@
 name: Build Project
 on:
   workflow_call:
+    inputs:
+      releaseTag:
+        description: Release tag push.yaml just created for a new version on main (empty otherwise)
+        type: string
+        default: ''
     outputs:
       pluginName:
         description: Project name detected by parsing build spec file
@@ -31,6 +36,7 @@ jobs:
         id: setup
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.releaseTag || (github.ref_type == 'tag' && github.ref_name || '') }}
         run: |
           : Check Event Data ☑️
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
@@ -46,7 +52,7 @@ jobs:
               ;;
             push)
               config_data=('codesign:true' 'notarize:false' 'package:true' 'config:RelWithDebInfo')
-              if [[ ${GITHUB_REF_NAME} =~ [0-9]+.[0-9]+.[0-9]+(-(rc|beta).+)? ]]; then
+              if [[ "${RELEASE_TAG}" ]]; then
                 config_data[1]='notarize:true'
                 config_data[3]='config:Release'
               fi
@@ -77,10 +83,11 @@ jobs:
 
       - name: Create Release 🛫
         id: release
-        if: github.event_name == 'push' && github.ref_type == 'tag'
+        if: github.event_name == 'push' && (inputs.releaseTag != '' || github.ref_type == 'tag')
         env:
           GH_TOKEN: ${{ github.token }}
           PLUGIN_NAME: ${{ steps.setup.outputs.pluginName }}
+          TAG: ${{ inputs.releaseTag || github.ref_name }}
         run: |
           : Create Release 🛫
           # Published before any build starts: each platform job attaches its
@@ -89,17 +96,17 @@ jobs:
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
           shopt -s extglob
 
-          case "${GITHUB_REF_NAME}" in
+          case "${TAG}" in
             +([0-9]).+([0-9]).+([0-9]) ) prerelease=() ;;
             +([0-9]).+([0-9]).+([0-9])-@(beta|rc)*([0-9]) ) prerelease=(--prerelease) ;;
             *) exit 0 ;;
           esac
 
-          gh release view "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" > /dev/null 2>&1 \
-            || gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --verify-tag "${prerelease[@]}" \
-              --title "${PLUGIN_NAME} ${GITHUB_REF_NAME}" \
+          gh release view "${TAG}" -R "${GITHUB_REPOSITORY}" > /dev/null 2>&1 \
+            || gh release create "${TAG}" -R "${GITHUB_REPOSITORY}" --verify-tag "${prerelease[@]}" \
+              --title "${PLUGIN_NAME} ${TAG}" \
               --notes 'Builds are attached as each platform finishes.'
-          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   unit-tests:
     name: Unit Tests 🧪 (${{ matrix.os }})
