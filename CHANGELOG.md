@@ -2,6 +2,20 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.1.1 — 2026-11-24
+
+A fix release: turning the delay on no longer makes the stream stutter when it comes back.
+
+**Before you update:** nothing to do. Install it like v1.1.0 (or press **Update** in the dock);
+your scenes, settings, hotkeys and sign-in are kept.
+
+**What it fixes:**
+- **A hitch when the loading screen ends.** With "Apply the delay only to the stream", raising the
+  delay showed the loading screen at once and, when the delay was built up, the stream came back
+  from the keyframe before where it had stopped: viewers saw up to two seconds again, a short
+  stutter in clips. Now the stream keeps going until its next keyframe, the loading screen starts
+  there, and the stream comes back from that same frame: nothing repeated, nothing skipped.
+
 ## v1.1.0 — 2026-11-22
 
 Dynamic Delay in 16 languages, Enhanced Broadcasting and the loading screen with "only the stream",

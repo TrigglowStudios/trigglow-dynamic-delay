@@ -234,10 +234,12 @@ public:
 	void ResetTimeline();
 
 	// v1.1.0 loading screen. With a filler, raising the delay no longer
-	// replays what viewers saw: the sink stops at the keyframe at or before
-	// where it was, sends the loading clip until that keyframe is due at the
-	// new delay, then goes on from it (a stream that starts with less history
-	// than the delay plays it too, instead of waiting). Null: as before.
+	// replays what viewers saw: v1.1.1, the sink keeps the old delay up to the
+	// next keyframe, sends the loading clip from there until that keyframe is
+	// due at the new delay, then goes on from it: nothing seen twice, nothing
+	// skipped (1.1.0 went back to the keyframe at or before, and viewers saw
+	// up to a GOP again). A stream that starts with less history than the
+	// delay plays the clip too, instead of waiting. Null: as before.
 	void SetFiller(std::shared_ptr<const Filler> filler);
 	bool Filling() const { return filling_; }
 
@@ -249,6 +251,11 @@ public:
 private:
 	SpliceInfo TrySplice(int64_t nowNs, const PacketHistory &history);
 	bool CanFill(const PacketHistory &history) const;
+	// v1.1.1: whether a splice (the primary keyframe and the other tracks'
+	// keyframes of its frame) starts at `seq`. Unknown while the primary
+	// keyframe hasn't arrived yet.
+	enum class SpliceAt : unsigned char { No, Yes, Unknown };
+	SpliceAt SpliceStartsAt(const PacketHistory &history, uint64_t seq) const;
 	void StartFill(int64_t nowNs);
 	void EndFill(const Packet &resume);
 	void EmitFiller(int64_t nowNs, std::vector<OutPacket> &out, size_t maxPackets);
@@ -288,6 +295,10 @@ private:
 		int64_t loop = 0;
 	};
 	std::vector<FillPos> fillPos_; // Per filler track.
+	// v1.1.1: a raise waits for the next keyframe at the delay it had
+	// (pendingDelayNs_) to start the clip there.
+	bool pendingFill_ = false;
+	int64_t pendingDelayNs_ = 0;
 	// The source changes (stream <-> clip): each stream's first packet after
 	// it carries the source's codec header (OutPacket::newSource).
 	uint32_t sourceGen_ = 0;
