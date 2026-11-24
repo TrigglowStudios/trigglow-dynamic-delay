@@ -2,6 +2,20 @@
 
 # Changelog — Trigglow Dynamic Delay for OBS
 
+## v1.1.1 — 2026-11-24
+
+Una versión de corrección: al activar el delay, el directo ya no da un tirón cuando vuelve.
+
+**Antes de actualizar:** nada que hacer. Se instala como la v1.1.0 (o pulsa **Actualizar** en el
+panel); tus escenas, ajustes, atajos e inicio de sesión se mantienen.
+
+**Qué arregla:**
+- **Un tirón al acabar la pantalla de carga.** Con "Aplicar el delay solo a la emisión", al subir el
+  delay la pantalla de carga salía al momento y, cuando el delay ya estaba listo, el stream volvía
+  desde el keyframe anterior a donde se había cortado: tu audiencia veía hasta dos segundos otra
+  vez, un pequeño tirón en los clips. Ahora el stream sigue hasta su siguiente keyframe, la pantalla
+  de carga empieza ahí y el stream vuelve desde ese mismo fotograma: nada repetido, nada saltado.
+
 ## v1.1.0 — 2026-11-22
 
 Dynamic Delay en 16 idiomas, Enhanced Broadcasting y la pantalla de carga con "solo a la

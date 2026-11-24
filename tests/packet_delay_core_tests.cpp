@@ -630,10 +630,11 @@ std::shared_ptr<Filler> MakeFiller()
 	return f;
 }
 
-void TestLoadingClipOnRaise()
+void TestLoadingClipOnRaise(bool bframes)
 {
-	g_currentTest = "loading clip on raise";
+	g_currentTest = bframes ? "loading clip on raise (B-frames)" : "loading clip on raise";
 	FakeStream s;
+	s.bframes = bframes;
 	SinkScheduler sink;
 	sink.SetFiller(MakeFiller());
 	s.RunUntil(0);
@@ -644,14 +645,22 @@ void TestLoadingClipOnRaise()
 	const int64_t lastArrivalBefore = log.newestArrivalMs;
 	const SpliceInfo info = sink.SetDelay(5000 * kMs, 10005 * kMs, s.history);
 	CHECK(info.spliced && info.filling);
-	CHECK(sink.Filling());
-	Run(s, sink, log, 10010, 30000);
-	CHECK(log.monotonic);
-	CHECK(log.maxVideoGap <= 40);
+	// v1.1.1: the clip waits for the next keyframe (12 s; frame 605 with
+	// B-frames).
+	const int64_t nextKeyMs = bframes ? 605 * 1000 / 60 : 12000;
 	CHECK(!sink.Filling());
-	// The clip right after the raise, then the stream from the keyframe at or
-	// before where it stopped: nothing skipped, at most a GOP seen again.
+	Run(s, sink, log, 10010, nextKeyMs - 10);
+	CHECK(!sink.Filling());
+	Run(s, sink, log, nextKeyMs - 5, 30000);
+	CHECK(log.monotonic);
+	// Decode time skips the reorder delay at each switch (B-frames: the
+	// display clock stays continuous).
+	CHECK(log.maxVideoGap <= (bframes ? 70 : 40));
+	CHECK(!sink.Filling());
+	// The stream at the old delay up to the next keyframe, the clip, then the
+	// stream from that keyframe: nothing skipped, nothing seen again.
 	size_t clip = 0;
+	int64_t sentBeforeClipMs = lastArrivalBefore;
 	bool firstClipKey = false;
 	bool resumeKey = false;
 	bool clipVideoNewSource = false;
@@ -659,6 +668,10 @@ void TestLoadingClipOnRaise()
 	int64_t resumeArrivalMs = -1;
 	for (size_t i = before; i < log.packets.size(); ++i) {
 		const OutPacket &o = log.packets[i];
+		if (!o.filler && clip == 0) {
+			sentBeforeClipMs = std::max(sentBeforeClipMs, o.packet->arrivalNs / kMs);
+			continue;
+		}
 		if (o.filler) {
 			if (clip == 0)
 				firstClipKey = o.packet->kind == MediaKind::Video ? o.packet->keyframe : true;
@@ -678,13 +691,16 @@ void TestLoadingClipOnRaise()
 	CHECK(firstClipKey);
 	CHECK(clipVideoNewSource);
 	CHECK(streamVideoNewSource);
-	CHECK(resumeKey || resumeArrivalMs >= 0);
-	CHECK(resumeArrivalMs <= lastArrivalBefore && resumeArrivalMs >= lastArrivalBefore - 2100);
+	CHECK(resumeKey);
+	CHECK(resumeArrivalMs == nextKeyMs);
+	CHECK(sentBeforeClipMs < resumeArrivalMs && sentBeforeClipMs >= resumeArrivalMs - 25);
 	// No clip packet after the stream resumed.
 	bool resumed = false;
 	bool clipAfter = false;
+	bool clipSeen = false;
 	for (size_t i = before; i < log.packets.size(); ++i) {
-		resumed = resumed || !log.packets[i].filler;
+		clipSeen = clipSeen || log.packets[i].filler;
+		resumed = resumed || (clipSeen && !log.packets[i].filler);
 		clipAfter = clipAfter || (resumed && log.packets[i].filler);
 	}
 	CHECK(!clipAfter);
@@ -844,7 +860,8 @@ void TestMultitrackVideo()
 
 int main()
 {
-	TestLoadingClipOnRaise();
+	TestLoadingClipOnRaise(false);
+	TestLoadingClipOnRaise(true);
 	TestLoadingClipAtStart();
 	TestMultitrackVideo();
 	TestBFramesSpliceKeepsDisplayOrder();

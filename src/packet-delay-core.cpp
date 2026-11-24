@@ -267,7 +267,12 @@ constexpr int64_t kMinFillNs = 700LL * 1000000;
 
 SpliceInfo SinkScheduler::SetDelay(int64_t delayNs, int64_t nowNs, const PacketHistory &history)
 {
-	const int64_t before = delayNs_;
+	int64_t before = delayNs_;
+	if (pendingFill_) {
+		// Still at the old delay, waiting for the keyframe to start the clip.
+		before = pendingDelayNs_;
+		pendingFill_ = false;
+	}
 	delayNs_ = std::max<int64_t>(0, delayNs);
 	if (filling_) {
 		// Raised again: the clip goes on, the resume point comes later.
@@ -281,19 +286,16 @@ SpliceInfo SinkScheduler::SetDelay(int64_t delayNs, int64_t nowNs, const PacketH
 		filling_ = false;
 		++sourceGen_;
 	}
-	if (started_ && !needSplice_ && delayNs_ > before && CanFill(history)) {
-		uint64_t seq = 0;
-		if (history.FindKeyAtOrBefore(cursor_, seq)) {
-			const Packet *key = history.At(seq);
-			if (key && key->arrivalNs + delayNs_ > nowNs + kMinFillNs) {
-				cursor_ = seq;
-				StartFill(nowNs);
-				SpliceInfo info;
-				info.spliced = true;
-				info.filling = true;
-				return info;
-			}
-		}
+	if (started_ && !needSplice_ && delayNs_ > before + kMinFillNs && CanFill(history)) {
+		// v1.1.1: the stream goes on at the old delay up to its next
+		// keyframe and the clip starts there (Due()), so viewers see neither
+		// the end of that GOP twice nor a cut.
+		pendingFill_ = true;
+		pendingDelayNs_ = before;
+		SpliceInfo info;
+		info.spliced = true;
+		info.filling = true;
+		return info;
 	}
 	return TrySplice(nowNs, history);
 }
@@ -319,6 +321,27 @@ bool SinkScheduler::CanFill(const PacketHistory &history) const
 			return false;
 	}
 	return true;
+}
+
+SinkScheduler::SpliceAt SinkScheduler::SpliceStartsAt(const PacketHistory &history, uint64_t seq) const
+{
+	const Packet *p = history.At(seq);
+	if (!p || p->kind != MediaKind::Video || !p->keyframe)
+		return SpliceAt::No;
+	// Multitrack: the other tracks' keyframes of the frame can come before
+	// the primary's; the splice starts at the first of them.
+	for (uint64_t s = seq; s < history.EndSeq() && s < seq + 64; ++s) {
+		const Packet *q = history.At(s);
+		if (q->kind != MediaKind::Video)
+			continue;
+		if (q->dtsMs != p->dtsMs || !q->keyframe)
+			return SpliceAt::No;
+		if (q->stream != history.PrimaryVideoStream())
+			continue;
+		uint64_t start = 0;
+		return history.FindKeyAtOrBefore(s, start) && start == seq ? SpliceAt::Yes : SpliceAt::No;
+	}
+	return SpliceAt::Unknown;
 }
 
 void SinkScheduler::StartFill(int64_t nowNs)
@@ -457,6 +480,7 @@ void SinkScheduler::EmitFiller(int64_t nowNs, std::vector<OutPacket> &out, size_
 SpliceInfo SinkScheduler::TrySplice(int64_t nowNs, const PacketHistory &history)
 {
 	SpliceInfo info;
+	pendingFill_ = false;
 	uint64_t seq = 0;
 	if (!history.FindSplicePoint(nowNs - delayNs_, seq)) {
 		needSplice_ = true;
@@ -527,6 +551,43 @@ std::vector<OutPacket> SinkScheduler::Due(int64_t nowNs, const PacketHistory &hi
 			StartFill(nowNs);
 	}
 
+	// v1.1.1: a raise waiting for the next keyframe: the stream at the old
+	// delay up to it, then the clip from there.
+	while (pendingFill_ && cursor_ < history.EndSeq() && out.size() < maxPackets) {
+		const Packet *p = history.At(cursor_);
+		if (!p || p->arrivalNs + pendingDelayNs_ > nowNs)
+			return out;
+		const SpliceAt at = SpliceStartsAt(history, cursor_);
+		if (at == SpliceAt::Unknown)
+			return out;
+		if (at == SpliceAt::Yes) {
+			pendingFill_ = false;
+			if (CanFill(history) && p->arrivalNs + delayNs_ > nowNs + kMinFillNs) {
+				StartFill(nowNs);
+			} else if (!TrySplice(nowNs, history).spliced) {
+				return out;
+			}
+			break;
+		}
+		if (ready && !ready(*p))
+			return out;
+		++cursor_;
+		int64_t dts = p->dtsMs + offsetMs_;
+		int64_t pts = p->ptsMs + offsetMs_;
+		bool newSource = false;
+		if (!Account(*p, dts, pts, newSource))
+			continue;
+		lastSentArrivalNs_ = p->arrivalNs;
+		OutPacket o;
+		o.packet = p;
+		o.ptsMs = pts;
+		o.dtsMs = dts;
+		o.newSource = newSource;
+		out.push_back(o);
+	}
+	if (pendingFill_)
+		return out;
+
 	if (filling_) {
 		const Packet *resume = history.At(cursor_);
 		if (!resume || resume->arrivalNs + delayNs_ > nowNs) {
@@ -582,7 +643,7 @@ int64_t SinkScheduler::NextDueNs(const PacketHistory &history) const
 	const Packet *p = history.At(cursor_);
 	if (!p)
 		return -1;
-	return p->arrivalNs + delayNs_;
+	return p->arrivalNs + (pendingFill_ ? pendingDelayNs_ : delayNs_);
 }
 
 int64_t SinkScheduler::LagNs(int64_t nowNs, const PacketHistory &history) const
@@ -610,6 +671,7 @@ void SinkScheduler::ResetTimeline()
 	// A new connection starts with the stream's codec headers: the clip's
 	// must be sent again if it plays.
 	streamSourceGen_.clear();
+	pendingFill_ = false;
 	if (filling_) {
 		filling_ = false;
 		needSplice_ = true;
