@@ -18,9 +18,45 @@ jobs:
     permissions:
       contents: read
 
+  version-tag:
+    name: Tag New Version 🏷️
+    # A version in buildspec.json that has no tag yet becomes a release: the
+    # tag is created on this commit and this same run builds and publishes it
+    # (a tag pushed with the workflow token starts no run of its own).
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Tag 🏷️
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          : Tag 🏷️
+          version="$(jq -r '.version' buildspec.json)"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)[0-9]*)?$ ]]; then
+            echo "buildspec.json version '${version}' is not a release version; nothing to tag"
+            exit 0
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${version}" > /dev/null 2>&1; then
+            echo "${version} is already tagged"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${version}" -f "sha=${GITHUB_SHA}" > /dev/null
+          echo "Tagged ${version} on ${GITHUB_SHA}"
+          echo "tag=${version}" >> "${GITHUB_OUTPUT}"
+
   build-project:
     name: Build Project 🧱
+    needs: version-tag
+    # Every push builds; version-tag only runs on main.
+    if: ${{ !cancelled() && needs.version-tag.result != 'failure' }}
     uses: ./.github/workflows/build-project.yaml
+    with:
+      releaseTag: ${{ needs.version-tag.outputs.tag }}
     secrets: inherit
     permissions:
       # On a release tag the build creates the release and each platform job
